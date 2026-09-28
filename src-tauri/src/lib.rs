@@ -8,6 +8,7 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         // --- UPDATER (optional) ---
         // To enable in-app updates later, add the updater plugin here:
         //   .plugin(tauri_plugin_updater::Builder::new().build())

@@ -37,6 +37,10 @@ target
 *.sln
 *.sw?
 
+# SvelteKit
+.svelte-kit
+package
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*

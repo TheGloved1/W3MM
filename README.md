@@ -1,7 +1,12 @@
 # TauriTemplate
 
-Minimal Tauri v2 + vanilla-TS template with a scripted release workflow baked in:
-version sync, Conventional-Commit changelogs, and multi-platform GitHub releases via CI.
+Minimal Tauri v2 + SvelteKit + Svelte 5 + Tailwind v4 template with a scripted
+release workflow baked in: version sync, Conventional-Commit changelogs, and
+multi-platform GitHub releases via CI.
+
+Ships with: collapsible sidebar layout, shared `PageHeader` / `DataList` /
+`SortHeader` components, shadcn-style UI components, 8 themes + 6 fonts with
+instant switching, Tauri-store-backed settings, and a Settings page demo.
 
 ## Setup (TODO)
 
@@ -25,6 +30,9 @@ Linux needs the Tauri system deps:
 ```bash
 sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 ```
+
+Frontend notes: SvelteKit with `adapter-static` SPA fallback (`src/routes/+layout.ts`
+sets `ssr = false`) — required for Tauri. Run `bun run check` for type checks.
 
 ## Releasing
 
