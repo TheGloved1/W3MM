@@ -1,0 +1,38 @@
+[package]
+# TODO: rename to your app (also update [lib] name + tauri.conf.json productName/identifier)
+name = "tauri-template"
+version = "26.1.0"
+description = "TODO: describe your app"
+authors = ["<YOUR NAME>"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "tauri_template_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# --- UPDATER (optional) ---
+# To enable in-app updates later:
+#   1. Uncomment the next line.
+#   2. Uncomment the updater plugin in src/main.rs (marked UPDATER).
+#   3. Add "updater:default" to src-tauri/capabilities/default.json permissions.
+#   4. Add the plugins.updater section to src-tauri/tauri.conf.json (see README).
+#   5. Uncomment the updater steps in .github/workflows/release.yml (marked UPDATER).
+#   6. Add a TAURI_SIGNING_PRIVATE_KEY repo secret (see README).
+# tauri-plugin-updater = "2"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"
+panic = "abort"

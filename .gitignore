@@ -1,0 +1,51 @@
+# Logs
+/logs
+.release-undo/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+build
+*.local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.msi
+*.AppImage
+*.deb
+*.rpm
+*.dmg
+*.exe
+target
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Tauri
+src-tauri/target
+
+# Bun
+bun.lockb
+
+# generated updater fragments (only used if you enable the updater later)
+updater-*.json

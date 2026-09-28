@@ -1,0 +1,34 @@
+{
+  "name": "tauri-template",
+  "private": true,
+  "version": "26.1.0",
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/<OWNER>/tauri-template.git"
+  },
+  "homepage": "https://github.com/<OWNER>/tauri-template",
+  "bugs": "https://github.com/<OWNER>/tauri-template/issues",
+  "author": "<YOUR NAME>",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "sync-version": "bun run scripts/sync-version.js",
+    "release": "bun scripts/release.ts",
+    "push-tags": "git push origin main --tags",
+    "release:no-changelog": "bun scripts/release.ts --no-changelog"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^22.15.30",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}

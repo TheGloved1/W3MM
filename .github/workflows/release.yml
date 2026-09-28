@@ -1,0 +1,237 @@
+name: Release
+
+# --- UPDATER (optional) ---
+# To ship in-app updates later, uncomment the three UPDATER blocks below
+# (fragment generation, fragment combining, updater.json upload) and follow
+# the "Enabling the updater" section in README.md.
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  # TODO: set to your Tauri productName (must match tauri.conf.json).
+  APP_NAME: TauriTemplate
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: macos-latest
+            platform: darwin-aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install system deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install WiX (Windows)
+        if: matrix.os == 'windows-latest'
+        run: dotnet tool install --global wix --version 4.0.5
+
+      - name: Verify tag matches package.json
+        shell: bash
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          PKG_VER="$(bun -e "console.log(require('./package.json').version)")"
+          if [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "Tag version ($TAG_VER) does not match package.json ($PKG_VER)"
+            exit 1
+          fi
+          echo "Version OK: $PKG_VER"
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Sync version to Cargo.toml and tauri.conf.json
+        run: bun scripts/sync-version.js
+
+      - name: Build Tauri app
+        run: bun tauri build
+        # UPDATER: uncomment the env block below once TAURI_SIGNING_PRIVATE_KEY
+        # is set as a repo secret (only needed for signed updater artifacts).
+        # env:
+        #   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Rename bundles to canonical names
+        # Tauri always embeds version+arch in bundle filenames and offers no
+        # flag to change that, so rename post-build.
+        shell: bash
+        run: |
+          shopt -s nullglob
+          rename_bundle() {
+            local dir="$1" pattern="$2" name="$3"
+            for f in "$dir"/$pattern; do
+              echo "Renaming $(basename "$f") -> $name"
+              mv "$f" "$dir/$name"
+            done
+          }
+          B=src-tauri/target/release/bundle
+          rename_bundle "$B/msi" "*.msi" "${APP_NAME}.msi"
+          rename_bundle "$B/nsis" "*.exe" "${APP_NAME}.exe"
+          rename_bundle "$B/appimage" "*.AppImage" "${APP_NAME}.AppImage"
+          rename_bundle "$B/deb" "*.deb" "${APP_NAME}.deb"
+          rename_bundle "$B/rpm" "*.rpm" "${APP_NAME}.rpm"
+          rename_bundle "$B/dmg" "*.dmg" "${APP_NAME}.dmg"
+
+      # UPDATER: uncomment once the updater is enabled (see README.md).
+      # - name: Generate updater fragment
+      #   shell: bash
+      #   env:
+      #     PLATFORM: ${{ matrix.platform }}
+      #     TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      #   run: bash scripts/generate-updater-json.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: bundles-${{ matrix.platform }}
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+          # UPDATER: also upload the fragment so the release job can combine it:
+          #   updater-${{ matrix.platform }}.json
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Download all bundles
+        uses: actions/download-artifact@v7
+
+      # UPDATER: uncomment once the updater is enabled. Combines the per-platform
+      # fragments into a single updater.json with this release's notes.
+      # - name: Combine updater fragments
+      #   shell: bash
+      #   run: |
+      #     PKG_VER="$(bun -e "console.log(require('./package.json').version)")"
+      #     TAG_NAME="v${PKG_VER}"
+      #
+      #     jq -s '{
+      #       version: .[0].version,
+      #       pub_date: .[0].pub_date,
+      #       platforms: (reduce .[] as $item ({}; . * ($item.platforms // {})))
+      #     }' bundles-*/updater-*.json > updater-tmp.json
+      #
+      #     NOTES=""
+      #     CHANGELOG="changelogs/${TAG_NAME}.md"
+      #     [ -f "$CHANGELOG" ] && NOTES=$(cat "$CHANGELOG")
+      #     jq --arg notes "$NOTES" '.notes = $notes' updater-tmp.json > updater.json
+      #     rm -f updater-tmp.json
+
+      - name: Create draft release
+        # Draft-first flow per GitHub docs: create (or reuse) the draft,
+        # upload assets, then publish. Avoids the flaky all-in-one upload
+        # actions on large bundles.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES_FILE="changelogs/${{ github.ref_name }}.md"
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists, reusing it"
+          else
+            ARGS=(--draft --generate-notes)
+            if [[ "${{ github.ref_name }}" == *"-beta."* ]]; then ARGS+=(--prerelease); fi
+            if [ -f "$NOTES_FILE" ]; then ARGS+=(--notes-file "$NOTES_FILE"); fi
+            gh release create "${{ github.ref_name }}" "${ARGS[@]}"
+          fi
+
+      - name: Upload bundles
+        # Collect exact paths with find: bash does not expand ** recursively,
+        # and artifact nesting varies — globs here silently match nothing.
+        # One invocation per file with a timeout: a stalled upload fails fast
+        # with visible context instead of hanging the whole batch silently.
+        timeout-minutes: 30
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mapfile -t FILES < <(find bundles-windows-x86_64 bundles-linux-x86_64 bundles-darwin-aarch64 -type f \( \
+            -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o \
+            -name '*.rpm' -o -name '*.dmg' \) | sort)
+          # UPDATER: also upload the combined manifest (and count it below):
+          # FILES+=(updater.json)
+          echo "Uploading ${#FILES[@]} files:"
+          printf '  %s\n' "${FILES[@]}"
+          # 6 bundles expected (msi, exe, deb, AppImage, rpm, dmg).
+          # UPDATER: expect 7 once updater.json is included.
+          if [ "${#FILES[@]}" -ne 6 ]; then
+            echo "Expected 6 files (6 bundles), found ${#FILES[@]}"
+            exit 1
+          fi
+          # One file at a time with retries: GitHub asset uploads are
+          # intermittently slow/stalled (large files especially), so a single
+          # hung stream must fail loudly and retry instead of hanging silent.
+          ATTEMPTS=3
+          for f in "${FILES[@]}"; do
+            attempt=1
+            while true; do
+              echo "Uploading $f (attempt $attempt/$ATTEMPTS) ..."
+              if timeout 30s gh release upload "${{ github.ref_name }}" "$f" --clobber; then
+                break
+              fi
+              if [ "$attempt" -ge "$ATTEMPTS" ]; then
+                echo "FAILED $f after $ATTEMPTS attempts"
+                exit 1
+              fi
+              wait_secs=$((attempt * 30))
+              echo "Retrying $f in ${wait_secs}s ..."
+              sleep "$wait_secs"
+              attempt=$((attempt + 1))
+            done
+          done
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES_FILE="changelogs/${{ github.ref_name }}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            gh release edit "${{ github.ref_name }}" --notes-file "$NOTES_FILE" --draft=false
+          else
+            gh release edit "${{ github.ref_name }}" --draft=false
+          fi
