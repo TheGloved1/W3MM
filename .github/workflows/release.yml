@@ -96,12 +96,14 @@ jobs:
             done
           }
           B=src-tauri/target/release/bundle
-          rename_bundle "$B/msi" "*.msi" "${APP_NAME}.msi"
-          rename_bundle "$B/nsis" "*.exe" "${APP_NAME}.exe"
-          rename_bundle "$B/appimage" "*.AppImage" "${APP_NAME}.AppImage"
-          rename_bundle "$B/deb" "*.deb" "${APP_NAME}.deb"
-          rename_bundle "$B/rpm" "*.rpm" "${APP_NAME}.rpm"
-          rename_bundle "$B/dmg" "*.dmg" "${APP_NAME}.dmg"
+          # Spaces break naive download URLs and shell handling — underscores.
+          SAFE_NAME="${APP_NAME// /_}"
+          rename_bundle "$B/msi" "*.msi" "${SAFE_NAME}.msi"
+          rename_bundle "$B/nsis" "*.exe" "${SAFE_NAME}.exe"
+          rename_bundle "$B/appimage" "*.AppImage" "${SAFE_NAME}.AppImage"
+          rename_bundle "$B/deb" "*.deb" "${SAFE_NAME}.deb"
+          rename_bundle "$B/rpm" "*.rpm" "${SAFE_NAME}.rpm"
+          rename_bundle "$B/dmg" "*.dmg" "${SAFE_NAME}.dmg"
 
       # UPDATER: uncomment once the updater is enabled (see README.md).
       # - name: Generate updater fragment
