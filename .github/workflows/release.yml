@@ -23,10 +23,13 @@ jobs:
         include:
           - os: windows-latest
             platform: windows-x86_64
+            bundles: nsis msi
           - os: ubuntu-latest
             platform: linux-x86_64
+            bundles: deb appimage rpm
           - os: macos-latest
             platform: darwin-aarch64
+            bundles: dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -52,7 +55,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            rpm
 
       - name: Install WiX (Windows)
         if: matrix.os == 'windows-latest'
@@ -76,7 +80,7 @@ jobs:
         run: bun scripts/sync-version.js
 
       - name: Build Tauri app
-        run: bun tauri build
+        run: bun tauri build --bundles ${{ matrix.bundles }}
         # UPDATER: uncomment the env block below once TAURI_SIGNING_PRIVATE_KEY
         # is set as a repo secret (only needed for signed updater artifacts).
         # env:
