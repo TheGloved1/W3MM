@@ -1,7 +1,7 @@
 {
   "name": "tauri-template",
   "private": true,
-  "version": "26.1.0",
+  "version": "26.9.0",
   "type": "module",
   "packageManager": "bun@1.4.2",
   "license": "MIT",

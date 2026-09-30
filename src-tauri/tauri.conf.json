@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TauriTemplate",
-  "version": "26.1.0",
+  "version": "26.9.0",
   "identifier": "com.example.tauri-template",
   "build": {
     "beforeDevCommand": "bun run dev",
