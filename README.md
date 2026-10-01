@@ -34,6 +34,14 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 Frontend notes: SvelteKit with `adapter-static` SPA fallback (`src/routes/+layout.ts`
 sets `ssr = false`) — required for Tauri. Run `bun run check` for type checks.
 
+shadcn-svelte (`components.json`, style nova) with bits-ui v2: the registry ships
+`data-open:` / `data-checked:` / `data-horizontal:` style selectors, but bits-ui v2
+emits `data-state` / `data-orientation`, so every primitive under
+`src/lib/components/ui` has been rewritten (`data-open:` →
+`data-[state=open]:`, etc.). `data-disabled:` / `data-highlighted:` /
+`data-placeholder:` are genuinely emitted and were left alone. Re-running
+`shadcn-svelte add -o` reverts the patches — re-apply them afterwards.
+
 ## Releasing
 
 Versions use `YY.MM.PATCH` (e.g. `26.1.0`) — `scripts/release.ts` only parses
