@@ -5225,6 +5225,7 @@ name = "w3lmn"
 version = "26.9.0"
 dependencies = [
  "chrono",
+ "crc32fast",
  "encoding_rs",
  "flate2",
  "hex",

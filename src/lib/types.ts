@@ -62,3 +62,19 @@ export interface Snippets {
   filelist: string[];
   optional: string[];
 }
+
+export interface MadeFor {
+  label: string;
+  short: string;
+  status: string;
+}
+
+export interface QueueItem {
+  id: string;
+  url: string;
+  filename: string;
+  total: number;
+  done: number;
+  status: string;
+  error: string;
+}

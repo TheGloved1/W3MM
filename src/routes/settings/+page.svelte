@@ -33,6 +33,8 @@
   let config: AppConfig | null = $state(null);
   let status = $state("");
   let gameOk = $state<string>("");
+  let mergerExe = $state("");
+  let mergerRep = $state<{ config: string; wrong: [string, string, string][]; unfixable: [string, string][] } | null>(null);
 
   function apply(cfg: AppConfig) {
     document.documentElement.setAttribute('data-theme', cfg.theme);
@@ -112,6 +114,21 @@
     } catch (e) { status = String(e); }
     setTimeout(() => status = '', 4000);
   }
+  async function browseMerger() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const sel = await open({ multiple: false, filters: [{ name: 'Script Merger', extensions: ['exe'] }] });
+      if (typeof sel === 'string') mergerExe = sel;
+    } catch {}
+  }
+  async function checkMerger() {
+    if (!mergerExe) return;
+    try {
+      mergerRep = await invoke<typeof mergerRep>('merger_check', { exePath: mergerExe });
+      status = mergerRep && mergerRep.wrong.length ? `${mergerRep.wrong.length} path(s) need fixing` : 'Merger paths look right';
+    } catch (e) { status = String(e); mergerRep = null; }
+    setTimeout(() => { if (!mergerRep?.wrong.length) status = ''; }, 4000);
+  }
 </script>
 
 <div class="flex-1 bg-background text-foreground">
@@ -165,6 +182,26 @@
           <div class="flex gap-2 pt-1">
             <Button size="sm" variant="ghost" onclick={importLegacy}>Preview _ModManager import</Button>
           </div>
+        {/if}
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <CardTitle class="text-sm">External Script Merger</CardTitle>
+        <CardDescription>Optional .NET tool run under Proton. Checks its stored paths against this prefix.</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-2">
+        <div class="flex gap-2">
+          <input bind:value={mergerExe} placeholder="/path/to/WitcherScriptMerger.exe" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+          <Button size="sm" variant="ghost" onclick={browseMerger}>Browse</Button>
+          <Button size="sm" onclick={checkMerger} disabled={!mergerExe}>Check paths</Button>
+        </div>
+        {#if mergerRep}
+          <div class="text-xs">config: <span class="font-mono">{mergerRep.config}</span></div>
+          {#each mergerRep.wrong as [k, was, want]}<div class="text-xs font-mono rounded bg-amber-500/10 p-1">{k}: {was} → {want}</div>{/each}
+          {#each mergerRep.unfixable as [k, v]}<div class="text-xs font-mono rounded bg-red-500/10 p-1">{k}: {v} (unresolvable here)</div>{/each}
+          {#if !mergerRep.wrong.length && !mergerRep.unfixable.length}<div class="text-xs text-muted-foreground">All stored paths resolve.</div>{/if}
         {/if}
       </CardContent>
     </Card>

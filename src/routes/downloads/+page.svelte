@@ -6,7 +6,7 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { loadConfigNative } from '$lib/config';
-  import type { Snippets } from '$lib/types';
+  import type { Snippets, QueueItem } from '$lib/types';
 
   let archive = $state('');
   let nxm = $state('');
@@ -14,6 +14,8 @@
   let moves = $state<[string, string][]>([]);
   let snips = $state<Record<string, Snippets>>({});
   let hits = $state<{ id: string; name: string; local: string; remote: string }[]>([]);
+  let queue = $state<QueueItem[]>([]);
+  let quotaText = $state('');
   let error = $state('');
   let info = $state('');
 
@@ -27,6 +29,17 @@
         if (cur?.length) { nxm = cur[0]; await dlNxm(cur[0]); }
         // … plus runtime opens forwarded by single-instance/deep-link.
         unlisten = await listen<string>('nxm-url', async (e) => { nxm = e.payload; await dlNxm(e.payload); });
+        await listen<{ id: string; done: number; total: number }>('download-progress', (e) => {
+          queue = queue.map((q) => q.id === e.payload.id ? { ...q, done: e.payload.done, total: e.payload.total, status: 'active' } : q);
+        });
+        await listen<{ id: string; path: string }>('download-done', async (e) => {
+          queue = await invoke<QueueItem[]>('queue_list');
+          const done = queue.find((q) => q.id === e.payload.id);
+          if (done) { archive = e.payload.path; info = `downloaded → ${e.payload.path}`; }
+        });
+        queue = await invoke<QueueItem[]>('queue_list');
+        const [qt] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+        quotaText = qt;
       } catch {}
     })();
     return () => unlisten?.();
@@ -88,7 +101,17 @@
       const cfg = await loadConfigNative();
       hits = await invoke<typeof hits>('check_updates', { apiKey: cfg.nexusKey });
       info = hits.length ? `${hits.length} update(s)` : 'All tracked mods are current';
+      const [qt] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+      quotaText = qt;
     } catch (e) { error = String(e); }
+  }
+  async function pumpNext() {
+    const next = queue.find((q) => q.status === 'queued');
+    if (!next) return;
+    try {
+      await invoke('queue_pump', { id: next.id, destDir: '/tmp', apiKey: (await loadConfigNative()).nexusKey });
+      queue = await invoke<QueueItem[]>('queue_list');
+    } catch (e) { error = String(e); queue = await invoke<QueueItem[]>('queue_list'); }
   }
   async function openNexus(modId: string) {
     try {
@@ -99,7 +122,7 @@
 </script>
 
 <div class="flex flex-1 flex-col min-w-0 bg-background overflow-hidden">
-  <PageHeader title="Downloads" subtitle="Archives + nxm:// + snippets (pure-Rust; RAR: repack)" />
+  <PageHeader title="Downloads" subtitle={quotaText || 'Archives + nxm:// + snippets (pure-Rust; RAR: repack)'} />
   <div class="flex-1 overflow-auto p-6">
     <div class="mx-auto max-w-[900px] space-y-4">
       {#if error}<Card><CardContent class="text-sm text-red-500 py-3">{error}</CardContent></Card>{/if}
@@ -127,6 +150,20 @@
             </div>
           {/each}
         </CardContent></Card>
+      {#if queue.length}
+        <Card><CardHeader><CardTitle class="text-sm">Queue</CardTitle></CardHeader>
+        <CardContent class="space-y-1 text-xs">
+          {#each queue as q}
+            <div class="flex items-center gap-2 rounded border px-2 py-1">
+              <span class="flex-1 truncate font-mono">{q.filename} · {q.status}{#if q.total} · {Math.round(100 * q.done / Math.max(1, q.total))}%{/if}{#if q.error} · {q.error}{/if}</span>
+              {#if q.status === 'queued'}<Button size="sm" variant="ghost" onclick={pumpNext}>Start</Button>{/if}
+              {#if q.status === 'active'}<Button size="sm" variant="ghost" onclick={async () => { await invoke('queue_pause', { id: q.id, paused: true }); queue = await invoke<QueueItem[]>('queue_list'); }}>Pause</Button>{/if}
+              {#if q.status === 'paused'}<Button size="sm" variant="ghost" onclick={async () => { await invoke('queue_pause', { id: q.id, paused: false }); queue = await invoke<QueueItem[]>('queue_list'); }}>Resume</Button>{/if}
+              <Button size="sm" variant="ghost" onclick={async () => { await invoke('queue_cancel', { id: q.id }); queue = await invoke<QueueItem[]>('queue_list'); }}>✕</Button>
+            </div>
+          {/each}
+        </CardContent></Card>
+      {/if}
       {#if names.length}
         <Card><CardHeader><CardTitle class="text-sm">{names.length} entries</CardTitle></CardHeader>
         <CardContent><pre class="font-mono text-xs whitespace-pre-wrap max-h-64 overflow-auto">{names.slice(0, 200).join('\n')}</pre></CardContent></Card>

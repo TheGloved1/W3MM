@@ -82,10 +82,63 @@ pub fn nexus_get(path: &str, api_key: &str) -> Result<serde_json::Value, String>
         .header("Application-Version", env!("CARGO_PKG_VERSION"))
         .send()
         .map_err(|e| e.to_string())?;
+    // Track rate-limit headers like the original's LAST_LIMITS (validate
+    // doesn't count against the allowance, everything else does).
+    {
+        let mut lim = last_limits().lock().map_err(|e| e.to_string())?;
+        for (k, v) in resp.headers() {
+            let kl = k.as_str().to_lowercase();
+            if kl.starts_with("x-rl-") {
+                lim.insert(kl, v.to_str().unwrap_or("").to_string());
+            }
+        }
+    }
     if !resp.status().is_success() {
         return Err(format!("Nexus {} for {path}", resp.status()));
     }
     resp.json::<serde_json::Value>().map_err(|e| e.to_string())
+}
+
+fn last_limits() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static L: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+    L.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Calls we're willing to make right now (python `allowance`).
+pub fn allowance() -> i64 {
+    let lim = last_limits().lock().map(|l| l.clone()).unwrap_or_default();
+    let mut spare = vec![];
+    for kind in ["hourly", "daily"] {
+        if let Some(rem) = lim.get(&format!("x-rl-{kind}-remaining")) {
+            let limit: i64 = lim.get(&format!("x-rl-{kind}-limit")).and_then(|v| v.parse().ok()).unwrap_or(0);
+            let remaining: i64 = rem.parse().unwrap_or(0);
+            spare.push(remaining - std::cmp::max(5, (limit as f64 * 0.1) as i64));
+        }
+    }
+    spare.into_iter().min().unwrap_or(200)
+}
+
+/// (text, tip) for the status bar (python `limits_text`).
+pub fn limits_text() -> (String, String) {
+    let lim = last_limits().lock().map(|l| l.clone()).unwrap_or_default();
+    let pair = |kind: &str| -> Option<String> {
+        let rem = lim.get(&format!("x-rl-{kind}-remaining"))?;
+        match lim.get(&format!("x-rl-{kind}-limit")) {
+            Some(l) if !l.is_empty() => Some(format!("{rem}/{l}")),
+            _ => Some(rem.clone()),
+        }
+    };
+    let (daily, hourly) = (pair("daily"), pair("hourly"));
+    if daily.is_none() && hourly.is_none() {
+        return (String::new(), String::new());
+    }
+    let text = format!("Nexus API: {}", hourly.clone().or(daily.clone()).unwrap_or_default());
+    let tip = [hourly.map(|h| format!("Hourly: {h}")), daily.map(|d| format!("Daily: {d}"))]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text, tip)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

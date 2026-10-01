@@ -57,24 +57,72 @@ pub struct Hunk {
     pub lines: Vec<String>,
 }
 
-/// Line hunks of `lines` vs `base` (python `line_hunks`).
+/// Line hunks of `lines` vs `base` (python `line_hunks`): multiple hunks
+/// split on matching runs, so disjoint edits in one file merge independently.
 pub fn line_hunks(base: &[String], lines: &[String]) -> Vec<Hunk> {
-    // difflib-free Myers-lite: use a simple prefix/suffix trim + LCS on small inputs.
-    // For large scripts this stays O(n) on the common no-conflict path.
-    let mut lo = 0;
-    while lo < base.len() && lo < lines.len() && norm(&base[lo]) == norm(&lines[lo]) {
-        lo += 1;
+    let bn: Vec<String> = base.iter().map(|s| norm(s)).collect();
+    let ln: Vec<String> = lines.iter().map(|s| norm(s)).collect();
+    // index base positions per normalized line
+    let mut pos: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, l) in bn.iter().enumerate() {
+        pos.entry(l.as_str()).or_default().push(i);
     }
-    let mut hi_b = base.len();
-    let mut hi_l = lines.len();
-    while hi_b > lo && hi_l > lo && norm(&base[hi_b - 1]) == norm(&lines[hi_l - 1]) {
-        hi_b -= 1;
-        hi_l -= 1;
+    // longest matching run greedily (simple patience over repeats)
+    let mut matches: Vec<(usize, usize, usize)> = vec![]; // (base, lines, len)
+    let mut used_b = vec![false; base.len()];
+    let mut used_l = vec![false; lines.len()];
+    // seed with unique-line anchors first, then fill
+    for pass in 0..2 {
+        for (j, l) in ln.iter().enumerate() {
+            if used_l[j] {
+                continue;
+            }
+            let Some(cands) = pos.get(l.as_str()) else { continue };
+            let free: Vec<usize> = cands.iter().filter(|&&i| !used_b[i]).cloned().collect();
+            if free.is_empty() {
+                continue;
+            }
+            if pass == 0 && free.len() != 1 {
+                continue;
+            }
+            // extend run around (free[0], j)
+            let mut bi = free[0];
+            let mut li = j;
+            while bi > 0 && li > 0 && !used_b[bi - 1] && !used_l[li - 1] && bn[bi - 1] == ln[li - 1] {
+                bi -= 1;
+                li -= 1;
+            }
+            let mut len = 0;
+            while bi + len < base.len() && li + len < lines.len()
+                && !used_b[bi + len] && !used_l[li + len] && bn[bi + len] == ln[li + len]
+            {
+                len += 1;
+            }
+            if len == 0 {
+                continue;
+            }
+            for k in 0..len {
+                used_b[bi + k] = true;
+                used_l[li + k] = true;
+            }
+            matches.push((bi, li, len));
+        }
     }
-    if lo == hi_b && lo == hi_l {
-        return vec![];
+    matches.sort();
+    let mut hunks = vec![];
+    let mut cb = 0;
+    let mut cl = 0;
+    for (mb, ml, len) in matches {
+        if cb != mb || cl != ml {
+            hunks.push(Hunk { base_lo: cb, base_hi: mb, lines: lines[cl..ml].to_vec() });
+        }
+        cb = mb + len;
+        cl = ml + len;
     }
-    vec![Hunk { base_lo: lo, base_hi: hi_b, lines: lines[lo..hi_l].to_vec() }]
+    if cb < base.len() || cl < lines.len() {
+        hunks.push(Hunk { base_lo: cb, base_hi: base.len(), lines: lines[cl..].to_vec() });
+    }
+    hunks.into_iter().filter(|h| h.base_lo != h.base_hi || !h.lines.is_empty()).collect()
 }
 
 fn norm(s: &str) -> String {
@@ -269,8 +317,17 @@ mod tests {
         assert_eq!(r.merged, vec!["a", "B1", "c", "D2"]);
     }
     #[test]
-    fn conflict_detected() {
-        let base: Vec<String> = vec!["a".into(), "b".into()];
+    fn disjoint_multi_hunk() {
+        let base: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into()];
+        let v1: Vec<String> = vec!["a".into(), "B".into(), "c".into(), "d".into(), "e".into(), "F".into()];
+        let h = line_hunks(&base, &v1);
+        assert_eq!(h.len(), 2);
+        let r = merge_script(&base, &[v1, base.clone()], &[]);
+        assert!(!r.needs_resolution);
+        assert_eq!(r.merged, vec!["a", "B", "c", "d", "e", "F"]);
+    }
+    #[test]
+    fn conflict_detected() {        let base: Vec<String> = vec!["a".into(), "b".into()];
         let v1: Vec<String> = vec!["a".into(), "X".into()];
         let v2: Vec<String> = vec!["a".into(), "Y".into()];
         let r = merge_script(&base, &[v1, v2], &[]);

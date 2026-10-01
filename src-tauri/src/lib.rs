@@ -10,15 +10,18 @@
 mod archive;
 mod bundles;
 mod deploy;
+mod downloads;
 mod home;
 mod install;
 mod keybinds;
 mod manager;
+mod merger;
 mod nexus;
 mod script_merge;
 mod settings;
 mod state;
 mod steam;
+mod version;
 mod xml_merge;
 
 use manager::Manager;
@@ -372,9 +375,6 @@ pub struct UpdateHit {
     pub remote: String,
 }
 
-/// Nexus update check across managed mods (python `check_updates` subset).
-/// Page-level file list gives the newest MAIN version; optional files are
-/// matched by family so patches never read as main updates.
 #[tauri::command]
 fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit>, String> {
     if api_key.trim().is_empty() {
@@ -411,6 +411,199 @@ fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit
 fn import_legacy_preview(game_dir: String) -> Result<state::AppState, String> {
     let p = std::path::Path::new(&game_dir).join("_ModManager").join("state.json");
     crate::state::load_state(&p.to_path_buf())
+}
+
+fn kind_of(rel: &str) -> Option<&'static str> {
+    let low = rel.to_lowercase();
+    if low.ends_with(".ws") || low.ends_with(".wss") {
+        Some("script")
+    } else if low.ends_with(".xml") {
+        Some("xml")
+    } else if low.ends_with(".csv") {
+        Some("csv")
+    } else {
+        None
+    }
+}
+
+/// Which game versions a mod's game-file copies were made for
+/// (python `made_for`/`compare_made_for`, fingerprints in `version.rs`).
+#[tauri::command]
+fn made_for(shared: State<Shared>, id: String) -> Result<version::MadeFor, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let game = m.home.game.clone();
+    let prefix = m.home.prefix.clone();
+    let row = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        s.get(&id).cloned().ok_or("unknown mod")?
+    };
+    let _ = prefix;
+    let mut files: Vec<(String, String, Vec<String>)> = vec![];
+    let stage = m.home.staging.join(&id);
+    for rel in &row.targets {
+        let Some(kind) = kind_of(rel) else { continue };
+        let data = std::fs::read(stage.join(rel)).unwrap_or_default();
+        if data.is_empty() {
+            continue;
+        }
+        if let Some(v) = version::file_versions(kind, rel, &data) {
+            files.push((kind.to_string(), rel.clone(), v));
+        }
+    }
+    if files.is_empty() {
+        return Ok(version::MadeFor { label: String::new(), short: String::new(), status: String::new() });
+    }
+    let game_of = |kind: &str, rel: &str| -> Vec<String> {
+        // Prefer loose game file, else first bundle hit.
+        let path = game.join(rel);
+        if let Ok(data) = std::fs::read(&path) {
+            if let Some(v) = version::file_versions(kind, rel, &data) {
+                return v;
+            }
+        }
+        // Scan bundles under content/ for the file (best-effort).
+        let content = game.join("content");
+        if let Ok(rd) = std::fs::read_dir(&content) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().map(|x| x == "bundle").unwrap_or(false) {
+                    if let Ok(entries) = bundles::bundle_entries(&p) {
+                        if entries.iter().any(|en| en.path.eq_ignore_ascii_case(rel)) {
+                            if let Ok(data) = bundles::bundle_read(&p, rel) {
+                                if let Some(v) = version::file_versions(kind, rel, &data) {
+                                    return v;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        vec![]
+    };
+    Ok(version::compare_made_for(&files, &game_of))
+}
+
+/// Nexus rate-limit quota (python `limits_text`).
+#[tauri::command]
+fn quota() -> (String, String, i64) {
+    let (text, tip) = nexus::limits_text();
+    (text, tip, nexus::allowance())
+}
+
+/// External Script Merger path check (python `merger_path_check`).
+#[tauri::command]
+fn merger_check(shared: State<Shared>, exe_path: String) -> Result<merger::MergerReport, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    merger::merger_path_check(&m.home.prefix.to_string_lossy(), &m.home.game.to_string_lossy(), &exe_path)
+}
+
+/// Staged file list for one mod (powers per-mod file view + clash details).
+#[tauri::command]
+fn staged_files(shared: State<Shared>, id: String) -> Result<Vec<String>, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let stage = m.home.staging.join(&id);
+    Ok(deploy::mod_files(&stage).into_iter().map(|p| p.to_string_lossy().to_string()).collect())
+}
+
+/// Per-mod overlap report: shared scripts/xmls + beaten-file counts
+/// (python `analysis` core: sharing + lost, minus merge-registry detail).
+#[tauri::command]
+fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let (rows, order) = {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        let order = s.priority_ids();
+        let rows: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
+        (rows, order)
+    };
+    let mut idx = std::collections::HashMap::new();
+    for (i, id) in order.iter().enumerate() {
+        idx.insert(id.clone(), i);
+    }
+    let mut ranked = rows.clone();
+    ranked.sort_by_key(|r| idx.get(&r.id).copied().unwrap_or(usize::MAX));
+    // winner per path (top priority wins)
+    let mut winner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for r in ranked.iter().rev() {
+        if !r.enabled {
+            continue;
+        }
+        for t in &r.targets {
+            winner.insert(t.to_lowercase(), r.id.clone());
+        }
+    }
+    let mut info = serde_json::Map::new();
+    for r in &rows {
+        let mut shared_scripts = vec![];
+        let mut shared_xmls = vec![];
+        let mut lost = 0;
+        for t in &r.targets {
+            let low = t.to_lowercase();
+            let holders: Vec<String> = rows
+                .iter()
+                .filter(|o| o.enabled && o.targets.iter().any(|x| x.to_lowercase() == low))
+                .map(|o| o.name.clone())
+                .collect();
+            if holders.len() > 1 {
+                if low.ends_with(".xml") && low.contains("bin/") {
+                    shared_xmls.push(serde_json::json!({"file": t, "with": holders}));
+                } else {
+                    shared_scripts.push(serde_json::json!({"file": t, "with": holders}));
+                }
+            }
+            if r.enabled && winner.get(&low).map(|w| w != &r.id).unwrap_or(false) {
+                lost += 1;
+            }
+        }
+        info.insert(r.id.clone(), serde_json::json!({"scripts": shared_scripts, "xmls": shared_xmls, "lost": lost}));
+    }
+    Ok(serde_json::Value::Object(info))
+}
+
+#[tauri::command]
+fn queue_enqueue(url: String, filename: String) -> String {
+    downloads::enqueue(&url, &filename)
+}
+
+#[tauri::command]
+fn queue_list() -> Vec<downloads::QueueItem> {
+    downloads::items()
+}
+
+#[tauri::command]
+fn queue_cancel(id: String) {
+    downloads::cancel(&id);
+}
+
+#[tauri::command]
+fn queue_pause(id: String, paused: bool) {
+    downloads::set_paused(&id, paused);
+}
+
+/// Pump one queued download to disk, emitting `download-progress` events.
+#[tauri::command]
+fn queue_pump(app: tauri::AppHandle, id: String, dest_dir: String, api_key: String) -> Result<String, String> {
+    let item = downloads::items().into_iter().find(|i| i.id == id).ok_or("unknown download")?;
+    let dest = std::path::Path::new(&dest_dir).join(&item.filename);
+    let target = dest.clone();
+    let aid = id.clone();
+    let n = downloads::pump(
+        &id,
+        &dest,
+        &api_key,
+        &|done, total| {
+            use tauri::Emitter;
+            let _ = app.emit("download-progress", serde_json::json!({"id": aid, "done": done, "total": total}));
+        },
+    )?;
+    use tauri::Emitter;
+    let _ = app.emit("download-done", serde_json::json!({"id": id, "path": target.to_string_lossy(), "bytes": n}));
+    Ok(target.to_string_lossy().to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -494,7 +687,17 @@ pub fn run() {
             write_user_settings,
             read_mods_settings,
             check_updates,
-            import_legacy_preview
+            import_legacy_preview,
+            made_for,
+            quota,
+            merger_check,
+            staged_files,
+            analysis_summary,
+            queue_enqueue,
+            queue_list,
+            queue_cancel,
+            queue_pause,
+            queue_pump
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

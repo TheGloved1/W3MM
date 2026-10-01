@@ -4,11 +4,14 @@
   import PageHeader from '$lib/components/page-header.svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
-  import type { AppState } from '$lib/types';
+  import type { AppState, MadeFor } from '$lib/types';
   import { loadConfigNative } from '$lib/config';
 
   let appState: AppState | null = $state(null);
   let clashMap: Record<string, string[]> = $state({});
+  let madeMap: Record<string, MadeFor> = $state({});
+  let filesMap: Record<string, string[]> = $state({});
+  let openFiles: string | null = $state(null);
   let error: string = $state('');
   let busy: string = $state('');
   let gameDir: string = $state('');
@@ -42,6 +45,11 @@
   async function refresh() {
     appState = await invoke<AppState>('list_mods');
     clashMap = await invoke<Record<string, string[]>>('clashes').catch(() => ({}));
+    // made-for badges + overlap summary load lazily so the list stays fast
+    madeMap = {};
+    for (const m of appState.mods.filter((x) => !x.sep)) {
+      invoke<MadeFor>('made_for', { id: m.id }).then((r) => { madeMap[m.id] = r; }).catch(() => {});
+    }
   }
 
   async function toggle(id: string, on: boolean) {
@@ -103,6 +111,14 @@
     return Object.values(clashMap).filter((ids) => ids.includes(id) && ids.length > 1).length;
   }
 
+  async function toggleFiles(id: string) {
+    if (openFiles === id) { openFiles = null; return; }
+    openFiles = id;
+    if (!filesMap[id]) {
+      filesMap[id] = await invoke<string[]>('staged_files', { id }).catch(() => []);
+    }
+  }
+
   async function install() {
     if (!archPath) {
       // Native file picker instead of pasting paths (dialog plugin).
@@ -158,8 +174,9 @@
                 <div class="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm">
                   <input type="checkbox" checked={m.enabled} onchange={() => toggle(m.id, m.enabled)} aria-label="enabled" />
                   <div class="min-w-0 flex-1">
-                    <div class="truncate font-medium">{m.name} {#if clashCount(m.id)}<span class="ml-1 rounded bg-amber-500/20 px-1 text-[10px] text-amber-600">{clashCount(m.id)} clashes</span>{/if}</div>
-                    <div class="text-[11px] text-muted-foreground truncate">{m.version} {#if m.nexus}· nexus:{m.nexus}{/if} · {m.targets.length} files</div>
+                    <div class="truncate font-medium">{m.name} {#if clashCount(m.id)}<span class="ml-1 rounded bg-amber-500/20 px-1 text-[10px] text-amber-600">{clashCount(m.id)} clashes</span>{/if}{#if madeMap[m.id]?.short}<span class="ml-1 rounded bg-sky-500/15 px-1 text-[10px] text-sky-600" title={madeMap[m.id].label || madeMap[m.id].short}>for {madeMap[m.id].short}{#if madeMap[m.id].status} · {madeMap[m.id].status}{/if}</span>{/if}</div>
+                    <div class="text-[11px] text-muted-foreground truncate">{m.version} {#if m.nexus}· nexus:{m.nexus}{/if} · {m.targets.length} files · <button class="underline" onclick={() => toggleFiles(m.id)}>{openFiles === m.id ? 'hide files' : 'files'}</button></div>
+                    {#if openFiles === m.id}<pre class="mt-1 max-h-32 overflow-auto rounded bg-muted/50 p-1 font-mono text-[10px] whitespace-pre-wrap">{(filesMap[m.id] ?? ['…']).join('\n')}</pre>{/if}
                   </div>
                   <label class="text-[11px] text-muted-foreground">prio
                     <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} class="w-14 rounded border bg-background px-1 py-0.5 text-xs" />

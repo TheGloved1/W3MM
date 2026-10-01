@@ -40,6 +40,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-os = "2"
+crc32fast = "1"
 # --- UPDATER (optional) ---
 # To enable in-app updates later:
 #   1. Uncomment the next line.
