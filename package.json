@@ -1,5 +1,5 @@
 {
-  "name": "tauri-template",
+  "name": "w3lmn",
   "private": true,
   "version": "26.9.0",
   "type": "module",
@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<OWNER>/tauri-template.git"
+    "url": "https://github.com/<OWNER>/W3LMN.git"
   },
-  "homepage": "https://github.com/<OWNER>/tauri-template",
-  "bugs": "https://github.com/<OWNER>/tauri-template/issues",
-  "author": "<YOUR NAME>",
+  "homepage": "https://github.com/<OWNER>/W3LMN",
+  "bugs": "https://github.com/<OWNER>/W3LMN/issues",
+  "author": "W3LMN Contributors",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

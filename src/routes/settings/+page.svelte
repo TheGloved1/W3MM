@@ -32,6 +32,7 @@
 
   let config: AppConfig | null = $state(null);
   let status = $state("");
+  let gameOk = $state<string>("");
 
   function apply(cfg: AppConfig) {
     document.documentElement.setAttribute('data-theme', cfg.theme);
@@ -62,6 +63,22 @@
     config = await loadConfigNative();
     apply(config);
   });
+
+  import { invoke } from '@tauri-apps/api/core';
+  async function detect() {
+    if (!config) return;
+    const found = await invoke<string | null>('detect_game').catch(() => null);
+    if (found) {
+      config.gameDir = found;
+      const pfx = await invoke<string | null>('default_prefix', { gameDir: found }).catch(() => null);
+      if (pfx) config.prefix = pfx;
+      await persist();
+    }
+  }
+  async function checkGame() {
+    if (!config?.gameDir) return;
+    gameOk = await invoke<boolean>('is_game_dir', { path: config.gameDir }) ? 'looks like the game folder' : 'not a game folder (need content/ + bin/)';
+  }
 </script>
 
 <div class="flex-1 bg-background text-foreground">
@@ -76,6 +93,38 @@
   </PageHeader>
 
   <div class="mx-auto max-w-[720px] p-6 space-y-6">
+    <div>
+      <h1 class="text-lg font-semibold tracking-tight">Game</h1>
+      <p class="text-sm text-muted-foreground">Linux-only: Steam + Proton prefix. Home is <span class="font-mono">&lt;game&gt;/_W3LMN/</span>.</p>
+    </div>
+
+    <Card>
+      <CardHeader>
+        <CardTitle class="text-sm">Witcher 3 + Proton</CardTitle>
+        <CardDescription>Game folder holds content/ + bin/. Prefix is .../compatdata/292030/pfx.</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-3">
+        {#if config}
+          <div class="space-y-1">
+            <Label>Game folder</Label>
+            <div class="flex gap-2">
+              <input bind:value={config.gameDir} oninput={persist} placeholder="/home/you/.local/share/Steam/steamapps/common/The Witcher 3" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+              <Button size="sm" onclick={detect}>Detect</Button>
+              <Button size="sm" variant="ghost" onclick={checkGame}>Check</Button>
+            </div>
+            {#if gameOk}<div class="text-[11px] text-muted-foreground">{gameOk}</div>{/if}
+          </div>
+          <div class="space-y-1">
+            <Label>Proton prefix</Label>
+            <input bind:value={config.prefix} oninput={persist} placeholder=".../steamapps/compatdata/292030/pfx" class="w-full rounded border bg-background px-2 py-1 text-sm font-mono" />
+          </div>
+          <div class="space-y-1">
+            <Label>Nexus API key</Label>
+            <input bind:value={config.nexusKey} oninput={persist} type="password" placeholder="Personal API key from nexusmods.com" class="w-full rounded border bg-background px-2 py-1 text-sm font-mono" />
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
     <!-- TODO: add your own settings cards here. Appearance below demos the theme system. -->
     <div>
       <h1 class="text-lg font-semibold tracking-tight">Appearance</h1>

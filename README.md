@@ -1,8 +1,8 @@
-# TauriTemplate
+# W3LMN
 
-Minimal Tauri v2 + SvelteKit + Svelte 5 + Tailwind v4 template with a scripted
-release workflow baked in: version sync, Conventional-Commit changelogs, and
-multi-platform GitHub releases via CI.
+Witcher 3 Legacy Mod Nexus manager for Linux (Proton/Wine).
+
+Tauri 2 + Rust + Svelte 5 port of `w3modmanager.py` (full-parity track: script merger + XML merger + Nexus + keybinds). Clean break: home is `<game>/_W3LMN/` (state/staging/backup), never touches `_ModManager`. Linux-only bundles (deb/appimage/rpm). Pure-Rust extraction (`zip`/`sevenz-rust`/`tar`/`flate2`); RAR needs repack (see Downloads page).
 
 Ships with: collapsible sidebar layout, shared `PageHeader` / `DataList` /
 `SortHeader` components, shadcn-style UI components, 8 themes + 6 fonts with

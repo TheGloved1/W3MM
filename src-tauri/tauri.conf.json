@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TauriTemplate",
+  "productName": "W3LMN",
   "version": "26.9.0",
-  "identifier": "com.example.tauri-template",
+  "identifier": "com.w3lmn.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TauriTemplate",
+        "title": "W3LMN",
         "width": 900,
         "height": 650,
         "center": true
@@ -24,15 +24,12 @@
   },
   "bundle": {
     "category": "Utility",
-    "homepage": "https://github.com/<OWNER>/tauri-template",
+    "homepage": "https://github.com/<OWNER>/W3LMN",
     "active": true,
     "targets": [
-      "msi",
       "deb",
       "appimage",
-      "rpm",
-      "app",
-      "dmg"
+      "rpm"
     ],
     "icon": [
       "icons/32x32.png",

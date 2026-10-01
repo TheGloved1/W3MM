@@ -8,7 +8,9 @@
 
   // TODO: add your pages here (route + label + icon).
   const nav = [
-    { href: '/', label: 'Home', icon: '◫' },
+    { href: '/', label: 'Mods', icon: '◫' },
+    { href: '/merges', label: 'Merges', icon: '⑂' },
+    { href: '/downloads', label: 'Downloads', icon: '⤓' },
     { href: '/settings', label: 'Settings', icon: '⚙' },
   ];
 
@@ -72,19 +74,17 @@
 </script>
 
 <svelte:head>
-  <!-- TODO: rename to your app name -->
-  <title>TauriTemplate</title>
+  <title>W3LMN</title>
 </svelte:head>
 
 <div class="flex h-screen bg-background text-foreground overflow-hidden">
   <aside class="shrink-0 flex flex-col border-r bg-gradient-to-b from-card to-background transition-all duration-200 {collapsed ? 'w-[56px] items-center' : 'w-[220px]'}">
     <div class="h-12 flex items-center gap-2 px-3 border-b shrink-0 w-full {collapsed ? 'justify-center' : ''}">
       <!-- TODO: replace with your logo/initials -->
-      <div class="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-black text-[11px] shrink-0 shadow-lg shadow-primary/25">TT</div>
+      <div class="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-black text-[11px] shrink-0 shadow-lg shadow-primary/25">W3</div>
       {#if !collapsed}
         <div class="leading-tight min-w-0">
-          <!-- TODO: rename to your app name -->
-          <div class="text-sm font-semibold tracking-tight truncate">TauriTemplate</div>
+          <div class="text-sm font-semibold tracking-tight truncate">W3LMN</div>
           <div class="text-[11px] text-muted-foreground">v{appVersion}</div>
         </div>
       {/if}
