@@ -828,6 +828,12 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         "resolver" => ("Script decisions", 1150.0, 760.0),
         _ => return Err("unknown window".into()),
     };
+    // Window labels are stable ids; routes are what SvelteKit builds.
+    let route = match kind.as_str() {
+        "setup" => "settings",
+        "resolver" => "merges",
+        _ => kind.as_str(),
+    };
     if let Some(win) = app.get_webview_window(&kind) {
         win.set_focus().map_err(|e| e.to_string())?;
         if !path.is_empty() {
@@ -837,11 +843,11 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         return Ok(());
     }
     #[allow(unused_mut)]
-    let mut url = if query.is_empty() { format!("{kind}.html") } else { format!("{kind}.html?{query}") };
+    let mut url = if query.is_empty() { format!("{route}.html") } else { format!("{route}.html?{query}") };
     // Dev server routes by path, the bundled app by file.
     #[cfg(dev)]
     {
-        url = if query.is_empty() { kind.clone() } else { format!("{kind}?{query}") };
+        url = if query.is_empty() { route.to_string() } else { format!("{route}?{query}") };
     }
     let _win = tauri::WebviewWindowBuilder::new(&app, kind, tauri::WebviewUrl::App(url.into()))
         .title(title)
