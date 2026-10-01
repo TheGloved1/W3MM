@@ -364,10 +364,100 @@ fn read_mods_settings(shared: State<Shared>) -> Result<Vec<String>, String> {
     Ok(deploy::read_mods_settings(&m.settings_dir().join("mods.settings")))
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpdateHit {
+    pub id: String,
+    pub name: String,
+    pub local: String,
+    pub remote: String,
+}
+
+/// Nexus update check across managed mods (python `check_updates` subset).
+/// Page-level file list gives the newest MAIN version; optional files are
+/// matched by family so patches never read as main updates.
+#[tauri::command]
+fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit>, String> {
+    if api_key.trim().is_empty() {
+        return Err("Set a Nexus API key first".into());
+    }
+    let mods: Vec<state::ModRow> = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        let v: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
+        v
+    };
+    let mut hits = vec![];
+    for m in mods {
+        let nid = if m.nexus.trim().is_empty() { crate::nexus::extract_nexus_id(&m.name) } else { m.nexus.clone() };
+        if nid.is_empty() {
+            continue;
+        }
+        let v = match crate::nexus::nexus_get(&format!("/games/witcher3/mods/{nid}.json"), &api_key) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let remote = v.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
+            hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
+        }
+    }
+    Ok(hits)
+}
+
+/// Read-only import preview from a legacy `_ModManager/state.json`
+/// (clean-break rule: never writes into `_ModManager`).
+#[tauri::command]
+fn import_legacy_preview(game_dir: String) -> Result<state::AppState, String> {
+    let p = std::path::Path::new(&game_dir).join("_ModManager").join("state.json");
+    crate::state::load_state(&p.to_path_buf())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_deep_link::init())
+        // Single instance: second launches (e.g. nxm:// clicks) focus this
+        // window and forward argv URLs as events — replaces the hand-rolled
+        // Unix-socket handoff in the original (`send_to_running_app`).
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter, Manager};
+            let _ = app.get_webview_window("main").map(|w| {
+                let _ = w.set_focus();
+                for arg in argv.iter().filter(|a| a.starts_with("nxm://")) {
+                    let _ = w.emit("nxm-url", arg.clone());
+                }
+            });
+        }))
+        .setup(|app| {
+            // Forward OS deep-link opens (nxm://…) to the frontend as events.
+            // The .desktop MimeType registration comes from the
+            // `security.deepLinkProtocols` entry in tauri.conf.json — no
+            // hand-edited mimeapps.list code needed.
+            #[cfg(desktop)]
+            {
+                use tauri::Manager;
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    use tauri::Emitter;
+                    for url in event.urls() {
+                        let s = url.to_string();
+                        if s.starts_with("nxm://") {
+                            if let Some(w) = handle.get_webview_window("main") {
+                                let _ = w.emit("nxm-url", s.clone());
+                            }
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
         .manage(Shared::new(None))
         .invoke_handler(tauri::generate_handler![
             open_manager,
@@ -402,7 +492,9 @@ pub fn run() {
             undeploy_removed,
             write_input_settings,
             write_user_settings,
-            read_mods_settings
+            read_mods_settings,
+            check_updates,
+            import_legacy_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

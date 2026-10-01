@@ -57,6 +57,10 @@
       const files = await invoke<string[]>('deploy');
       busy = `Deployed ${files.length} files`;
       await refresh();
+      try {
+        const { sendNotification } = await import('@tauri-apps/plugin-notification');
+        sendNotification({ title: 'W3LMN', body: `Deployed ${files.length} files` });
+      } catch {}
     } catch (e) { error = String(e); busy = ''; }
   }
 
@@ -100,6 +104,14 @@
   }
 
   async function install() {
+    if (!archPath) {
+      // Native file picker instead of pasting paths (dialog plugin).
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const sel = await open({ multiple: false, filters: [{ name: 'Mod archive', extensions: ['zip', '7z', 'tar', 'gz', 'tgz'] }] });
+        if (typeof sel === 'string') archPath = sel;
+      } catch {}
+    }
     if (!archPath) return;
     busy = 'Installing…'; error = '';
     try {
@@ -136,8 +148,8 @@
           <CardHeader><CardTitle class="text-sm">{appState.mods.filter((m) => !m.sep).length} mods · {Object.keys(clashMap).length} clash paths</CardTitle></CardHeader>
           <CardContent class="space-y-1">
             <div class="flex gap-2 pb-2">
-              <input bind:value={archPath} placeholder="/path/to/mod.zip → Install" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-              <Button size="sm" onclick={install} disabled={!archPath}>Install</Button>
+              <input bind:value={archPath} placeholder="/path/to/mod.zip → Install (empty = Browse)" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+              <Button size="sm" onclick={install}>{archPath ? 'Install' : 'Browse…'}</Button>
             </div>
             {#each appState.mods as m}
               {#if m.sep}

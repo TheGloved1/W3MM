@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import PageHeader from '$lib/components/page-header.svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
@@ -11,8 +13,31 @@
   let names = $state<string[]>([]);
   let moves = $state<[string, string][]>([]);
   let snips = $state<Record<string, Snippets>>({});
+  let hits = $state<{ id: string; name: string; local: string; remote: string }[]>([]);
   let error = $state('');
   let info = $state('');
+
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        // Startup URLs (cold start via nxm://) …
+        const { getCurrent } = await import('@tauri-apps/plugin-deep-link');
+        const cur = await getCurrent().catch(() => []);
+        if (cur?.length) { nxm = cur[0]; await dlNxm(cur[0]); }
+        // … plus runtime opens forwarded by single-instance/deep-link.
+        unlisten = await listen<string>('nxm-url', async (e) => { nxm = e.payload; await dlNxm(e.payload); });
+      } catch {}
+    })();
+    return () => unlisten?.();
+  });
+
+  async function notify(title: string, body: string) {
+    try {
+      const { sendNotification } = await import('@tauri-apps/plugin-notification');
+      sendNotification({ title, body });
+    } catch {}
+  }
 
   async function list() {
     error = '';
@@ -42,15 +67,34 @@
       info = `${Object.keys(snips).length} snippet files`;
     } catch (e) { error = String(e); }
   }
-  async function dlNxm() {
+  async function dlNxm(preset?: string) {
     error = ''; info = '';
+    const url = preset ?? nxm;
+    if (!url) return;
+    nxm = url;
     try {
       const cfg = await loadConfigNative();
       if (!cfg.nexusKey) { error = 'Set Nexus API key in Settings first'; return; }
-      const dest = await invoke<string>('download_nxm', { url: nxm, apiKey: cfg.nexusKey, destDir: '/tmp' });
+      info = 'Resolving Nexus link…';
+      const dest = await invoke<string>('download_nxm', { url, apiKey: cfg.nexusKey, destDir: '/tmp' });
       info = `downloaded → ${dest}`;
       archive = dest;
+      await notify('W3LMN download', dest.split('/').pop() ?? 'done');
+    } catch (e) { error = String(e); info = ''; }
+  }
+  async function checkUpdates() {
+    error = ''; info = '';
+    try {
+      const cfg = await loadConfigNative();
+      hits = await invoke<typeof hits>('check_updates', { apiKey: cfg.nexusKey });
+      info = hits.length ? `${hits.length} update(s)` : 'All tracked mods are current';
     } catch (e) { error = String(e); }
+  }
+  async function openNexus(modId: string) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(`https://www.nexusmods.com/witcher3/mods/${modId}`);
+    } catch {}
   }
 </script>
 
@@ -63,7 +107,7 @@
       <Card><CardHeader><CardTitle class="text-sm">nxm:// link</CardTitle></CardHeader>
         <CardContent class="flex gap-2">
           <input bind:value={nxm} placeholder="nxm://witcher3/mods/123/files/456?key=..&expires=..&user_id=.." class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-          <Button size="sm" onclick={dlNxm}>Download</Button>
+          <Button size="sm" onclick={() => dlNxm()}>Download</Button>
         </CardContent></Card>
       <Card><CardHeader><CardTitle class="text-sm">Archive</CardTitle></CardHeader>
         <CardContent class="flex gap-2">
@@ -72,6 +116,16 @@
           <Button size="sm" onclick={preview}>Preview</Button>
           <Button size="sm" variant="ghost" onclick={parsed}>Parse</Button>
           <Button size="sm" variant="ghost" onclick={snippets}>Snippets</Button>
+        </CardContent></Card>
+      <Card><CardHeader><CardTitle class="text-sm">Updates</CardTitle></CardHeader>
+        <CardContent class="space-y-2">
+          <Button size="sm" onclick={checkUpdates}>Check Nexus updates</Button>
+          {#each hits as h}
+            <div class="flex items-center gap-2 rounded border px-2 py-1 text-xs">
+              <span class="flex-1 truncate font-medium">{h.name}: {h.local} → {h.remote}</span>
+              <Button size="sm" variant="ghost" onclick={() => openNexus(h.id.replace(/[^0-9]/g, '') || '')}>Open Nexus</Button>
+            </div>
+          {/each}
         </CardContent></Card>
       {#if names.length}
         <Card><CardHeader><CardTitle class="text-sm">{names.length} entries</CardTitle></CardHeader>

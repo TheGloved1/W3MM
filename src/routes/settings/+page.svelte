@@ -65,6 +65,23 @@
   });
 
   import { invoke } from '@tauri-apps/api/core';
+  async function pickDir(current: string | undefined, title: string): Promise<string | null> {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const sel = await open({ directory: true, multiple: false, defaultPath: current || undefined, title });
+      return typeof sel === 'string' ? sel : null;
+    } catch { return null; }
+  }
+  async function browseGame() {
+    if (!config) return;
+    const sel = await pickDir(config.gameDir, 'Pick The Witcher 3 folder');
+    if (sel) { config.gameDir = sel; await persist(); await checkGame(); }
+  }
+  async function browsePrefix() {
+    if (!config) return;
+    const sel = await pickDir(config.prefix, 'Pick Proton prefix (…/compatdata/292030/pfx)');
+    if (sel) { config.prefix = sel; await persist(); }
+  }
   async function detect() {
     if (!config) return;
     const found = await invoke<string | null>('detect_game').catch(() => null);
@@ -78,6 +95,22 @@
   async function checkGame() {
     if (!config?.gameDir) return;
     gameOk = await invoke<boolean>('is_game_dir', { path: config.gameDir }) ? 'looks like the game folder' : 'not a game folder (need content/ + bin/)';
+  }
+  async function validateKey() {
+    if (!config?.nexusKey) { status = 'Paste a key first'; return; }
+    try {
+      await invoke('nexus_status', { apiKey: config.nexusKey });
+      status = 'Nexus key OK';
+    } catch (e) { status = String(e); }
+    setTimeout(() => status = '', 3000);
+  }
+  async function importLegacy() {
+    if (!config?.gameDir) return;
+    try {
+      const prev = await invoke<{ mods: { name: string }[] }>('import_legacy_preview', { gameDir: config.gameDir });
+      status = `_ModManager has ${prev.mods.length} rows (preview only — clean break, nothing imported yet)`;
+    } catch (e) { status = String(e); }
+    setTimeout(() => status = '', 4000);
   }
 </script>
 
@@ -109,6 +142,7 @@
             <Label>Game folder</Label>
             <div class="flex gap-2">
               <input bind:value={config.gameDir} oninput={persist} placeholder="/home/you/.local/share/Steam/steamapps/common/The Witcher 3" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+              <Button size="sm" variant="ghost" onclick={browseGame}>Browse</Button>
               <Button size="sm" onclick={detect}>Detect</Button>
               <Button size="sm" variant="ghost" onclick={checkGame}>Check</Button>
             </div>
@@ -116,11 +150,20 @@
           </div>
           <div class="space-y-1">
             <Label>Proton prefix</Label>
-            <input bind:value={config.prefix} oninput={persist} placeholder=".../steamapps/compatdata/292030/pfx" class="w-full rounded border bg-background px-2 py-1 text-sm font-mono" />
+            <div class="flex gap-2">
+              <input bind:value={config.prefix} oninput={persist} placeholder=".../steamapps/compatdata/292030/pfx" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+              <Button size="sm" variant="ghost" onclick={browsePrefix}>Browse</Button>
+            </div>
           </div>
           <div class="space-y-1">
             <Label>Nexus API key</Label>
-            <input bind:value={config.nexusKey} oninput={persist} type="password" placeholder="Personal API key from nexusmods.com" class="w-full rounded border bg-background px-2 py-1 text-sm font-mono" />
+            <div class="flex gap-2">
+              <input bind:value={config.nexusKey} oninput={persist} type="password" placeholder="Personal API key from nexusmods.com" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
+              <Button size="sm" variant="ghost" onclick={validateKey}>Validate</Button>
+            </div>
+          </div>
+          <div class="flex gap-2 pt-1">
+            <Button size="sm" variant="ghost" onclick={importLegacy}>Preview _ModManager import</Button>
           </div>
         {/if}
       </CardContent>

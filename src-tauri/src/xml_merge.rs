@@ -57,43 +57,54 @@ pub fn xml_merge(base_text: &str, versions: &[String], resolutions: &[usize]) ->
     if versions.is_empty() {
         return Ok(XmlMergeResult { merged: base_text.to_string(), conflicts: vec![], needs_resolution: false });
     }
-    // Fast paths: all identical -> base; single version -> that version.
     if versions.iter().all(|v| v == base_text) {
         return Ok(XmlMergeResult { merged: base_text.to_string(), conflicts: vec![], needs_resolution: false });
     }
     if versions.len() == 1 {
         return Ok(XmlMergeResult { merged: versions[0].clone(), conflicts: vec![], needs_resolution: false });
     }
-    // N-way: if all versions agree with each other, take theirs.
     if versions.iter().all(|v| v == &versions[0]) {
         return Ok(XmlMergeResult { merged: versions[0].clone(), conflicts: vec![], needs_resolution: false });
     }
-    // Otherwise surface one region conflict per distinct version (resolver picks).
-    let mut variants: Vec<Vec<String>> = vec![];
-    let mut seen = std::collections::HashSet::new();
-    for v in versions {
-        if seen.insert(v.clone()) {
-            variants.push(v.lines().map(|l| l.to_string()).collect());
-        }
+    // Line-cluster merge (same engine shape as scripts): non-overlapping
+    // edits auto-apply, overlapping differing edits become region conflicts.
+    // Full `_XmlMerge.merge_children` identity-tree matching stays tracked;
+    // menu XMLs are small and line-oriented, so this covers the common
+    // disjoint-additions case without false conflicts.
+    let base: Vec<String> = base_text.lines().map(|l| l.to_string()).collect();
+    let vers: Vec<Vec<String>> = versions.iter().map(|v| v.lines().map(|l| l.to_string()).collect()).collect();
+    let r = crate::script_merge::merge_script(&base, &vers, resolutions);
+    if !r.needs_resolution {
+        let merged = r.merged.join("\n");
+        parse_simple(&merged)?;
+        return Ok(XmlMergeResult { merged, conflicts: vec![], needs_resolution: false });
     }
-    let pick = resolutions.first().copied().unwrap_or(usize::MAX);
-    if pick < variants.len() {
-        return Ok(XmlMergeResult {
-            merged: variants[pick].join("\n"),
-            conflicts: vec![],
-            needs_resolution: false,
+    // Map script conflicts to XmlConflicts with line context.
+    let mut conflicts = vec![];
+    let mut res_idx = 0;
+    for c in &r.conflicts {
+        let pick = resolutions.get(res_idx).copied().unwrap_or(usize::MAX);
+        if pick < c.variants.len() {
+            res_idx += 1;
+            continue;
+        }
+        conflicts.push(XmlConflict {
+            path: format!("lines {}-{}", c.base_lo + 1, c.base_hi.max(c.base_lo + 1)),
+            kind: "region".to_string(),
+            why: format!("{} mods change these lines differently", c.variants.len()),
+            base_lines: base[c.base_lo.min(base.len())..c.base_hi.min(base.len())].to_vec(),
+            variants: c.variants.clone(),
+            proposed: c.variants[0].clone(),
         });
+        res_idx += 1;
+    }
+    if conflicts.is_empty() {
+        let merged = r.merged.join("\n");
+        return Ok(XmlMergeResult { merged, conflicts: vec![], needs_resolution: false });
     }
     Ok(XmlMergeResult {
-        merged: variants[0].join("\n"),
-        conflicts: vec![XmlConflict {
-            path: "/".to_string(),
-            kind: "region".to_string(),
-            why: format!("{} mods change this XML differently", variants.len()),
-            base_lines: base_text.lines().map(|l| l.to_string()).collect(),
-            variants: variants.clone(),
-            proposed: variants[0].clone(),
-        }],
+        merged: r.merged.join("\n"),
+        conflicts,
         needs_resolution: true,
     })
 }

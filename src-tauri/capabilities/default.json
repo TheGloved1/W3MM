@@ -7,6 +7,11 @@
     "core:default",
     "store:default",
     "core:window:allow-show",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "dialog:default",
+    "deep-link:default",
+    "notification:default",
+    "shell:allow-open",
+    "os:allow-platform"
   ]
 }

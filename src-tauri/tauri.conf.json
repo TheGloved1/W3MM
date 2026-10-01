@@ -13,13 +13,18 @@
     "windows": [
       {
         "title": "W3LMN",
-        "width": 900,
-        "height": 650,
+        "width": 1100,
+        "height": 700,
         "center": true
       }
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["nxm"] }
     }
   },
   "bundle": {

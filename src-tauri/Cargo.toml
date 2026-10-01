@@ -34,6 +34,12 @@ chrono = "0.4"
 encoding_rs = "0.8"
 quick-xml = "0.36"
 thiserror = "1"
+tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-os = "2"
 # --- UPDATER (optional) ---
 # To enable in-app updates later:
 #   1. Uncomment the next line.
