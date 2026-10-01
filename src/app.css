@@ -1,6 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Geist:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&family=Manrope:wght@400;500;600&family=Sora:wght@400;600&family=Outfit:wght@400;500&display=swap');
 @import 'tailwindcss';
 
+/* daisyUI v5 component classes (btn, card, …). Single dark fallback theme —
+   the template's own [data-theme="…"] blocks below win on ties, so custom
+   theme colors keep driving daisyUI components. */
+@plugin "daisyui" {
+  themes: dark --default;
+}
+
 /* Tailwind v4 renders bare `border` widths in `currentColor` (near-white
    here), which is where every harsh white divider came from. Default all
    borders to the per-theme token so dividers are hairlines everywhere. */

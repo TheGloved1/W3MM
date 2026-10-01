@@ -34,13 +34,15 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 Frontend notes: SvelteKit with `adapter-static` SPA fallback (`src/routes/+layout.ts`
 sets `ssr = false`) — required for Tauri. Run `bun run check` for type checks.
 
-shadcn-svelte (`components.json`, style nova) with bits-ui v2: the registry ships
-`data-open:` / `data-checked:` / `data-horizontal:` style selectors, but bits-ui v2
-emits `data-state` / `data-orientation`, so every primitive under
-`src/lib/components/ui` has been rewritten (`data-open:` →
-`data-[state=open]:`, etc.). `data-disabled:` / `data-highlighted:` /
-`data-placeholder:` are genuinely emitted and were left alone. Re-running
-`shadcn-svelte add -o` reverts the patches — re-apply them afterwards.
+UI foundation: daisyUI v5 (`@plugin "daisyui"` in `src/app.css`, dark theme as
+the fallback so the template's own `[data-theme="…"]` blocks keep winning) for
+styled components, plus bits-ui v2 directly for real interactivity. The five
+primitives under `src/lib/components/ui` (`button`, `card`, `label`,
+`separator`, `select`, `table`) are thin hand-written wrappers with stable
+import paths — button/card/label/separator/table are daisyUI classes, select is
+bits-ui with selectors matching its v2 output (`data-[state=…]`,
+`data-[side=…]`, `data-highlighted:`). No registry, nothing to patch: add more
+as needed following the same pattern.
 
 ## Releasing
 

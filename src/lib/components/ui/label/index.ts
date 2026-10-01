@@ -1,7 +1,9 @@
-import Root from "./label.svelte";
+import Label from "./label.svelte";
 
 export {
-	Root,
+	Label,
 	//
-	Root as Label,
+	Label as default,
 };
+
+export type { LabelProps } from "./label.svelte";
