@@ -145,13 +145,13 @@
     </div>
     <div class="flex gap-3">
       <span class="w-[110px] shrink-0"></span>
-      <div class="flex-1 rounded-[7px] border border-border bg-well px-3 py-2 font-mono" style="font-family:{config.codeFont};font-size:{config.codeSize}pt">function witcherSense() &#123; FindTracks(); &#125;</div>
+      <div class="flex-1 rounded-[7px] border border-border bg-well px-3 py-2" style="font-family:{config.codeFont};font-size:{config.codeSize}pt"><span class="text-[#b48ead]">if</span><span>( IsItemSingletonItem( l_items[0] ) )</span> <span class="text-[#7fbf8a]">// 00 1lI</span></div>
     </div>
 
     <div class="rounded-lg border border-border bg-popover px-[14px] py-2">
       <div class="flex items-center gap-2">
-        <button onclick={() => (mergerOpen = !mergerOpen)} class="flex-1 py-1 text-left text-sm font-semibold hover:text-primary">{mergerOpen ? '▾' : '▸'} Script Merger (legacy)</button>
-        <span class="text-[12px] text-muted-foreground">{mergerState}</span>
+        <button onclick={() => (mergerOpen = !mergerOpen)} class="flex-1 py-1 text-left text-sm font-semibold hover:text-primary">{mergerOpen ? '▾' : '▸'} Legacy Script Merger</button>
+        <span class="text-[12px] text-muted-foreground">{mergerOpen ? mergerState : (config.mergerPath ? mergerState : 'Not set')}</span>
       </div>
       {#if mergerOpen}
         <div class="flex items-center gap-3 py-1">

@@ -2,8 +2,6 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { goto } from '$app/navigation';
-  import { Button } from '$lib/components/ui/button';
   import type { AppState, MadeFor, QueueItem } from '$lib/types';
   import { loadConfigNative } from '$lib/config';
 
@@ -12,8 +10,6 @@
   let annotMap: Record<string, string[]> = $state({});
   let madeMap: Record<string, MadeFor> = $state({});
   let infoMap: Record<string, { scripts: { file: string; with: string[] }[]; xmls: { file: string; with: string[] }[]; lost: number }> = $state({});
-  let filesMap: Record<string, string[]> = $state({});
-  let openFiles: string | null = $state(null);
   let unmanaged: string[] = $state([]);
   let hits: { id: string; name: string; local: string; remote: string }[] = $state([]);
 
@@ -22,14 +18,19 @@
   let busy: string = $state('');
   let gameDir: string = $state('');
   let prefix: string = $state('');
+  let nexusKey: string = $state('');
   let filter: string = $state('');
   let menuOpen: boolean = $state(false);
   let collapsed: Record<string, boolean> = $state({});
+  let selected: string | null = $state(null);
+  let ctx: { id: string; x: number; y: number } | null = $state(null);
+  let hoverTip: { id: string; x: number; y: number } | null = $state(null);
 
   // downloads panel
   let dlOpen: boolean = $state(false);
   let queue: QueueItem[] = $state([]);
   let quotaText: string = $state('');
+  let quotaTip: string = $state('');
   let nxm: string = $state('');
   let archPath: string = $state('');
   let archNames: string[] = $state([]);
@@ -39,7 +40,6 @@
   const q = $derived(filter.trim().toLowerCase());
 
   function modById(id: string) { return appState?.mods.find((m) => m.id === id); }
-  function modName(id: string) { return modById(id)?.name ?? id; }
 
   function clashCount(id: string): number {
     return Object.values(clashMap).filter((ids) => ids.includes(id) && ids.length > 1).length;
@@ -70,14 +70,20 @@
 
   function fmtDate(ts: number): string {
     if (!ts) return '';
-    try { return new Date(ts * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
+    try { return new Date(ts * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
     catch { return ''; }
+  }
+
+  function enabledCounts(): [number, number] {
+    if (!appState) return [0, 0];
+    const mods = appState.mods.filter((m) => !m.sep);
+    return [mods.filter((m) => m.enabled).length, mods.length];
   }
 
   async function boot() {
     try {
       const cfg = await loadConfigNative();
-      gameDir = cfg.gameDir; prefix = cfg.prefix;
+      gameDir = cfg.gameDir; prefix = cfg.prefix; nexusKey = cfg.nexusKey;
       if (!gameDir) {
         const found = await invoke<string | null>('detect_game').catch(() => null);
         if (found) {
@@ -110,9 +116,9 @@
       for (const m of appState.mods.filter((x) => !x.sep)) {
         invoke<MadeFor>('made_for', { id: m.id }).then((r) => { madeMap[m.id] = r; }).catch(() => {});
       }
-      for (const m of appState.mods.filter((x) => x.sep && x.collapsed)) collapsed[m.id] = true;
     }
-    const [qt] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+    const [qt, qtip] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+    void qtip;
     quotaText = qt;
   }
 
@@ -153,6 +159,7 @@
     const m = modById(id);
     if (!m || !confirm(`Uninstall “${m.name}” and its staged files?`)) return;
     await invoke('remove_mods', { ids: [id] });
+    if (selected === id) selected = null;
     await refresh();
     await deploy(true);
   }
@@ -165,107 +172,52 @@
     await refresh();
   }
 
-  async function editRow(id: string) {
+  function openEdit(id: string) {
+    ctx = null;
+    invoke('open_tool_window', { kind: 'edit', query: `id=${encodeURIComponent(id)}`, path: id });
+  }
+
+  function openResolver() { menuOpen = false; invoke('open_tool_window', { kind: 'resolver', query: '', path: '' }); }
+  function openSettings() { menuOpen = false; invoke('open_tool_window', { kind: 'setup', query: '', path: '' }); }
+
+  async function openNexusPage(id: string) {
+    ctx = null;
     const m = modById(id);
-    if (!m) return;
-    const name = prompt('Mod name', m.name);
-    if (name === null) return;
-    const version = prompt('Version', m.version) ?? m.version;
-    const nexus = prompt('Nexus id', m.nexus) ?? m.nexus;
-    await invoke('edit_mod', { id, name, version, nexusId: nexus, section: '' });
-    await refresh();
-  }
-
-  async function toggleFiles(id: string) {
-    if (openFiles === id) { openFiles = null; return; }
-    openFiles = id;
-    if (!filesMap[id]) filesMap[id] = await invoke<string[]>('staged_files', { id }).catch(() => []);
-  }
-
-  async function toggleCollapse(id: string) {
-    collapsed[id] = !collapsed[id];
-  }
-
-  function sepOf(id: string): string | null {
-    let cur: string | null = null;
-    if (!appState) return null;
-    for (const r of appState.mods) {
-      if (r.sep) cur = r.id;
-      else if (r.id === id) return cur;
-    }
-    return cur;
-  }
-
-  function isHiddenByCollapse(id: string): boolean {
-    if (filtering) return false;
-    const s = sepOf(id);
-    return s !== null && !!collapsed[s];
-  }
-
-  function countMembers(sepId: string): number {
-    if (!appState) return 0;
-    let counting = false;
-    let n = 0;
-    for (const r of appState.mods) {
-      if (r.sep) {
-        if (counting) break;
-        if (r.id === sepId) counting = true;
-      } else if (counting) {
-        if (!filtering || r.name.toLowerCase().includes(q)) n++;
-      }
-    }
-    return n;
-  }
-
-  type Chip = { text: string; tip: string; cls: string };
-
-  function chipsFor(m: { id: string; name: string }): Chip[] {
-    const chips: Chip[] = [];
-    const bad = 'bg-[#e3735f]/15 text-[#e3735f]';
-    const warn = 'bg-[#c9a45c]/15 text-[#c9a45c]';
-    const nw = 'bg-[#b5d95a]/15 text-[#b5d95a]';
-    const files = 'bg-[#86b0cf]/15 text-[#86b0cf]';
-    const sc = sharedScripts(m.id);
-    if (sc.length) chips.push({ text: `⚑ ${sc.length}`, tip: sc.map((s) => `${s.file} — with ${s.with.join(', ')}`).join('\n'), cls: bad });
-    const xm = sharedXmls(m.id);
-    if (xm.length) chips.push({ text: `☰ ${xm.length}`, tip: xm.map((s) => `${s.file} — with ${s.with.join(', ')}`).join('\n'), cls: bad });
-    const oc = otherClashes(m.id);
-    if (oc.length) chips.push({ text: `≠ ${oc.length}`, tip: oc.join('\n'), cls: warn });
-    const an = annotCount(m.name);
-    if (an) chips.push({ text: `@ ${an}`, tip: 'Same RedKit symbol added by two mods', cls: bad });
-    const lost = lostCount(m.id);
-    if (lost) chips.push({ text: `⧉ ${lost}`, tip: `${lost} file${lost === 1 ? '' : 's'} overridden by higher mods`, cls: files });
-    const made = madeMap[m.id];
-    if (made?.short) chips.push({ text: made.short, tip: made.label || made.short, cls: made.status === 'classic' ? bad : warn });
-    const h = hits.find((hh) => hh.id === m.id);
-    if (h) chips.push({ text: '↑', tip: `Update on Nexus: ${h.local} → ${h.remote}`, cls: nw });
-    return chips;
-  }
-
-  async function pickArchives() {
+    const nid = m?.nexus?.trim();
+    if (!nid) { flash('No Nexus id on this mod — set one in Edit…'); return; }
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const sel = await open({ multiple: true, filters: [{ name: 'Mod archive', extensions: ['zip', '7z', 'rar', 'tar', 'gz', 'tgz'] }] });
-      const paths: string[] = Array.isArray(sel) ? sel as string[] : sel ? [sel as string] : [];
-      for (const p of paths) {
-        await invoke('open_tool_window', { kind: 'install', query: `path=${encodeURIComponent(p)}`, path: p });
-      }
-    } catch {}
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(`https://www.nexusmods.com/witcher3/mods/${nid}`);
+    } catch (e) { error = String(e); }
   }
 
-  async function installPath(p: string) {
-    busy = 'Installing…'; error = '';
+  async function openModFolder(id: string) {
+    ctx = null;
     try {
-      const base = p.split('/').pop() ?? p;
-      const [n, v, nx] = await invoke<[string, string, string]>('parse_archive_name', { filename: base });
-      const name = prompt('Mod name', n) ?? n;
-      await invoke('install_archive', { path: p, name, version: v, nexusId: nx });
-      archPath = '';
-      await refresh();
-      await deploy(true);
-      flash(`Installed “${name}”`);
+      const dir = await invoke<string>('mod_dir', { id });
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open(dir);
+    } catch (e) { error = String(e); }
+  }
+
+  async function checkOne(id: string) {
+    ctx = null;
+    busy = 'Checking Nexus…';
+    try {
+      const cfg = await loadConfigNative();
+      const all = await invoke<typeof hits>('check_updates', { apiKey: cfg.nexusKey });
+      hits = all;
+      const h = all.find((x) => x.id === id);
+      flash(h ? `Update available: ${h.local} → ${h.remote}` : 'No update for this mod.');
     } catch (e) { error = String(e); }
     busy = '';
+  }
+
+  async function reinstall(id: string) {
+    ctx = null;
+    const m = modById(id);
+    if (!m?.archive) { flash('No archive recorded — pick the file again.'); return; }
+    await invoke('open_tool_window', { kind: 'install', query: `path=${encodeURIComponent(m.archive)}`, path: m.archive });
   }
 
   async function importThem() {
@@ -275,7 +227,7 @@
       await invoke('import_unmanaged', { rels: unmanaged });
       await refresh();
       await deploy(true);
-      flash(`Imported ${unmanaged.length} mod${unmanaged.length === 1 ? '' : 's'}`);
+      flash('Imported unmanaged mods.');
     } catch (e) { error = String(e); }
     busy = '';
   }
@@ -309,18 +261,92 @@
     try {
       const { open } = await import('@tauri-apps/plugin-shell');
       if (kind === 'game') await open(gameDir);
-      else if (kind === 'settings') {
-        const dir = await invoke<string>('settings_dir_path');
-        await open(dir);
-      } else {
-        const dir = await invoke<string>('settings_dir_path');
-        await open(`${dir}/${kind}`);
-      }
+      else if (kind === 'settings') await open(await invoke<string>('settings_dir_path'));
+      else await open(`${await invoke<string>('settings_dir_path')}/${kind}`);
     } catch (e) { error = String(e); }
   }
 
-  function openResolver() { menuOpen = false; invoke('open_tool_window', { kind: 'resolver', query: '', path: '' }); }
-  function openSettings() { menuOpen = false; invoke('open_tool_window', { kind: 'setup', query: '', path: '' }); }
+  async function toggleCollapse(id: string) {
+    collapsed[id] = !collapsed[id];
+  }
+
+  async function pickArchives() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const sel = await open({ multiple: true, filters: [{ name: 'Mod archive', extensions: ['zip', '7z', 'rar', 'tar', 'gz', 'tgz'] }] });
+      const paths: string[] = Array.isArray(sel) ? (sel as string[]) : sel ? [sel as string] : [];
+      for (const p of paths) {
+        await invoke('open_tool_window', { kind: 'install', query: `path=${encodeURIComponent(p)}`, path: p });
+      }
+    } catch {}
+  }
+
+  function onRowContext(id: string, ev: MouseEvent) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    selected = id;
+    ctx = { id, x: ev.clientX, y: ev.clientY };
+  }
+
+  type Chip = { text: string; tip: string; cls: string };
+
+  function chipsFor(m: { id: string; name: string }): Chip[] {
+    const chips: Chip[] = [];
+    const bad = 'bg-[#e3735f]/15 text-[#e3735f]';
+    const warn = 'bg-[#c9a45c]/15 text-[#c9a45c]';
+    const nw = 'bg-[#b5d95a]/15 text-[#b5d95a]';
+    const files = 'bg-[#86b0cf]/15 text-[#86b0cf]';
+    const sc = sharedScripts(m.id);
+    if (sc.length) chips.push({ text: `⚑ ${sc.length}`, tip: sc.map((s) => `${s.file} — with ${s.with.join(', ')}`).join('\n'), cls: bad });
+    const xm = sharedXmls(m.id);
+    if (xm.length) chips.push({ text: `☰ ${xm.length}`, tip: xm.map((s) => `${s.file} — with ${s.with.join(', ')}`).join('\n'), cls: bad });
+    const oc = otherClashes(m.id);
+    if (oc.length) chips.push({ text: `≠ ${oc.length}`, tip: oc.join('\n'), cls: warn });
+    const an = annotCount(m.name);
+    if (an) chips.push({ text: `@ ${an}`, tip: 'Same RedKit symbol added by two mods', cls: bad });
+    const lost = lostCount(m.id);
+    if (lost) chips.push({ text: `⧉ ${lost}`, tip: `${lost} file${lost === 1 ? '' : 's'} overridden by higher mods`, cls: files });
+    const made = madeMap[m.id];
+    if (made?.short) chips.push({ text: made.short, tip: made.label || made.short, cls: made.status === 'classic' ? bad : warn });
+    const h = hits.find((hh) => hh.id === m.id);
+    if (h) chips.push({ text: '↑', tip: `Update on Nexus: ${h.local} → ${h.remote}`, cls: nw });
+    return chips;
+  }
+
+  function sepOf(id: string): string | null {
+    let cur: string | null = null;
+    if (!appState) return null;
+    for (const r of appState.mods) {
+      if (r.sep) cur = r.id;
+      else if (r.id === id) return cur;
+    }
+    return cur;
+  }
+
+  function isHiddenByCollapse(id: string): boolean {
+    if (filtering) return false;
+    const s = sepOf(id);
+    return s !== null && !!collapsed[s];
+  }
+
+  function countMembers(sepId: string): number {
+    if (!appState) return 0;
+    let counting = false;
+    let n = 0;
+    for (const r of appState.mods) {
+      if (r.sep) {
+        if (counting) break;
+        if (r.id === sepId) counting = true;
+      } else if (counting) {
+        if (!filtering || r.name.toLowerCase().includes(q)) n++;
+      }
+    }
+    return n;
+  }
+
+  function targetsOf(id: string): string[] {
+    return modById(id)?.targets ?? [];
+  }
 
   // ---- downloads panel ----
   async function notify(title: string, body: string) {
@@ -377,6 +403,11 @@
     } catch (e) { error = String(e); }
   }
 
+  async function archInstall() {
+    if (!archPath) return;
+    await invoke('open_tool_window', { kind: 'install', query: `path=${encodeURIComponent(archPath)}`, path: archPath });
+  }
+
   onMount(() => {
     boot();
     let unlisten: (() => void) | undefined;
@@ -399,34 +430,35 @@
           flash(`Downloaded → ${e.payload.path.split('/').pop()}`);
         });
         unlistenM = await listen('mods-changed', async () => {
+          selected = null;
           await refresh();
           await deploy(true);
         });
       } catch {}
     })();
-    function onDocClick() { menuOpen = false; }
+    function onDocClick() { menuOpen = false; ctx = null; hoverTip = null; }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { menuOpen = false; ctx = null; } }
     document.addEventListener('click', onDocClick);
-    return () => { unlisten?.(); unlistenP?.(); unlistenD?.(); unlistenM?.(); document.removeEventListener('click', onDocClick); };
+    document.addEventListener('keydown', onKey);
+    return () => { unlisten?.(); unlistenP?.(); unlistenD?.(); unlistenM?.(); document.removeEventListener('click', onDocClick); document.removeEventListener('keydown', onKey); };
   });
+
+  const [enCount, totalCount] = $derived(enabledCounts());
 </script>
 
 <div class="flex h-full min-h-0">
-  <!-- main column -->
   <div class="flex min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[18px] pb-[12px]">
-    <!-- header -->
     <div class="flex items-center gap-[10px]">
-      <div class="flex-1 leading-tight min-w-0">
+      <div class="min-w-0 flex-1 leading-tight">
         <div class="text-[19pt] font-semibold tracking-tight">The Witcher 3</div>
-        <div class="text-[13px] text-muted-foreground truncate">
-          {#if appState}{appState.mods.filter((m) => !m.sep).length} mods{#if gameDir} · {gameDir}{/if}{:else}W3 Mod Manager{/if}
-        </div>
+        <div class="truncate text-[13px] text-muted-foreground">{enCount} of {totalCount} mods enabled</div>
       </div>
       <input
         bind:value={filter}
-        placeholder="Filter mods"
+        placeholder={dlOpen && nexusKey ? 'Filter mods and downloads' : 'Filter mods'}
         class="w-[230px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary"
       />
-      <button onclick={play} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">▶ Play</button>
+      <button onclick={play} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Play</button>
       <button onclick={pickArchives} class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110">Install mods</button>
       <div class="relative">
         <button onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen; }} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent" aria-label="More">•••</button>
@@ -448,7 +480,6 @@
       </div>
     </div>
 
-    <!-- banners -->
     {#if unmanaged.length}
       <div class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm">
         <span class="flex-1">{unmanaged.length} mod folder{unmanaged.length === 1 ? '' : 's'} in the game {unmanaged.length === 1 ? 'is' : 'are'} not managed yet.</span>
@@ -461,56 +492,68 @@
       </div>
     {/if}
 
-    <!-- list -->
-    <div class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card">
-      <div class="grid grid-cols-[90px_minmax(0,1fr)_120px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border px-3 py-2 text-[11px] uppercase tracking-wide text-muted-foreground sticky top-0 bg-card z-10">
+    <div role="presentation" class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card" oncontextmenu={(e) => e.preventDefault()}>
+      <div class="sticky top-0 z-10 grid grid-cols-[90px_minmax(0,1fr)_110px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border bg-card px-3 py-2 text-[12px] text-muted-foreground">
         <span class="text-center">Priority</span><span>Mod</span><span>Version</span><span>Status</span><span>Installed</span>
       </div>
       {#if !appState}
-        <div class="flex h-64 items-center justify-center px-6 text-center text-[12pt] text-muted-foreground whitespace-pre-line">Set the game folder in Settings…</div>
+        <div class="flex h-64 items-center justify-center px-6 text-center text-[12pt] text-muted-foreground">Set the game folder in Settings…</div>
       {:else if !appState.mods.length}
         <div class="flex h-64 items-center justify-center px-6 text-center text-[12pt] text-muted-foreground whitespace-pre-line">{"No mods yet\n\nClick Install mods, or drop .zip / .7z / .rar files here"}</div>
       {:else}
         {#each appState.mods as m}
           {#if m.sep}
             {#if !filtering}
-              <button onclick={() => toggleCollapse(m.id)} class="grid w-full grid-cols-1 items-center gap-2 border-b border-border px-3 text-left hover:bg-accent/50" style="min-height:40px">
+              <button onclick={() => toggleCollapse(m.id)} class="grid w-full grid-cols-1 items-center border-b border-border px-3 text-left hover:bg-accent/50" style="min-height:40px">
                 <span class="text-[13px] font-semibold text-muted-foreground">{collapsed[m.id] ? '›' : '⌄'} {m.name} <span class="font-normal">({countMembers(m.id)})</span></span>
               </button>
             {/if}
           {:else if !filtering || m.name.toLowerCase().includes(q)}
-            {#if !(filtering ? false : isHiddenByCollapse(m.id))}
-            <div class="grid grid-cols-[90px_minmax(0,1fr)_120px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border/60 px-3 hover:bg-accent/30" style="min-height:40px">
+            {#if !isHiddenByCollapse(m.id)}
+            <div
+              class="relative grid grid-cols-[90px_minmax(0,1fr)_110px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border/60 px-3 {selected === m.id ? 'bg-[#c9a45c]/15 text-white' : 'hover:bg-accent/30'}"
+              style="min-height:40px"
+              onclick={() => { selected = m.id; }}
+              ondblclick={() => openEdit(m.id)}
+              oncontextmenu={(e) => onRowContext(m.id, e)}
+              onkeydown={(e) => { if (e.key === 'Enter') openEdit(m.id); }}
+              role="row" tabindex="0"
+            >
               <span class="flex justify-center">
                 {#if clashCount(m.id) || sharedScripts(m.id).length || sharedXmls(m.id).length}
-                  <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins"
+                  <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins" onclick={(e) => e.stopPropagation()}
                     class="w-[52px] rounded-full border border-primary/60 bg-primary/15 px-1 py-[3px] text-center text-[13px] font-semibold text-primary outline-none" />
                 {:else}
                   <span class="text-muted-foreground/50">–</span>
                 {/if}
               </span>
               <span class="flex min-w-0 items-center gap-2">
-                <input type="checkbox" checked={m.enabled} onchange={() => toggle(m.id, m.enabled)} aria-label="enabled for {m.name}"
+                <input type="checkbox" checked={m.enabled} onchange={() => toggle(m.id, m.enabled)} onclick={(e) => e.stopPropagation()} aria-label="enabled for {m.name}"
                   class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat" />
-                <span class="min-w-0">
+                <span role="button" tabindex="0" class="relative min-w-0"
+                  onmouseenter={(e) => { hoverTip = { id: m.id, x: e.clientX, y: e.clientY }; }}
+                  onmouseleave={() => { hoverTip = null; }}
+                  onfocus={() => { hoverTip = null; }}
+                  onkeydown={(e) => { if (e.key === 'Enter') openEdit(m.id); }}>
                   <span class="block truncate text-sm">{m.name}</span>
-                  {#if openFiles === m.id}
-                    <span class="block max-h-32 overflow-auto font-mono text-[10px] text-muted-foreground whitespace-pre-wrap">{(filesMap[m.id] ?? ['…']).join('\n')}</span>
+                  {#if hoverTip?.id === m.id && targetsOf(m.id).length}
+                    <span class="pointer-events-none fixed z-50 max-w-[420px] rounded-[6px] border border-[#5d6773] bg-[#2f3740] px-3 py-2 shadow-xl" style="left:{Math.min(hoverTip.x + 12, window.innerWidth - 440)}px;top:{hoverTip.y + 14}px">
+                      <span class="block border-b border-[#5d6773] pb-1 text-[13px] font-semibold">Installs to</span>
+                      {#each targetsOf(m.id).slice(0, 12) as t}
+                        <span class="block truncate font-mono text-[12px] text-[#86b0cf]">{t}</span>
+                      {/each}
+                      {#if targetsOf(m.id).length > 12}<span class="block text-[11px] text-muted-foreground">… {targetsOf(m.id).length - 12} more</span>{/if}
+                    </span>
                   {/if}
                 </span>
               </span>
-              <span class="truncate text-[13px] text-muted-foreground">{m.version}</span>
+              <span class="truncate text-[13px] {selected === m.id ? 'text-white/80' : 'text-muted-foreground'}">{m.version}</span>
               <span class="flex flex-wrap gap-1 py-1">
                 {#each chipsFor(m) as c}
                   <span title={c.tip} class="rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}">{c.text}</span>
                 {/each}
-                <button onclick={() => toggleFiles(m.id)} title="staged files" class="text-[11px] text-muted-foreground hover:text-foreground">{openFiles === m.id ? '▴' : '▾'}</button>
               </span>
-              <span class="flex items-center gap-1 text-[13px] text-muted-foreground">
-                <span>{fmtDate(m.updated)}</span>
-                <button onclick={() => editRow(m.id)} title="Edit" class="rounded px-1 hover:bg-accent hover:text-foreground">✎</button>
-                <button onclick={() => removeMod(m.id)} title="Uninstall" class="rounded px-1 hover:bg-accent hover:text-foreground">🗑</button>
-              </span>
+              <span class="truncate text-[13px] {selected === m.id ? 'text-white/80' : 'text-muted-foreground'}">{fmtDate(m.updated)}</span>
             </div>
             {/if}
           {/if}
@@ -518,19 +561,31 @@
       {/if}
     </div>
 
-    <!-- footer -->
     <div class="flex items-center gap-2">
-      <span class="min-w-0 flex-1 text-[13px] text-muted-foreground break-words" title={error || status}>{error ? `⚠ ${error}` : status}</span>
-      {#if quotaText}<span class="text-[12px] text-muted-foreground">{quotaText}</span>{/if}
+      <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground" title={error || status || gameDir}>{error ? `⚠ ${error}` : status || gameDir}</span>
+      {#if quotaText}<span class="shrink-0 text-[12px] text-muted-foreground">Nexus API: <span class="text-primary">{quotaText.replace('Nexus API:', '').trim()}</span></span>{/if}
       {#if busy}
-        <span class="text-[12px] text-muted-foreground">{busy}</span>
-        <span class="h-[6px] w-[180px] overflow-hidden rounded bg-muted"><span class="block h-full w-1/3 animate-pulse rounded bg-primary"></span></span>
+        <span class="shrink-0 text-[12px] text-muted-foreground">{busy}</span>
+        <span class="h-[6px] w-[180px] shrink-0 overflow-hidden rounded bg-muted"><span class="block h-full w-1/3 animate-pulse rounded bg-primary"></span></span>
       {/if}
-      <button onclick={() => { dlOpen = !dlOpen; }} title="Downloads" class="rounded-[7px] border px-3 py-1.5 text-sm {dlOpen ? 'border-primary bg-primary/15 text-primary' : 'border-border bg-popover text-muted-foreground hover:text-foreground hover:bg-accent'}">⤓{queue.filter((qq) => qq.status === 'active' || qq.status === 'queued').length ? ` (${queue.filter((qq) => qq.status === 'active' || qq.status === 'queued').length})` : ''}</button>
+      <button onclick={() => { dlOpen = !dlOpen; }} title="Downloads" class="shrink-0 rounded-[7px] border px-3 py-1.5 text-sm {dlOpen ? 'border-primary bg-primary/15 text-primary' : 'border-border bg-popover text-muted-foreground hover:text-foreground hover:bg-accent'}">Downloads {dlOpen ? '‹' : '›'}</button>
     </div>
   </div>
 
-  <!-- downloads slide-over -->
+  {#if ctx && modById(ctx.id)}
+    {@const cm = modById(ctx.id)!}
+    {@const cid = ctx.id}
+    <div role="menu" tabindex="-1" class="fixed z-50 w-56 rounded-lg border border-border bg-popover py-1 shadow-2xl" style="left:{Math.min(ctx.x, window.innerWidth - 240)}px;top:{Math.min(ctx.y, window.innerHeight - 260)}px" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <button onclick={() => openEdit(cid)} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"><span>✎</span> Edit…</button>
+      <button onclick={() => openNexusPage(cid)} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"><span>↗</span> Open Nexus page</button>
+      <button onclick={() => openModFolder(cid)} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"><span>📁</span> Open folder</button>
+      <button onclick={() => checkOne(cid)} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"><span>⟳</span> Check for update</button>
+      <button onclick={() => reinstall(cid)} disabled={!cm.archive} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-50"><span>⧉</span> Reinstall from archive</button>
+      <div class="my-1 border-t border-border"></div>
+      <button onclick={() => removeMod(cid)} class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"><span>🗑</span> Uninstall…</button>
+    </div>
+  {/if}
+
   {#if dlOpen}
     <div class="flex w-[330px] max-w-[80vw] shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-card px-4 py-[18px]">
       <div class="flex items-center gap-1.5">
@@ -568,7 +623,7 @@
         <div class="flex gap-2">
           <button onclick={archList} class="rounded-[7px] border border-border bg-popover px-2 py-1 text-[13px] hover:bg-accent">List</button>
           <button onclick={archPreview} class="rounded-[7px] border border-border bg-popover px-2 py-1 text-[13px] hover:bg-accent">Preview</button>
-          <button onclick={() => archPath && installPath(archPath)} class="rounded-[7px] bg-primary px-2 py-1 text-[13px] font-semibold text-primary-foreground hover:brightness-110" disabled={!archPath}>Install</button>
+          <button onclick={archInstall} class="rounded-[7px] bg-primary px-2 py-1 text-[13px] font-semibold text-primary-foreground hover:brightness-110" disabled={!archPath}>Install</button>
         </div>
         {#if archNames.length}
           <pre class="mt-2 max-h-40 overflow-auto rounded bg-well p-2 font-mono text-[11px] whitespace-pre-wrap">{archNames.slice(0, 200).join('\n')}</pre>

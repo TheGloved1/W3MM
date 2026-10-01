@@ -785,6 +785,36 @@ fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
     Ok(m.settings_dir().to_string_lossy().to_string())
 }
 
+/// Move a mod under a section separator (or to the unsectioned end).
+#[tauri::command]
+fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<bool, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        let at = s.mods.iter().position(|r| r.id == id && !r.sep);
+        let Some(at) = at else { return Ok(false) };
+        let row = s.mods.remove(at);
+        if sep_id.is_empty() {
+            s.mods.push(row);
+        } else {
+            let dest = s.mods.iter().position(|r| r.id == sep_id && r.sep);
+            match dest {
+                Some(d) => {
+                    let mut ins = d + 1;
+                    while ins < s.mods.len() && !s.mods[ins].sep {
+                        ins += 1;
+                    }
+                    s.mods.insert(ins, row);
+                }
+                None => s.mods.push(row),
+            }
+        }
+    }
+    m.save()?;
+    Ok(true)
+}
+
 /// Open (or focus) a tool window: install | setup | resolver.
 /// The original is a multi-window app (Install/Settings/Script-decisions
 /// dialogs); each tool is a Svelte route rendered in its own native window.
@@ -793,6 +823,7 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     use tauri::Manager;
     let (title, w, h) = match kind.as_str() {
         "install" => ("Install mod", 820.0, 660.0),
+        "edit" => ("Edit mod", 860.0, 520.0),
         "setup" => ("Settings", 700.0, 640.0),
         "resolver" => ("Script decisions", 1150.0, 760.0),
         _ => return Err("unknown window".into()),
@@ -959,6 +990,169 @@ fn save_merge(shared: State<Shared>, rel: String, text: String, answers: Vec<usi
     Ok(true)
 }
 
+/// Staged dir of one mod (context-menu Open folder).
+#[tauri::command]
+fn mod_dir(shared: State<Shared>, id: String) -> Result<String, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    Ok(m.home.staging.join(&id).to_string_lossy().to_string())
+}
+
+/// Remove a section; its mods move out to the unsectioned end of the list in
+/// order, priorities unchanged (python `remove_section`).
+#[tauri::command]
+fn remove_section_cmd(shared: State<Shared>, sep_id: String) -> Result<bool, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        let at = s.mods.iter().position(|r| r.id == sep_id && r.sep);
+        let Some(at) = at else { return Ok(false) };
+        let mut end = at + 1;
+        while end < s.mods.len() && !s.mods[end].sep {
+            end += 1;
+        }
+        let members: Vec<state::ModRow> = s.mods.drain(at..end).filter(|r| !r.sep).collect();
+        s.mods.extend(members);
+    }
+    m.save()?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlanRoot {
+    pub prefix: String,
+    pub kind: String,
+    pub folder: String,
+    pub files: usize,
+}
+
+/// Top-level roots of an archive for the Install dialog's Archive-contents
+/// table: (source prefix, kind, folder name, file count).
+#[tauri::command]
+fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
+    use std::path::Path;
+    let archive = Path::new(&path);
+    let tmp = std::env::temp_dir().join(format!("w3lmn-roots-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let plan = (|| {
+        archive::extract_archive(archive, &tmp).map_err(|e| e.to_string())?;
+        Ok::<_, String>(install::analyze(&tmp))
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let plan = plan?;
+    // group staged targets by their top two segments (kind + folder)
+    let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    for (_src, rel) in &plan.moves {
+        let mut parts = rel.split('/');
+        let first = parts.next().unwrap_or("").to_lowercase();
+        if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
+            let folder = parts.next().unwrap_or("").to_string();
+            let kind = match first.as_str() {
+                "dlc" => "DLC",
+                "bin" => "Bin",
+                "content" => "Content",
+                _ => "Mod",
+            }
+            .to_string();
+            *groups.entry((kind, folder)).or_default() += 1;
+        } else {
+            *groups.entry(("Mod".to_string(), String::new())).or_default() += 1;
+        }
+    }
+    Ok(groups
+        .into_iter()
+        .map(|((kind, folder), files)| PlanRoot {
+            prefix: if folder.is_empty() { String::new() } else { format!("{}/{}", kind.to_lowercase(), folder) },
+            kind,
+            folder,
+            files,
+        })
+        .collect())
+}
+
+/// Install with per-root kind/folder mapping from the dialog's table.
+#[tauri::command]
+fn install_roots(
+    shared: State<Shared>,
+    path: String,
+    name: String,
+    version: String,
+    nexus_id: String,
+    section: String,
+    roots: Vec<PlanRoot>,
+) -> Result<String, String> {
+    let tmp = std::env::temp_dir().join(format!("w3lmn-install-{}", uuid::Uuid::new_v4().simple()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let res: Result<String, String> = (|| {
+        archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
+        let plan = install::analyze(&tmp);
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+        let stage = m.home.staging.join(&id);
+        // remap each planned move through the dialog's root table
+        let mut remapped: Vec<(String, String)> = vec![];
+        for (src, rel) in &plan.moves {
+            let mut parts = rel.split('/');
+            let first = parts.next().unwrap_or("").to_lowercase();
+            let mapped = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
+                let folder = parts.next().unwrap_or("").to_string();
+                let kind = match first.as_str() {
+                    "dlc" => "DLC",
+                    "bin" => "Bin",
+                    "content" => "Content",
+                    _ => "Mod",
+                };
+                let row = roots.iter().find(|r| r.kind == kind && r.folder == folder);
+                match row {
+                    Some(r) if !r.folder.is_empty() => {
+                        let rest: Vec<&str> = rel.split('/').skip(2).collect();
+                        format!("{}/{}/{}", kind_dir(&r.kind), r.folder, rest.join("/"))
+                    }
+                    _ => rel.clone(),
+                }
+            } else {
+                let row = roots.iter().find(|r| r.folder.is_empty() || r.prefix.is_empty());
+                match row {
+                    Some(r) if !r.folder.is_empty() => format!("{}/{rel}", kind_dir(&r.kind)),
+                    Some(r) => format!("{}/{}", kind_dir(&r.kind), state::folder_safe(&name)),
+                    None => format!("mods/{}/{}", state::folder_safe(&name), rel),
+                }
+            };
+            remapped.push((src.clone(), mapped));
+        }
+        let sub = install::InstallPlan { moves: remapped, docs: plan.docs.clone() };
+        let folder = state::ensure_mod_prefix(&name);
+        let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
+        {
+            let mut s = m.state.lock().map_err(|e| e.to_string())?;
+            s.mods.push(state::ModRow {
+                id: id.clone(), sep: false, name: name.clone(), enabled: true,
+                version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
+                section: section.clone(), updated: chrono::Utc::now().timestamp(),
+                collapsed: false, targets: targets.clone(), nexus_cat: String::new(), main_of: String::new(),
+            });
+            s.priority_ids();
+        }
+        m.save()?;
+        Ok(id)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    res
+}
+
+fn kind_dir(kind: &str) -> &'static str {
+    match kind {
+        "DLC" => "dlc",
+        "Bin" => "bin",
+        "Content" => "content",
+        _ => "mods",
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1058,7 +1252,12 @@ pub fn run() {
             open_tool_window,
             merger_apply,
             merge_inputs,
-            save_merge
+            save_merge,
+            mod_dir,
+            remove_section_cmd,
+            move_to_section,
+            preview_roots,
+            install_roots
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

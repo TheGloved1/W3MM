@@ -144,7 +144,7 @@
 }
 
 body {
-  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--color-nms-bg);
   color: var(--color-nms-text);
 }
