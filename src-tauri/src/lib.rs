@@ -554,6 +554,105 @@ fn staged_files(shared: State<Shared>, id: String) -> Result<Vec<String>, String
     Ok(deploy::mod_files(&stage).into_iter().map(|p| p.to_string_lossy().to_string()).collect())
 }
 
+/// Mod folders sitting in the game that no managed mod owns
+/// (python `unmanaged_mods`): `mods/<name>` dirs, not symlinks, not ours.
+#[tauri::command]
+fn unmanaged_mods(shared: State<Shared>) -> Result<Vec<String>, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let owned: std::collections::HashSet<String> = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        s.mods_only().iter().flat_map(|r| r.targets.iter().map(|t| t.to_lowercase())).collect()
+    };
+    let mods_dir = m.home.game.join("mods");
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(&mods_dir) {
+        for e in rd.flatten() {
+            let ft = e.file_type().map_err(|e| e.to_string())?;
+            if !ft.is_dir() || ft.is_symlink() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel = format!("mods/{name}");
+            if owned.contains(&rel.to_lowercase()) {
+                continue;
+            }
+            out.push(rel);
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Adopt unmanaged game folders as mods (python `import_unmanaged`): moves
+/// each folder into staging and creates an enabled row for it.
+#[tauri::command]
+fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<String>, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    // mods.settings priorities/enabled for ordering + initial state
+    let settings = std::fs::read_to_string(m.settings_dir().join("mods.settings")).unwrap_or_default();
+    let mut prio: std::collections::HashMap<String, i64> = Default::default();
+    let mut en: std::collections::HashMap<String, bool> = Default::default();
+    {
+        let mut order = 0i64;
+        for line in settings.lines() {
+            let t = line.trim();
+            if t.eq_ignore_ascii_case("[Mods]") {
+                continue;
+            }
+            if t.starts_with('[') {
+                break;
+            }
+            if let Some((k, v)) = t.split_once('=') {
+                let folder = k.trim().trim_start_matches("Mod").trim();
+                let _ = order;
+                // entries look like `Mod0=modName`; priority = file order
+                prio.entry(v.trim().to_lowercase()).or_insert(order);
+                order += 1;
+                let _ = folder;
+            }
+        }
+        // Enabled flags live per-mod-row; default on.
+        for v in prio.keys() {
+            en.entry(v.clone()).or_insert(true);
+        }
+    }
+    let mut sorted = rels;
+    sorted.sort_by_key(|r| (prio.get(&r.split('/').nth(1).unwrap_or("").to_lowercase()).copied().unwrap_or(9999), r.clone()));
+    let mut ids = vec![];
+    for rel in sorted {
+        let src = m.home.game.join(&rel);
+        if !src.is_dir() {
+            continue;
+        }
+        let folder = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+        let dst = m.home.staging.join(&id).join("mods").join(&folder);
+        std::fs::create_dir_all(dst.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::rename(&src, &dst).map_err(|e| format!("{}: {e}", rel))?;
+        let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
+            folder[3..].to_string()
+        } else {
+            folder.clone()
+        };
+        {
+            let mut s = m.state.lock().map_err(|e| e.to_string())?;
+            s.mods.push(state::ModRow {
+                id: id.clone(), sep: false, name: stripped, enabled: *en.get(&folder.to_lowercase()).unwrap_or(&true),
+                version: String::new(), nexus: String::new(), archive: String::new(),
+                section: String::new(), updated: chrono::Utc::now().timestamp(),
+                collapsed: false, targets: vec![format!("mods/{folder}")],
+                nexus_cat: String::new(), main_of: String::new(),
+            });
+            s.priority_ids();
+        }
+        ids.push(id);
+    }
+    m.save()?;
+    Ok(ids)
+}
+
 /// Per-mod overlap report: shared scripts/xmls + beaten-file counts
 /// (python `analysis` core: sharing + lost, minus merge-registry detail).
 #[tauri::command]
@@ -651,6 +750,14 @@ fn queue_pump(app: tauri::AppHandle, id: String, dest_dir: String, api_key: Stri
     Ok(target.to_string_lossy().to_string())
 }
 
+/// Absolute settings-dir path for the Open menu.
+#[tauri::command]
+fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    Ok(m.settings_dir().to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -738,12 +845,15 @@ pub fn run() {
             quota,
             merger_check,
             staged_files,
+            unmanaged_mods,
+            import_unmanaged,
             analysis_summary,
             queue_enqueue,
             queue_list,
             queue_cancel,
             queue_pause,
-            queue_pump
+            queue_pump,
+            settings_dir_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

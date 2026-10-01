@@ -22,40 +22,46 @@
 }
 
 @theme {
-  --color-nms-bg: #0a0f1a;
-  --color-nms-panel: #111b2d;
-  --color-nms-panel-hover: #1a2a45;
-  --color-nms-border: #1e3356;
-  --color-nms-border-light: #2a4a7a;
-  --color-nms-accent: #00d4ff;
-  --color-nms-accent-dim: #0099cc;
-  --color-nms-gold: #ff8c00;
+  --color-nms-bg: #1c2127;
+  --color-nms-panel: #232930;
+  --color-nms-panel-hover: #313943;
+  --color-nms-border: #363e48;
+  --color-nms-border-light: #4a535e;
+  --color-nms-accent: #c9a45c;
+  --color-nms-accent-dim: #a89a7d;
+  --color-nms-gold: #dbb977;
   --color-nms-gold-dim: #cc7000;
-  --color-nms-text: #e6f1ff;
-  --color-nms-text-dim: #8ea0c0;
-  --color-nms-text-muted: #5a6d8a;
-  --color-nms-danger: #ff3344;
-  --color-nms-success: #00e676;
-  --color-background: #0a0f1a;
-  --color-foreground: #e6f1ff;
-  --color-card: #111b2d;
-  --color-card-foreground: #e6f1ff;
-  --color-popover: #111b2d;
-  --color-popover-foreground: #e6f1ff;
-  --color-primary: #00d4ff;
-  --color-primary-foreground: #0a0f1a;
-  --color-secondary: #111b2d;
-  --color-secondary-foreground: #e6f1ff;
-  --color-muted: #1a2a45;
-  --color-muted-foreground: #8ea0c0;
-  --color-accent: #1a2a45;
-  --color-accent-foreground: #e6f1ff;
-  --color-destructive: #ff3344;
-  --color-destructive-foreground: #e6f1ff;
-  --color-border: #1e3356;
-  --color-input: #1e3356;
-  --color-ring: #00d4ff;
-  --radius: 0.5rem;
+  --color-nms-text: #d9dee4;
+  --color-nms-text-dim: #8c96a1;
+  --color-nms-text-muted: #5f6873;
+  --color-nms-danger: #e3735f;
+  --color-nms-success: #7fbf8a;
+  --color-background: #1c2127;
+  --color-foreground: #d9dee4;
+  --color-card: #232930;
+  --color-card-foreground: #d9dee4;
+  --color-popover: #2b323a;
+  --color-popover-foreground: #d9dee4;
+  --color-primary: #c9a45c;
+  --color-primary-foreground: #1c2127;
+  --color-secondary: #2b323a;
+  --color-secondary-foreground: #d9dee4;
+  --color-muted: #2b323a;
+  --color-muted-foreground: #8c96a1;
+  --color-accent: #313943;
+  --color-accent-foreground: #d9dee4;
+  --color-destructive: #e3735f;
+  --color-destructive-foreground: #1c2127;
+  --color-border: #363e48;
+  --color-input: #363e48;
+  --color-ring: #c9a45c;
+  --color-well: #13171b;
+  --color-tip: #2f3740;
+  --color-blood: #e3735f;
+  --color-moss: #7fbf8a;
+  --color-lime: #b5d95a;
+  --color-steel: #86b0cf;
+  --radius: 0.4375rem;
 }
 
 * { scrollbar-width: thin; scrollbar-color: var(--color-nms-border-light) transparent; }
@@ -139,12 +145,6 @@
 
 body {
   font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
-  background:
-    radial-gradient(
-      1200px 320px at 20% -80px,
-      color-mix(in srgb, var(--color-primary) 9%, transparent),
-      transparent 70%
-    ),
-    var(--color-nms-bg);
+  background: var(--color-nms-bg);
   color: var(--color-nms-text);
 }
