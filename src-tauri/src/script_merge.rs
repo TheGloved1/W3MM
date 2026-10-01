@@ -125,21 +125,252 @@ pub fn line_hunks(base: &[String], lines: &[String]) -> Vec<Hunk> {
     hunks.into_iter().filter(|h| h.base_lo != h.base_hi || !h.lines.is_empty()).collect()
 }
 
-fn norm(s: &str) -> String {
-    s.trim().to_string()
+fn norm_line(line: &str) -> String {
+    // python `_norm_line`: trailing spaces don't count, indent by depth (tab = 4).
+    let s = line.trim_end();
+    let body = s.trim_start();
+    if body.is_empty() {
+        return String::new();
+    }
+    let indent = s.len() - body.len();
+    let expanded = s[..indent].replace('\t', "    ");
+    format!("{}{}", " ".repeat(expanded.len()), body)
 }
 
-pub fn apply_hunks(base: &[String], hunks: &[Hunk]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = 0;
-    let mut sorted: Vec<&Hunk> = hunks.iter().collect();
-    sorted.sort_by_key(|h| h.base_lo);
-    for h in sorted {
-        out.extend_from_slice(&base[cur..h.base_lo.min(base.len())]);
-        out.extend(h.lines.iter().cloned());
-        cur = h.base_hi.min(base.len());
+fn norm_lines(lines: &[String]) -> Vec<String> {
+    lines.iter().map(|l| norm_line(l)).collect()
+}
+
+fn norm(s: &str) -> String {
+    norm_line(s)
+}
+
+/// Do two changes in base coordinates get in each other's way?
+/// Port of python `_collide`.
+pub fn collide(a: (usize, usize), b: (usize, usize)) -> bool {
+    let (s1, e1) = a;
+    let (s2, e2) = b;
+    if s1 == e1 && s2 == e2 {
+        return s1 == s2;
     }
-    out.extend_from_slice(&base[cur..]);
+    if s1 == e1 {
+        return s2 <= s1 && s1 <= e2;
+    }
+    if s2 == e2 {
+        return s1 <= s2 && s2 <= e1;
+    }
+    s1 < e2 && s2 < e1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterKind {
+    Clean,
+    Soft,
+    Conflict,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cluster {
+    pub start: usize,
+    pub end: usize,
+    pub mods: Vec<usize>,
+    pub kind: ClusterKind,
+    pub text: Vec<String>,
+    pub pure: bool,
+    pub intact: bool,
+}
+
+fn region_of(base: &[String], hunks: &[Hunk], lo: usize, hi: usize) -> Vec<String> {
+    apply_hunks_range(base, hunks, lo, hi)
+}
+
+/// Subsequence check (ordered, no gaps required): every line of `small`
+/// appears in `big` in order. Stands in for the difflib no-replace/delete
+/// half of python `_contains` + the `intact` check.
+fn is_subsequence(small: &[String], big: &[String]) -> bool {
+    let mut j = 0;
+    for l in small {
+        while j < big.len() && &big[j] != l {
+            j += 1;
+        }
+        if j >= big.len() {
+            return false;
+        }
+        j += 1;
+    }
+    true
+}
+
+/// Does `big` already make every change `small` makes? Port of `_contains`:
+/// small's lines survive in big in order, and lines small removed from base
+/// stay removed in big.
+fn contains(base_r: &[String], small: &[String], big: &[String]) -> bool {
+    if !is_subsequence(small, big) {
+        return false;
+    }
+    let mut cb: std::collections::HashMap<&str, i64> = Default::default();
+    let mut cs: std::collections::HashMap<&str, i64> = Default::default();
+    let mut cg: std::collections::HashMap<&str, i64> = Default::default();
+    for l in base_r {
+        *cb.entry(l.as_str()).or_default() += 1;
+    }
+    for l in small {
+        *cs.entry(l.as_str()).or_default() += 1;
+    }
+    for l in big {
+        *cg.entry(l.as_str()).or_default() += 1;
+    }
+    cb.keys().all(|l| {
+        let (b, s, g) = (cb[l], cs.get(l).copied().unwrap_or(0), cg.get(l).copied().unwrap_or(0));
+        if s < b {
+            g - b <= s - b
+        } else {
+            true
+        }
+    })
+}
+
+/// Group mods' changes where they meet (port of python `_clusters` without
+/// the function-scoping `touching` rule — see `merge_script`).
+pub fn clusters(base: &[String], per_mod: &[Vec<Hunk>]) -> Vec<Cluster> {
+    let mut tagged: Vec<(usize, usize, usize, Vec<String>)> = vec![];
+    for (i, hs) in per_mod.iter().enumerate() {
+        for h in hs {
+            tagged.push((h.base_lo, h.base_hi, i, h.lines.clone()));
+        }
+    }
+    tagged.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    // cluster assembly: every group a change collides with becomes one group
+    let mut cl: Vec<(usize, usize, Vec<usize>, Vec<(usize, usize, usize, Vec<String>)>)> = vec![];
+    for h in &tagged {
+        let (s, e, i, _) = h;
+        let mut first: Option<usize> = None;
+        let mut k = cl.len();
+        while k > 0 && cl[k - 1].1 >= *s {
+            k -= 1;
+            if cl[k].3.iter().any(|o| collide((*s, *e), (o.0, o.1))) {
+                first = Some(k);
+            }
+        }
+        match first {
+            None => cl.push((*s, *e, vec![*i], vec![h.clone()])),
+            Some(f) => {
+                let mut end = cl[f].1.max(*e);
+                let mut mods = cl[f].2.clone();
+                let mut hunks = cl[f].3.clone();
+                for other in cl.drain(f + 1..) {
+                    end = end.max(other.1);
+                    for m in other.2 {
+                        if !mods.contains(&m) {
+                            mods.push(m);
+                        }
+                    }
+                    hunks.extend(other.3);
+                }
+                mods.push(*i);
+                // note: original keeps insertion order per drain; dedup not needed for logic
+                cl[f] = (cl[f].0.min(*s), end, mods, {
+                    let mut hh = hunks;
+                    hh.push(h.clone());
+                    hh
+                });
+            }
+        }
+    }
+    let mut out = vec![];
+    for (lo, hi, mods, hunks) in cl {
+        let mut mods = mods;
+        mods.sort();
+        mods.dedup();
+        let region = |i: usize| region_of(base, &per_mod[i], lo, hi);
+        let mut texts: BTreeMap<Vec<String>, usize> = BTreeMap::new();
+        for i in &mods {
+            texts.entry(norm_lines(&region(*i))).or_insert(*i);
+        }
+        let pure = hunks.iter().all(|h| h.0 == h.1);
+        if texts.len() == 1 {
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(texts.values().next().copied().unwrap()), pure, intact: true });
+            continue;
+        }
+        let base_r = norm_lines(&base[lo.min(base.len())..hi.min(base.len())]);
+        let keys: Vec<Vec<String>> = texts.keys().cloned().collect();
+        let top = keys.iter().find(|t| keys.iter().all(|o| contains(&base_r, o, t)));
+        if let Some(t) = top {
+            // one mod's edit contains the others'
+            let owner = texts[t];
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(owner), pure, intact: true });
+            continue;
+        }
+        let mut hard = false;
+        for x in 0..hunks.len() {
+            for y in (x + 1)..hunks.len() {
+                let (s1, e1, i1, n1) = &hunks[x];
+                let (s2, e2, i2, n2) = &hunks[y];
+                if i1 == i2 || (*s1, *e1, norm_lines(n1)) == (*s2, *e2, norm_lines(n2)) {
+                    continue;
+                }
+                if (*s1 < *e1 && *s2 < *e2 && *s1 < *e2 && *s2 < *e1)
+                    || (*s1 == *e1 && *s2 < *s1 && *s1 < *e2)
+                    || (*s2 == *e2 && *s1 < *s2 && *s2 < *e1)
+                {
+                    hard = true;
+                }
+            }
+        }
+        if hard {
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Conflict, text: vec![], pure, intact: false });
+            continue;
+        }
+        // soft: every insertion fits, in version order
+        let mut seen: std::collections::HashSet<(usize, usize, Vec<String>)> = Default::default();
+        let mut pieces: Vec<Hunk> = vec![];
+        for i in &mods {
+            let mut hs: Vec<&(usize, usize, usize, Vec<String>)> = hunks.iter().filter(|h| &h.2 == i).collect();
+            hs.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+            for (s, e, _, n) in hs {
+                let sig = (*s, *e, norm_lines(n));
+                if seen.insert(sig) {
+                    pieces.push(Hunk { base_lo: *s, base_hi: *e, lines: n.clone() });
+                }
+            }
+        }
+        pieces.sort_by_key(|h| (h.base_lo, h.base_hi));
+        let text = apply_hunks_range(base, &pieces, lo, hi);
+        let combined = norm_lines(&text);
+        let intact = texts.keys().all(|t| is_subsequence(t, &combined));
+        out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Soft, text, pure, intact });
+    }
+    out
+}
+
+use std::collections::BTreeMap;
+
+pub fn apply_hunks(base: &[String], hunks: &[Hunk]) -> Vec<String> {
+    apply_hunks_range(base, hunks, 0, base.len())
+}
+
+/// Apply hunks, returning only the `[lo, hi)` window (python
+/// `apply_hunks(base, hunks, lo, hi)`). Cluster bounds always contain their
+/// hunks whole, so partial overlaps fall back to base lines.
+pub fn apply_hunks_range(base: &[String], hunks: &[Hunk], lo: usize, hi: usize) -> Vec<String> {
+    let (lo, hi) = (lo.min(base.len()), hi.min(base.len()));
+    let mut out = Vec::new();
+    let mut cur = lo;
+    let mut sorted: Vec<&Hunk> = hunks.iter().collect();
+    sorted.sort_by_key(|h| (h.base_lo, h.base_hi));
+    for h in sorted {
+        if h.base_lo < lo || h.base_hi > hi {
+            continue;
+        }
+        out.extend_from_slice(&base[cur..h.base_lo.max(lo).min(hi)]);
+        if h.base_lo >= lo && h.base_hi <= hi {
+            out.extend(h.lines.iter().cloned());
+        } else {
+            out.extend_from_slice(&base[h.base_lo.max(lo)..h.base_hi.min(hi)]);
+        }
+        cur = h.base_hi.max(lo).min(hi).max(cur);
+    }
+    out.extend_from_slice(&base[cur..hi]);
     out
 }
 
@@ -155,79 +386,77 @@ pub struct MergeResult {
     pub merged: Vec<String>,
     pub conflicts: Vec<MergeConflict>,
     pub needs_resolution: bool,
+    pub auto: usize,
 }
 
-/// 3-way merge: non-overlapping hunks auto-apply; overlapping differing
-/// hunks become conflicts resolved via `resolutions` (index per conflict).
+/// 3-way merge over `_clusters` groups: clean groups auto-apply; overlapping
+/// differing edits become conflicts resolved via `resolutions` (index per
+/// conflict, in order). Like the original's script path, "soft" groups (two
+/// mods adding at the same spot) are asked about rather than ordered
+/// silently — the XML path passes them through instead (see `xml_merge`).
 pub fn merge_script(
     base: &[String],
     versions: &[Vec<String>],
     resolutions: &[usize],
 ) -> MergeResult {
     if versions.is_empty() {
-        return MergeResult { merged: base.to_vec(), conflicts: vec![], needs_resolution: false };
+        return MergeResult { merged: base.to_vec(), conflicts: vec![], needs_resolution: false, auto: 0 };
     }
     if versions.len() == 1 {
         let h = line_hunks(base, &versions[0]);
-        return MergeResult { merged: apply_hunks(base, &h), conflicts: vec![], needs_resolution: false };
+        if norm_lines(&apply_hunks(base, &h)) != norm_lines(&versions[0]) {
+            return MergeResult { merged: base.to_vec(), conflicts: vec![], needs_resolution: false, auto: 0 };
+        }
+        return MergeResult { merged: apply_hunks(base, &h), conflicts: vec![], needs_resolution: false, auto: h.len() };
     }
-    // Collect per-version hunks; cluster overlapping ranges.
     let per: Vec<Vec<Hunk>> = versions.iter().map(|v| line_hunks(base, v)).collect();
-    // Flatten to events: (lo, hi, version_idx)
-    let mut events: Vec<(usize, usize, usize)> = vec![];
-    for (vi, hs) in per.iter().enumerate() {
-        for h in hs {
-            events.push((h.base_lo, h.base_hi, vi));
+    // proof each version rebuilds exactly (python merge_script step 1)
+    for (v, hs) in versions.iter().zip(per.iter()) {
+        if norm_lines(&apply_hunks(base, hs)) != norm_lines(v) {
+            return MergeResult { merged: base.to_vec(), conflicts: vec![], needs_resolution: false, auto: 0 };
         }
     }
-    events.sort();
-    // Cluster touching/overlapping ranges.
-    let mut clusters: Vec<Vec<(usize, usize, usize)>> = vec![];
-    for e in events {
-        if let Some(last) = clusters.last_mut() {
-            let max_hi = last.iter().map(|c| c.1.max(c.0 + 1)).max().unwrap_or(0);
-            if e.0 <= max_hi {
-                last.push(e);
-                continue;
-            }
-        }
-        clusters.push(vec![e]);
+    if versions.iter().map(|v| norm_lines(v)).collect::<std::collections::HashSet<_>>().len() == 1 {
+        return MergeResult { merged: base.to_vec(), conflicts: vec![], needs_resolution: false, auto: 0 };
     }
+    let cls = clusters(base, &per);
     let mut merged = Vec::new();
     let mut conflicts = Vec::new();
     let mut cur = 0;
+    let mut auto = 0;
     let mut res_idx = 0;
-    for cl in clusters {
-        let lo = cl.iter().map(|c| c.0).min().unwrap();
-        let hi = cl.iter().map(|c| c.1.max(c.0 + 1)).max().unwrap_or(lo);
-        merged.extend_from_slice(&base[cur..lo.min(base.len())]);
-        // Distinct outcomes across involved versions?
-        let mut outcomes: Vec<Vec<String>> = vec![];
-        for (_, _, vi) in &cl {
-            let h = per[*vi].iter().find(|h| h.base_lo <= lo && lo <= h.base_hi.max(h.base_lo)).cloned();
-            let applied = h.map(|h| h.lines).unwrap_or_else(|| base[lo..hi.min(base.len())].to_vec());
-            if !outcomes.contains(&applied) {
-                outcomes.push(applied);
+    for c in &cls {
+        merged.extend_from_slice(&base[cur..c.start.min(base.len())]);
+        match c.kind {
+            ClusterKind::Clean if c.intact => {
+                merged.extend(c.text.iter().cloned());
+                auto += 1;
+            }
+            _ => {
+                // distinct takes on this stretch, in version order
+                let mut outcomes: Vec<Vec<String>> = vec![];
+                for i in &c.mods {
+                    let r = region_of(base, &per[*i], c.start, c.end);
+                    if !outcomes.contains(&r) {
+                        outcomes.push(r);
+                    }
+                }
+                let pick = resolutions.get(res_idx).copied().unwrap_or(usize::MAX);
+                if pick < outcomes.len() {
+                    merged.extend(outcomes[pick].clone());
+                    auto += 1;
+                } else {
+                    conflicts.push(MergeConflict { base_lo: c.start, base_hi: c.end, variants: outcomes.clone() });
+                    merged.extend(outcomes[0].clone());
+                }
+                res_idx += 1;
             }
         }
-        if outcomes.len() <= 1 {
-            merged.extend(outcomes.into_iter().next().unwrap_or_default());
-        } else {
-            let pick = resolutions.get(res_idx).copied().unwrap_or(usize::MAX);
-            if pick < outcomes.len() {
-                merged.extend(outcomes[pick].clone());
-            } else {
-                conflicts.push(MergeConflict { base_lo: lo, base_hi: hi, variants: outcomes.clone() });
-                // provisional: first variant, UI replaces after resolution
-                merged.extend(outcomes[0].clone());
-            }
-            res_idx += 1;
-        }
-        cur = hi.min(base.len());
+        cur = c.end.min(base.len());
     }
     merged.extend_from_slice(&base[cur..]);
     let needs = !conflicts.is_empty();
-    MergeResult { merged, conflicts, needs_resolution: needs }
+    MergeResult { merged, conflicts, needs_resolution: needs, auto }
 }
 
 /// Very small function scanner (python `scan_script` subset): `function NAME(` lines.
@@ -336,12 +565,51 @@ pub fn scan_annotations(lines: &[String]) -> Vec<(String, String)> {
     paired
 }
 
+/// (name, mod) when a mod deletes a function but the merge still calls it.
+/// Ports python `removed_but_used`: that merge would fail to compile.
+pub fn removed_but_used(base: &[String], versions: &[(String, Vec<String>)], merged: &[String]) -> Option<(String, String)> {
+    let defined: std::collections::HashSet<String> =
+        scan_functions(merged).into_iter().map(|(n, _, _)| n.to_lowercase()).collect();
+    let base_names: std::collections::HashMap<String, String> = {
+        let mut m = std::collections::HashMap::new();
+        for (n, _, _) in scan_functions(base) {
+            m.entry(n.to_lowercase()).or_insert(n);
+        }
+        m
+    };
+    let words = |lines: &[String]| {
+        lines
+            .join("\n")
+            .to_lowercase()
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_string())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    let merged_words = words(merged);
+    for (label, lines) in versions {
+        let mine: std::collections::HashSet<String> =
+            scan_functions(lines).into_iter().map(|(n, _, _)| n.to_lowercase()).collect();
+        let removed: Vec<&String> =
+            base_names.keys().filter(|k| !mine.contains(*k) && !defined.contains(*k)).collect();
+        if removed.is_empty() {
+            continue;
+        }
+        let own = words(lines);
+        for k in removed {
+            if merged_words.contains(k) && !own.contains(k) {
+                return Some((base_names[k].clone(), label.clone()));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn clean_merge_applies_both() {
-        let base: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+    fn clean_merge_applies_both() {        let base: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         let v1: Vec<String> = vec!["a".into(), "B1".into(), "c".into(), "d".into()];
         let v2: Vec<String> = vec!["a".into(), "b".into(), "c".into(), "D2".into()];
         let r = merge_script(&base, &[v1, v2], &[]);

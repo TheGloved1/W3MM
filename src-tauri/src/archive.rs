@@ -92,9 +92,46 @@ pub fn list_names(archive: &Path) -> Result<Vec<String>, ArchiveError> {
         }
         return Ok(out);
     }
+    if low.ends_with(".rar") {
+        return list_rar(archive);
+    }
     Err(ArchiveError::Unsupported(
         archive.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
     ))
+}
+
+/// RAR listing via the vendored unrar library (`muja/unrar.rs`, statically
+/// linked — no system 7zz/bsdtar needed). Handles RAR 1.5–5.x, multipart
+/// (starting part), solid and password-less encrypted archives.
+pub fn list_rar(archive: &Path) -> Result<Vec<String>, ArchiveError> {
+    let mut open = unrar::Archive::new(archive)
+        .open_for_listing()
+        .map_err(|e| ArchiveError::Other(format!("rar: {e}")))?;
+    let mut out = Vec::new();
+    while let Some(header) = open.read_header().map_err(|e| ArchiveError::Other(format!("rar: {e}")))? {
+        out.push(header.entry().filename.to_string_lossy().replace('\\', "/"));
+        open = header.skip().map_err(|e| ArchiveError::Other(format!("rar: {e}")))?;
+    }
+    Ok(out)
+}
+
+fn extract_rar(archive: &Path, dest: &Path) -> Result<(), ArchiveError> {
+    let mut open = unrar::Archive::new(archive)
+        .open_for_processing()
+        .map_err(|e| ArchiveError::Other(format!("rar: {e}")))?;
+    while let Some(file) = open.read_header().map_err(|e| ArchiveError::Other(format!("rar: {e}")))? {
+        let rel = file.entry().filename.to_string_lossy().replace('\\', "/");
+        if file.entry().is_directory() {
+            let dir = ensure_within(dest, Path::new(&rel))?;
+            std::fs::create_dir_all(&dir).map_err(|e| ArchiveError::Io(e.to_string()))?;
+            open = file.skip().map_err(|e| ArchiveError::Other(format!("rar: {e}")))?;
+        } else {
+            // Zip-slip guard, then extract under dest preserving the archived path.
+            let _ = ensure_within(dest, Path::new(&rel))?;
+            open = file.extract_with_base(dest).map_err(|e| ArchiveError::Other(format!("rar: {e}")))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), ArchiveError> {
@@ -133,8 +170,11 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), ArchiveError> 
         ar.unpack(dest).map_err(|e| ArchiveError::Other(e.to_string()))?;
         return Ok(());
     }
+    if low.ends_with(".rar") {
+        return extract_rar(archive, dest);
+    }
     Err(ArchiveError::Unsupported(
-        "RAR needs a non-pure-Rust decoder; repack as .zip/.7z (see README)".to_string(),
+        archive.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
     ))
 }
 
@@ -145,5 +185,22 @@ mod tests {
     fn doc_names() {
         assert!(is_doc_name("readme.txt"));
         assert!(!is_doc_name("mods/modFoo/content/a.ws"));
+    }
+    #[test]
+    fn rar_fixture_lists() {
+        // RAR 4.x fixture vendored from unrar.rs test data.
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/comment.rar");
+        let names = list_rar(&p).expect("list rar");
+        assert!(!names.is_empty(), "fixture should list at least one entry");
+    }
+    #[test]
+    fn rar_fixture_extracts() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/comment.rar");
+        let dir = std::env::temp_dir().join(format!("w3lmn-rar-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        extract_archive(&p, &dir).expect("extract rar");
+        let count = walkdir::WalkDir::new(&dir).into_iter().flatten().filter(|e| e.file_type().is_file()).count();
+        assert!(count > 0, "fixture should extract at least one file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

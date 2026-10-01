@@ -122,7 +122,7 @@
 </script>
 
 <div class="flex flex-1 flex-col min-w-0 bg-background overflow-hidden">
-  <PageHeader title="Downloads" subtitle={quotaText || 'Archives + nxm:// + snippets (pure-Rust; RAR: repack)'} />
+  <PageHeader title="Downloads" subtitle={quotaText || 'Archives (.zip/.7z/.rar/.tar) + nxm:// + snippets'} />
   <div class="flex-1 overflow-auto p-6">
     <div class="mx-auto max-w-[900px] space-y-4">
       {#if error}<Card><CardContent class="text-sm text-red-500 py-3">{error}</CardContent></Card>{/if}
