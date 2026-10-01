@@ -4,6 +4,9 @@ export interface AppConfig {
   gameDir: string;
   prefix: string;
   nexusKey: string;
+  codeFont: string;
+  codeSize: number;
+  mergerPath: string;
 }
 
 export interface ModRow {

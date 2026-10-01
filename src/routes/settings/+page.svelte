@@ -1,286 +1,185 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative, saveConfigNative } from '$lib/config';
   import type { AppConfig } from '$lib/types';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
-  import { Label } from '$lib/components/ui/label';
-  import * as Select from '$lib/components/ui/select';
-  import { Separator } from '$lib/components/ui/separator';
-
-  const themes = [
-    { id: 'default', label: 'Default (NMS Dark)', desc: 'Space blue — default' },
-    { id: 'rose-pine', label: 'Rose Pine', desc: 'Muted pine, love pink' },
-    { id: 'rose-pine-moon', label: 'Rose Pine Moon', desc: 'Darker violet' },
-    { id: 'rose-pine-dawn', label: 'Rose Pine Dawn', desc: 'Warm light' },
-    { id: 'catppuccin-mocha', label: 'Catppuccin Mocha', desc: 'Rich dark' },
-    { id: 'catppuccin-macchiato', label: 'Catppuccin Macchiato', desc: 'Soft dark' },
-    { id: 'catppuccin-frappe', label: 'Catppuccin Frappé', desc: 'Muted mid' },
-    { id: 'catppuccin-latte', label: 'Catppuccin Latte', desc: 'Bright light' },
-  ];
-
-  const fonts = [
-    { id: 'inter', label: 'Inter', desc: 'Clean sans — default' },
-    { id: 'geist', label: 'Geist Sans', desc: 'Geometric' },
-    { id: 'space', label: 'Space Grotesk', desc: 'Futuristic' },
-    { id: 'manrope', label: 'Manrope', desc: 'Friendly' },
-    { id: 'sora', label: 'Sora', desc: 'Soft rounded' },
-    { id: 'jetbrains', label: 'JetBrains Mono', desc: 'Mono' },
-  ];
 
   let config: AppConfig | null = $state(null);
-  let status = $state("");
-  let gameOk = $state<string>("");
-  let mergerExe = $state("");
-  let mergerRep = $state<{ config: string; wrong: [string, string, string][]; unfixable: [string, string][] } | null>(null);
+  let warn: string = $state('');
+  let gameOk: string = $state('');
+  let showKey: boolean = $state(false);
+  let mergerOpen: boolean = $state(false);
+  let mergerState: string = $state('');
+  let mergerRep: MergerRep | null = $state(null);
 
-  function apply(cfg: AppConfig) {
-    document.documentElement.setAttribute('data-theme', cfg.theme);
-    document.documentElement.setAttribute('data-font', cfg.font);
-  }
+  type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
 
-  async function persist() {
-    if (!config) return;
-    apply(config);
-    await saveConfigNative(config);
-    status = "Saved";
-    setTimeout(() => status = "", 2000);
-  }
-
-  async function onThemeChange(v: string) {
-    if (!config || !v) return;
-    config.theme = v;
-    await persist();
-  }
-
-  async function onFontChange(v: string) {
-    if (!config || !v) return;
-    config.font = v;
-    await persist();
-  }
+  const codeFonts = ['JetBrains Mono', 'Fira Code', 'Hack', 'DejaVu Sans Mono', 'monospace'];
 
   onMount(async () => {
     config = await loadConfigNative();
-    apply(config);
+    if (!config.gameDir) detect(true);
+    else checkGame();
+    checkMerger();
   });
 
-  import { invoke } from '@tauri-apps/api/core';
-  async function pickDir(current: string | undefined, title: string): Promise<string | null> {
+  async function pickDir(current: string, title: string, into: 'gameDir' | 'prefix') {
+    if (!config) return;
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const sel = await open({ directory: true, multiple: false, defaultPath: current || undefined, title });
-      return typeof sel === 'string' ? sel : null;
-    } catch { return null; }
+      if (typeof sel === 'string') {
+        config[into] = sel;
+        if (into === 'gameDir') checkGame();
+        if (into === 'gameDir' || into === 'prefix') checkMerger();
+      }
+    } catch {}
   }
-  async function browseGame() {
+
+  async function pickMerger() {
     if (!config) return;
-    const sel = await pickDir(config.gameDir, 'Pick The Witcher 3 folder');
-    if (sel) { config.gameDir = sel; await persist(); await checkGame(); }
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const sel = await open({ multiple: false, filters: [{ name: 'Script Merger', extensions: ['exe'] }] });
+      if (typeof sel === 'string') { config.mergerPath = sel; checkMerger(); }
+    } catch {}
   }
-  async function browsePrefix() {
-    if (!config) return;
-    const sel = await pickDir(config.prefix, 'Pick Proton prefix (…/compatdata/292030/pfx)');
-    if (sel) { config.prefix = sel; await persist(); }
-  }
-  async function detect() {
+
+  async function detect(quiet = false) {
     if (!config) return;
     const found = await invoke<string | null>('detect_game').catch(() => null);
     if (found) {
       config.gameDir = found;
       const pfx = await invoke<string | null>('default_prefix', { gameDir: found }).catch(() => null);
       if (pfx) config.prefix = pfx;
-      await persist();
+      checkGame();
+      checkMerger();
+    } else if (!quiet) {
+      warn = 'No Steam install found — pick the folders yourself.';
     }
   }
+
   async function checkGame() {
-    if (!config?.gameDir) return;
-    gameOk = await invoke<boolean>('is_game_dir', { path: config.gameDir }) ? 'looks like the game folder' : 'not a game folder (need content/ + bin/)';
+    if (!config?.gameDir) { gameOk = ''; return; }
+    const ok = await invoke<boolean>('is_game_dir', { path: config.gameDir });
+    gameOk = ok ? '' : 'not a game folder (need content/ + bin/)';
+    if (!ok) warn = 'That game folder doesn’t look right (need content/ + bin/).';
+    else if (warn.startsWith('That game folder')) warn = '';
   }
-  async function validateKey() {
-    if (!config?.nexusKey) { status = 'Paste a key first'; return; }
+
+  async function checkMerger() {
+    mergerRep = null;
+    if (!config?.mergerPath) { mergerState = ''; return; }
     try {
-      await invoke('nexus_status', { apiKey: config.nexusKey });
-      status = 'Nexus key OK';
-    } catch (e) { status = String(e); }
-    setTimeout(() => status = '', 3000);
+      const rep = await invoke<MergerRep>('merger_check', { exePath: config.mergerPath });
+      mergerRep = rep;
+      const n = rep.wrong.length + rep.unfixable.length;
+      mergerState = n ? `${n} path${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} attention` : 'paths look right';
+    } catch (e) { mergerState = String(e); }
   }
-  async function importLegacy() {
-    if (!config?.gameDir) return;
+
+  async function applyMergerFixes() {
+    if (!mergerRep || !config) return;
     try {
-      const prev = await invoke<{ mods: { name: string }[] }>('import_legacy_preview', { gameDir: config.gameDir });
-      status = `_ModManager has ${prev.mods.length} rows (preview only — clean break, nothing imported yet)`;
-    } catch (e) { status = String(e); }
-    setTimeout(() => status = '', 4000);
+      const fixes: Record<string, string> = {};
+      for (const [k, , want] of mergerRep.wrong) fixes[k] = want;
+      await invoke('merger_apply', { configPath: mergerRep.config, fixes });
+      await checkMerger();
+    } catch (e) { warn = String(e); }
   }
-  async function browseMerger() {
+
+  async function getKey() {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const sel = await open({ multiple: false, filters: [{ name: 'Script Merger', extensions: ['exe'] }] });
-      if (typeof sel === 'string') mergerExe = sel;
+      const { open } = await import('@tauri-apps/plugin-shell');
+      await open('https://www.nexusmods.com/users/myaccount?tab=api');
     } catch {}
   }
-  async function checkMerger() {
-    if (!mergerExe) return;
+
+  async function save() {
+    if (!config) return;
+    const ok = await invoke<boolean>('is_game_dir', { path: config.gameDir }).catch(() => false);
+    if (!ok) { warn = 'Pick the Witcher 3 folder first (it holds content/ and bin/).'; return; }
+    await saveConfigNative(config);
     try {
-      mergerRep = await invoke<typeof mergerRep>('merger_check', { exePath: mergerExe });
-      status = mergerRep && mergerRep.wrong.length ? `${mergerRep.wrong.length} path(s) need fixing` : 'Merger paths look right';
-    } catch (e) { status = String(e); mergerRep = null; }
-    setTimeout(() => { if (!mergerRep?.wrong.length) status = ''; }, 4000);
+      await invoke('open_manager', { gameDir: config.gameDir, prefix: config.prefix });
+      const { emit } = await import('@tauri-apps/api/event');
+      await emit('mods-changed', {});
+    } catch {}
+    await getCurrentWindow().close().catch(() => history.back());
+  }
+
+  async function cancel() {
+    await getCurrentWindow().close().catch(() => history.back());
   }
 </script>
 
-<div class="flex-1 bg-background text-foreground">
-  <PageHeader sticky title="Settings" subtitle="Customize your app">
-    {#snippet before()}
-      <Button variant="ghost" size="sm" onclick={() => goto('/')}>← Back</Button>
-      <div class="h-4 w-px bg-border"></div>
-    {/snippet}
-    {#snippet right()}
-      <div class="text-xs text-muted-foreground">{status}</div>
-    {/snippet}
-  </PageHeader>
+<div class="mx-auto flex h-full max-w-[680px] flex-col gap-3 overflow-y-auto px-[22px] py-5">
+  <div class="text-[14pt] font-semibold">Settings</div>
+  <p class="text-sm text-muted-foreground">Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied.</p>
 
-  <div class="mx-auto max-w-[720px] p-6 space-y-6">
-    <div>
-      <h1 class="text-lg font-semibold tracking-tight">Game</h1>
-      <p class="text-sm text-muted-foreground">Linux-only: Steam + Proton prefix. Home is <span class="font-mono">&lt;game&gt;/_W3LMN/</span>.</p>
+  {#if config}
+    <div class="flex items-center gap-3">
+      <span class="w-[110px] shrink-0 text-sm">Game folder</span>
+      <input bind:value={config.gameDir} oninput={checkGame} class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <button onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
+    </div>
+    {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
+    <div class="flex items-center gap-3">
+      <span class="w-[110px] shrink-0 text-sm">Prefix</span>
+      <input bind:value={config.prefix} placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <button onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="w-[110px] shrink-0 text-sm">Nexus API key</span>
+      <input bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <button onclick={() => (showKey = !showKey)} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">{showKey ? 'Hide' : 'Show'}</button>
+      <button onclick={getKey} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">Get key…</button>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="w-[110px] shrink-0 text-sm" title="The font code is shown in, in Script decisions.">Code font</span>
+      <select bind:value={config.codeFont} class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary">
+        {#each codeFonts as f}<option value={f}>{f}</option>{/each}
+      </select>
+      <input type="number" min="8" max="20" bind:value={config.codeSize} class="w-[86px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary" />
+    </div>
+    <div class="flex gap-3">
+      <span class="w-[110px] shrink-0"></span>
+      <div class="flex-1 rounded-[7px] border border-border bg-well px-3 py-2 font-mono" style="font-family:{config.codeFont};font-size:{config.codeSize}pt">function witcherSense() &#123; FindTracks(); &#125;</div>
     </div>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-sm">Witcher 3 + Proton</CardTitle>
-        <CardDescription>Game folder holds content/ + bin/. Prefix is .../compatdata/292030/pfx.</CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-3">
-        {#if config}
-          <div class="space-y-1">
-            <Label>Game folder</Label>
-            <div class="flex gap-2">
-              <input bind:value={config.gameDir} oninput={persist} placeholder="/home/you/.local/share/Steam/steamapps/common/The Witcher 3" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-              <Button size="sm" variant="ghost" onclick={browseGame}>Browse</Button>
-              <Button size="sm" onclick={detect}>Detect</Button>
-              <Button size="sm" variant="ghost" onclick={checkGame}>Check</Button>
-            </div>
-            {#if gameOk}<div class="text-[11px] text-muted-foreground">{gameOk}</div>{/if}
-          </div>
-          <div class="space-y-1">
-            <Label>Proton prefix</Label>
-            <div class="flex gap-2">
-              <input bind:value={config.prefix} oninput={persist} placeholder=".../steamapps/compatdata/292030/pfx" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-              <Button size="sm" variant="ghost" onclick={browsePrefix}>Browse</Button>
-            </div>
-          </div>
-          <div class="space-y-1">
-            <Label>Nexus API key</Label>
-            <div class="flex gap-2">
-              <input bind:value={config.nexusKey} oninput={persist} type="password" placeholder="Personal API key from nexusmods.com" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-              <Button size="sm" variant="ghost" onclick={validateKey}>Validate</Button>
-            </div>
-          </div>
-          <div class="flex gap-2 pt-1">
-            <Button size="sm" variant="ghost" onclick={importLegacy}>Preview _ModManager import</Button>
-          </div>
-        {/if}
-      </CardContent>
-    </Card>
-
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-sm">External Script Merger</CardTitle>
-        <CardDescription>Optional .NET tool run under Proton. Checks its stored paths against this prefix.</CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-2">
-        <div class="flex gap-2">
-          <input bind:value={mergerExe} placeholder="/path/to/WitcherScriptMerger.exe" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />
-          <Button size="sm" variant="ghost" onclick={browseMerger}>Browse</Button>
-          <Button size="sm" onclick={checkMerger} disabled={!mergerExe}>Check paths</Button>
+    <div class="rounded-lg border border-border bg-popover px-[14px] py-2">
+      <div class="flex items-center gap-2">
+        <button onclick={() => (mergerOpen = !mergerOpen)} class="flex-1 py-1 text-left text-sm font-semibold hover:text-primary">{mergerOpen ? '▾' : '▸'} Script Merger (legacy)</button>
+        <span class="text-[12px] text-muted-foreground">{mergerState}</span>
+      </div>
+      {#if mergerOpen}
+        <div class="flex items-center gap-3 py-1">
+          <span class="w-[86px] shrink-0 text-sm">Path</span>
+          <input bind:value={config.mergerPath} placeholder="path to ScriptMerger.exe" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+          <button onclick={pickMerger} class="rounded-[7px] border border-border bg-card px-3 py-[7px] text-sm hover:bg-accent">Browse…</button>
         </div>
         {#if mergerRep}
-          <div class="text-xs">config: <span class="font-mono">{mergerRep.config}</span></div>
-          {#each mergerRep.wrong as [k, was, want]}<div class="text-xs font-mono rounded bg-amber-500/10 p-1">{k}: {was} → {want}</div>{/each}
-          {#each mergerRep.unfixable as [k, v]}<div class="text-xs font-mono rounded bg-red-500/10 p-1">{k}: {v} (unresolvable here)</div>{/each}
-          {#if !mergerRep.wrong.length && !mergerRep.unfixable.length}<div class="text-xs text-muted-foreground">All stored paths resolve.</div>{/if}
-        {/if}
-      </CardContent>
-    </Card>
-    <!-- TODO: add your own settings cards here. Appearance below demos the theme system. -->
-    <div>
-      <h1 class="text-lg font-semibold tracking-tight">Appearance</h1>
-      <p class="text-sm text-muted-foreground">Themes and fonts apply instantly and persist via Tauri store.</p>
-    </div>
-
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-sm">Theme</CardTitle>
-        <CardDescription>Pick your vibe — Rose Pine & Catppuccin flavors included.</CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <div class="space-y-2">
-          <Label>Theme</Label>
-          {#if config}
-            <Select.Root type="single" value={config.theme} onValueChange={onThemeChange}>
-              <Select.Trigger class="w-full">
-                <Select.Value placeholder="Select theme" />
-              </Select.Trigger>
-              <Select.Content>
-                {#each themes as t}
-                  <Select.Item value={t.id}>
-                    <div class="flex flex-col items-start">
-                      <span class="text-sm">{t.label}</span>
-                      <span class="text-[11px] text-muted-foreground">{t.desc}</span>
-                    </div>
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          {/if}
-        </div>
-
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {#each themes as t}
-            <button
-              class="rounded-lg border p-3 text-left hover:bg-muted transition {config?.theme === t.id ? 'border-primary ring-1 ring-primary' : 'border-border'}"
-              onclick={() => onThemeChange(t.id)}
-            >
-              <div class="text-xs font-medium">{t.label}</div>
-              <div class="mt-2 flex gap-1">
-                <span class="h-3 w-6 rounded" style="background: var(--color-nms-bg)"></span>
-                <span class="h-3 w-6 rounded" style="background: var(--color-primary)"></span>
-                <span class="h-3 w-6 rounded" style="background: var(--color-nms-panel)"></span>
-              </div>
-            </button>
+          {#each mergerRep.wrong as [k, was, want]}
+            <div class="my-1 rounded bg-[#c9a45c]/10 p-1.5 font-mono text-[11px]">{k}: {was} → {want}</div>
           {/each}
-        </div>
-
-        <Separator />
-
-        <div class="space-y-2">
-          <Label>Font</Label>
-          {#if config}
-            <Select.Root type="single" value={config.font} onValueChange={onFontChange}>
-              <Select.Trigger class="w-full">
-                <Select.Value placeholder="Select font" />
-              </Select.Trigger>
-              <Select.Content>
-                {#each fonts as f}
-                  <Select.Item value={f.id}>
-                    <div class="flex flex-col items-start">
-                      <span class="text-sm" style="font-family: var(--font-sans)">{f.label}</span>
-                      <span class="text-[11px] text-muted-foreground">{f.desc}</span>
-                    </div>
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
+          {#each mergerRep.unfixable as [k, v]}
+            <div class="my-1 rounded bg-[#e3735f]/10 p-1.5 font-mono text-[11px]">{k}: {v} (no fix known)</div>
+          {/each}
+          {#if mergerRep.wrong.length}
+            <button onclick={applyMergerFixes} class="mb-1 rounded-[7px] border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent">Apply fixes</button>
           {/if}
-          <div class="rounded-md border bg-muted/30 p-3">
-            <div class="text-sm font-medium" style="font-family: var(--font-sans)">Preview — Aa Bb Cc 123</div>
-            <div class="text-xs text-muted-foreground mt-1" style="font-family: var(--font-sans)">The quick brown fox jumps over the lazy dog.</div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+
+  {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
+  <div class="flex-1"></div>
+  <div class="flex items-center gap-2">
+    <button onclick={() => detect()} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Detect Steam install</button>
+    <span class="flex-1"></span>
+    <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Cancel</button>
+    <button onclick={save} class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110">Save</button>
   </div>
 </div>

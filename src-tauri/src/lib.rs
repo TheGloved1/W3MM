@@ -157,6 +157,33 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     if !stale.is_empty() {
         deploy::restore_paths(&m.home.game, &m.home.backup, &stale).map_err(|e| e.to_string())?;
     }
+    // Kept merges win over every staged copy: write them over the deployed file.
+    let kept: Vec<(String, String)> = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        s.merge_kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    };
+    let mut merged_count = 0;
+    for (rel, text) in kept {
+        let dst = m.home.game.join(&rel);
+        let bytes = text.replace('\n', "\r\n").into_bytes();
+        if dst.is_file() {
+            let bdst = m.home.backup.join(&rel);
+            if !bdst.exists() {
+                if let Some(p) = bdst.parent() {
+                    std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                }
+                std::fs::copy(&dst, &bdst).map_err(|e| e.to_string())?;
+            }
+        } else if let Some(p) = dst.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&dst, bytes).map_err(|e| e.to_string())?;
+        if !all_written.contains(&rel) {
+            all_written.push(rel.clone());
+        }
+        merged_count += 1;
+    }
+    let _ = merged_count;
     // mods.settings in priority order, names as deployed folder names.
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
     let settings = m.settings_dir().join("mods.settings");
@@ -758,6 +785,180 @@ fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
     Ok(m.settings_dir().to_string_lossy().to_string())
 }
 
+/// Open (or focus) a tool window: install | setup | resolver.
+/// The original is a multi-window app (Install/Settings/Script-decisions
+/// dialogs); each tool is a Svelte route rendered in its own native window.
+#[tauri::command]
+fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: String) -> Result<(), String> {
+    use tauri::Manager;
+    let (title, w, h) = match kind.as_str() {
+        "install" => ("Install mod", 820.0, 660.0),
+        "setup" => ("Settings", 700.0, 640.0),
+        "resolver" => ("Script decisions", 1150.0, 760.0),
+        _ => return Err("unknown window".into()),
+    };
+    if let Some(win) = app.get_webview_window(&kind) {
+        win.set_focus().map_err(|e| e.to_string())?;
+        if !path.is_empty() {
+            use tauri::Emitter;
+            let _ = win.emit(format!("tool-open-{kind}").as_str(), serde_json::json!({"path": path, "query": query}));
+        }
+        return Ok(());
+    }
+    #[allow(unused_mut)]
+    let mut url = if query.is_empty() { format!("{kind}.html") } else { format!("{kind}.html?{query}") };
+    // Dev server routes by path, the bundled app by file.
+    #[cfg(dev)]
+    {
+        url = if query.is_empty() { kind.clone() } else { format!("{kind}?{query}") };
+    }
+    let _win = tauri::WebviewWindowBuilder::new(&app, kind, tauri::WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(w, h)
+        .center()
+        .focused(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Write fixed merger paths back into its config (Setup check → Apply).
+#[tauri::command]
+fn merger_apply(config_path: String, fixes: std::collections::BTreeMap<String, String>) -> Result<bool, String> {
+    let mut text = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    for (key, want) in &fixes {
+        // .NET appSettings first: <add key="K" value="V" />
+        let pat = format!(r#"(?i)(<add\s+key="{}"\s+value=")[^"]*(")"#, regex::escape(key));
+        let re = regex::Regex::new(&pat).unwrap();
+        let new_text = re.replace_all(&text, format!("$1{want}$2")).to_string();
+        if new_text != text {
+            text = new_text;
+            continue;
+        }
+        // <setting name="K">…<value>V</value>
+        let pat2 = format!(r#"(?is)(<setting\s+name="{}"[^>]*>.*?<value>).*?(</value>)"#, regex::escape(key));
+        let re2 = regex::Regex::new(&pat2).unwrap();
+        let new_text2 = re2.replace_all(&text, format!("$1{want}$2")).to_string();
+        if new_text2 != text {
+            text = new_text2;
+            continue;
+        }
+        // INI/key=value fallback: replace the line, or append it
+        let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+        let mut done = false;
+        for l in lines.iter_mut() {
+            if let Some((k, _)) = l.split_once('=').or_else(|| l.split_once(':')) {
+                if k.trim().trim_matches('"') == key {
+                    *l = format!("{key}={want}");
+                    done = true;
+                }
+            }
+        }
+        if !done {
+            lines.push(format!("{key}={want}"));
+        }
+        text = lines.join("\n") + "\n";
+    }
+    // backup like the original never overwrites blindly
+    let bak = format!("{config_path}.original");
+    if std::path::Path::new(&bak).exists() == false {
+        std::fs::copy(&config_path, &bak).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&config_path, text).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MergeInputs {
+    pub rel: String,
+    pub kind: String,
+    pub base: String,
+    pub base_encoding: String,
+    pub versions: Vec<MergeVersion>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MergeVersion {
+    pub label: String,
+    pub mod_id: String,
+    pub text: String,
+}
+
+/// Real merge inputs for one shared file: vanilla base (loose game file,
+/// else first bundle hit) + every enabled staged copy, top priority first.
+#[tauri::command]
+fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let kind = if rel.to_lowercase().ends_with(".xml") { "xml" } else { "script" }.to_string();
+    let (rows, order) = {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        let order = s.priority_ids();
+        (s.mods_only().into_iter().cloned().collect::<Vec<_>>(), order)
+    };
+    let mut idx = std::collections::HashMap::new();
+    for (i, id) in order.iter().enumerate() {
+        idx.insert(id.clone(), i);
+    }
+    let mut holders: Vec<&state::ModRow> = rows
+        .iter()
+        .filter(|r| r.enabled && r.targets.iter().any(|t| t.to_lowercase() == rel.to_lowercase()))
+        .collect();
+    holders.sort_by_key(|r| idx.get(&r.id).copied().unwrap_or(usize::MAX));
+    // base: loose file, else bundle
+    let mut base_bytes: Option<Vec<u8>> = std::fs::read(m.home.game.join(&rel)).ok();
+    if base_bytes.is_none() {
+        let content = m.home.game.join("content");
+        if let Ok(rd) = std::fs::read_dir(&content) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().map(|x| x == "bundle").unwrap_or(false) {
+                    if let Ok(entries) = bundles::bundle_entries(&p) {
+                        if entries.iter().any(|en| en.path.eq_ignore_ascii_case(&rel)) {
+                            base_bytes = bundles::bundle_read(&p, &rel).ok();
+                            if base_bytes.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let (base_lines, enc) = base_bytes
+        .as_deref()
+        .map(|b| {
+            let (l, e) = script_merge::decode_script(b);
+            let s = match e {
+                script_merge::ScriptEncoding::Utf16Le => "utf16",
+                _ => "utf8",
+            };
+            (l, s.to_string())
+        })
+        .unwrap_or((vec![], "utf8".into()));
+    let mut versions = vec![];
+    for r in holders {
+        let data = std::fs::read(m.home.staging.join(&r.id).join(&rel)).unwrap_or_default();
+        let (lines, _) = script_merge::decode_script(&data);
+        versions.push(MergeVersion { label: r.name.clone(), mod_id: r.id.clone(), text: lines.join("\n") });
+    }
+    Ok(MergeInputs { rel, kind, base: base_lines.join("\n"), base_encoding: enc, versions })
+}
+
+/// Keep a resolved merge: stored under the rel, applied on top of deploys.
+#[tauri::command]
+fn save_merge(shared: State<Shared>, rel: String, text: String, answers: Vec<usize>) -> Result<bool, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        s.merge_kept.insert(rel.clone(), text);
+        s.save_resolutions(&rel, answers);
+    }
+    m.save()?;
+    Ok(true)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -853,7 +1054,11 @@ pub fn run() {
             queue_cancel,
             queue_pause,
             queue_pump,
-            settings_dir_path
+            settings_dir_path,
+            open_tool_window,
+            merger_apply,
+            merge_inputs,
+            save_merge
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,12 +10,17 @@ const DEFAULTS: AppConfig = {
   gameDir: '',
   prefix: '',
   nexusKey: '',
+  codeFont: 'JetBrains Mono',
+  codeSize: 11,
+  mergerPath: '',
 };
 
 export async function loadConfigNative(): Promise<AppConfig> {
   const get = (k: keyof AppConfig) => store.get<string>(k);
-  const [theme, font, gameDir, prefix, nexusKey] = await Promise.all([
+  const getN = (k: keyof AppConfig) => store.get<number>(k);
+  const [theme, font, gameDir, prefix, nexusKey, codeFont, codeSize, mergerPath] = await Promise.all([
     get('theme'), get('font'), get('gameDir'), get('prefix'), get('nexusKey'),
+    get('codeFont'), getN('codeSize'), get('mergerPath'),
   ]);
   return {
     theme: theme ?? DEFAULTS.theme,
@@ -23,6 +28,9 @@ export async function loadConfigNative(): Promise<AppConfig> {
     gameDir: gameDir ?? '',
     prefix: prefix ?? '',
     nexusKey: nexusKey ?? '',
+    codeFont: codeFont ?? DEFAULTS.codeFont,
+    codeSize: codeSize ?? DEFAULTS.codeSize,
+    mergerPath: mergerPath ?? '',
   };
 }
 
@@ -32,6 +40,9 @@ export async function saveConfigNative(cfg: AppConfig): Promise<void> {
   await store.set('gameDir', cfg.gameDir);
   await store.set('prefix', cfg.prefix);
   await store.set('nexusKey', cfg.nexusKey);
+  await store.set('codeFont', cfg.codeFont);
+  await store.set('codeSize', cfg.codeSize);
+  await store.set('mergerPath', cfg.mergerPath);
   await store.save();
 }
 

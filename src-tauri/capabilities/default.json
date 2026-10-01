@@ -8,6 +8,7 @@
     "store:default",
     "core:window:allow-show",
     "core:window:allow-set-focus",
+    "core:window:allow-close",
     "dialog:default",
     "deep-link:default",
     "notification:default",

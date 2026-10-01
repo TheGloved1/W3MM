@@ -246,8 +246,10 @@
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const sel = await open({ multiple: true, filters: [{ name: 'Mod archive', extensions: ['zip', '7z', 'rar', 'tar', 'gz', 'tgz'] }] });
-      const paths = Array.isArray(sel) ? sel : sel ? [sel] : [];
-      for (const p of paths) await installPath(p as string);
+      const paths: string[] = Array.isArray(sel) ? sel as string[] : sel ? [sel as string] : [];
+      for (const p of paths) {
+        await invoke('open_tool_window', { kind: 'install', query: `path=${encodeURIComponent(p)}`, path: p });
+      }
     } catch {}
   }
 
@@ -317,8 +319,8 @@
     } catch (e) { error = String(e); }
   }
 
-  function openResolver() { menuOpen = false; goto('/merges'); }
-  function openSettings() { menuOpen = false; goto('/settings'); }
+  function openResolver() { menuOpen = false; invoke('open_tool_window', { kind: 'resolver', query: '', path: '' }); }
+  function openSettings() { menuOpen = false; invoke('open_tool_window', { kind: 'setup', query: '', path: '' }); }
 
   // ---- downloads panel ----
   async function notify(title: string, body: string) {
@@ -380,6 +382,7 @@
     let unlisten: (() => void) | undefined;
     let unlistenP: (() => void) | undefined;
     let unlistenD: (() => void) | undefined;
+    let unlistenM: (() => void) | undefined;
     (async () => {
       try {
         queue = await invoke<QueueItem[]>('queue_list').catch(() => []);
@@ -395,11 +398,15 @@
           archPath = e.payload.path;
           flash(`Downloaded → ${e.payload.path.split('/').pop()}`);
         });
+        unlistenM = await listen('mods-changed', async () => {
+          await refresh();
+          await deploy(true);
+        });
       } catch {}
     })();
     function onDocClick() { menuOpen = false; }
     document.addEventListener('click', onDocClick);
-    return () => { unlisten?.(); unlistenP?.(); unlistenD?.(); document.removeEventListener('click', onDocClick); };
+    return () => { unlisten?.(); unlistenP?.(); unlistenD?.(); unlistenM?.(); document.removeEventListener('click', onDocClick); };
   });
 </script>
 

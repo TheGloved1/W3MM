@@ -9,9 +9,9 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: adapter({
-      fallback: "index.html",
-    }),
+    // Per-route .html files (index/merges/settings/install) so each tool
+    // window loads its own document. No SPA fallback.
+    adapter: adapter({}),
   },
 };
 
