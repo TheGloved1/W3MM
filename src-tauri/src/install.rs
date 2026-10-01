@@ -94,3 +94,36 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
     docs.sort();
     InstallPlan { moves, docs }
 }
+
+/// Copy plan sources into `staging/<id>/`, wrapping bare files under `mods/<mod>/`.
+/// Returns target rels for state + doc rels.
+pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    std::fs::create_dir_all(stage).map_err(|e| e.to_string())?;
+    let mut targets = vec![];
+    for (src, rel) in &plan.moves {
+        let first = rel.split('/').next().unwrap_or("").to_lowercase();
+        let target_rel = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
+            rel.clone()
+        } else {
+            format!("mods/{mod_folder}/{rel}")
+        };
+        let dst = stage.join(&target_rel);
+        if let Some(p) = dst.parent() {
+            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        std::fs::copy(src, &dst).map_err(|e| e.to_string())?;
+        targets.push(target_rel);
+    }
+    targets.sort();
+    targets.dedup();
+    let mut docs = vec![];
+    let docs_dir = stage.join("docs");
+    for src in &plan.docs {
+        let name = Path::new(src).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or("readme.txt".into());
+        std::fs::create_dir_all(&docs_dir).map_err(|e| e.to_string())?;
+        let dst = docs_dir.join(&name);
+        let _ = std::fs::copy(src, &dst);
+        docs.push(format!("docs/{name}"));
+    }
+    Ok((targets, docs))
+}

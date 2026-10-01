@@ -16,6 +16,10 @@ export interface ModRow {
   archive: string;
   section: string;
   updated: number;
+  collapsed: boolean;
+  targets: string[];
+  nexus_cat: string;
+  main_of: string;
 }
 
 export interface AppState {
@@ -23,6 +27,8 @@ export interface AppState {
   priority: string[];
   deployed: Record<string, string>;
   filelist_added: Record<string, string[]>;
+  resolutions: Record<string, number[]>;
+  merge_kept: Record<string, string>;
 }
 
 export interface InstallPlan {
@@ -40,4 +46,19 @@ export interface XmlMergeResult {
   merged: string;
   conflicts: { path: string; kind: string; why: string; base_lines: string[]; variants: string[][]; proposed: string[] }[];
   needs_resolution: boolean;
+}
+
+export interface NxmLink {
+  game: string;
+  mod_id: string;
+  file_id: string;
+  key: string;
+  expires: string;
+}
+
+export interface Snippets {
+  user: Record<string, string[]>;
+  input_xml: string[];
+  filelist: string[];
+  optional: string[];
 }

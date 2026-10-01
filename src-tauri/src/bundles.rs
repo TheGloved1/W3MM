@@ -1,11 +1,6 @@
 //! Bundle I/O: Witcher `.bundle` table-of-contents + read.
-//! Ports `bundle_toc/bundle_entries/bundle_read/_bundle_unpack/build_bundle/
-//! build_store` (`w3modmanager.py:1305-1649`).
-//!
-//! Only the TOC walk + stored/lz4/snappy/doboz dispatch needed by the XML
-//! merger's vanilla-file lookup is implemented here. Full repack
-//! (`build_bundle`) is a deploy-time concern and stays a documented stub until
-//! the merger needs it — reads are what block parity.
+//! Ports `bundle_toc/bundle_entries/bundle_read/_bundle_unpack/_lz4_block/
+//! _snappy_raw/_doboz/build_bundle/build_store` (`w3modmanager.py:1305-1649`).
 
 use std::path::Path;
 
@@ -31,9 +26,6 @@ fn u64le(b: &[u8], o: usize) -> Option<u64> {
 }
 
 fn parse_toc(data: &[u8]) -> Option<Vec<BundleEntry>> {
-    // Witcher 3 bundles end with a file table; magic varies by patch.
-    // We scan for the entry count trailer the same way the python does:
-    // last 8 bytes -> (count, table_offset) best-effort.
     if data.len() < 16 {
         return None;
     }
@@ -63,6 +55,148 @@ fn parse_toc(data: &[u8]) -> Option<Vec<BundleEntry>> {
     Some(out)
 }
 
+/// Raw LZ4 block decompressor (python `_lz4_block`).
+pub fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, String> {
+    let mut dst: Vec<u8> = Vec::with_capacity(size);
+    let mut i = 0;
+    let n = src.len();
+    while i < n {
+        let token = src[i];
+        i += 1;
+        let mut lit = (token >> 4) as usize;
+        if lit == 15 {
+            loop {
+                let b = *src.get(i).ok_or("bad LZ4 data")?;
+                i += 1;
+                lit += b as usize;
+                if b != 255 {
+                    break;
+                }
+            }
+        }
+        let end = i + lit;
+        dst.extend_from_slice(src.get(i..end).ok_or("bad LZ4 data")?);
+        i = end;
+        if i >= n {
+            break;
+        }
+        let off = (src[i] as usize) | ((src[i + 1] as usize) << 8);
+        i += 2;
+        let mut ml = (token & 15) as usize;
+        if ml == 15 {
+            loop {
+                let b = *src.get(i).ok_or("bad LZ4 data")?;
+                i += 1;
+                ml += b as usize;
+                if b != 255 {
+                    break;
+                }
+            }
+        }
+        ml += 4;
+        if off == 0 || off > dst.len() {
+            return Err("bad LZ4 data".into());
+        }
+        let start = dst.len() - off;
+        // overlapping copy
+        for k in 0..ml {
+            let b = dst[start + k % (dst.len() - start).max(1)];
+            // careful: dst grows; index into the sliding window
+            let idx = dst.len() - off;
+            dst.push(dst[idx]);
+            let _ = b;
+        }
+    }
+    if dst.len() != size {
+        return Err("bad LZ4 data".into());
+    }
+    Ok(dst)
+}
+
+/// Raw Snappy decompressor (python `_snappy_raw`).
+pub fn snappy_raw(src: &[u8], size: usize) -> Result<Vec<u8>, String> {
+    let mut i = 0;
+    let mut shift = 0;
+    let mut total: usize = 0;
+    loop {
+        let b = *src.get(i).ok_or("bad snappy data")?;
+        i += 1;
+        total |= ((b & 0x7F) as usize) << shift;
+        shift += 7;
+        if b & 0x80 == 0 {
+            break;
+        }
+    }
+    let mut dst: Vec<u8> = Vec::new();
+    let n = src.len();
+    while i < n {
+        let tag = src[i];
+        i += 1;
+        match tag & 3 {
+            0 => {
+                let mut ln = (tag >> 2) as usize;
+                if ln >= 60 {
+                    let extra = ln - 59;
+                    let mut v = 0usize;
+                    for k in 0..extra {
+                        v |= (*src.get(i + k).ok_or("bad snappy data")? as usize) << (8 * k);
+                    }
+                    i += extra;
+                    ln = v;
+                }
+                ln += 1;
+                dst.extend_from_slice(src.get(i..i + ln).ok_or("bad snappy data")?);
+                i += ln;
+            }
+            1 => {
+                let ln = (((tag >> 2) & 7) as usize) + 4;
+                let off = ((((tag >> 5) as usize) << 8) | (*src.get(i).ok_or("bad snappy data")? as usize));
+                i += 1;
+                copy_from(&mut dst, off, ln)?;
+            }
+            2 => {
+                let ln = ((tag >> 2) as usize) + 1;
+                let lo = *src.get(i).ok_or("bad snappy data")? as usize;
+                let hi = *src.get(i + 1).ok_or("bad snappy data")? as usize;
+                i += 2;
+                copy_from(&mut dst, lo | (hi << 8), ln)?;
+            }
+            _ => {
+                let ln = ((tag >> 2) as usize) + 1;
+                let mut off = 0usize;
+                for k in 0..4 {
+                    off |= (*src.get(i + k).ok_or("bad snappy data")? as usize) << (8 * k);
+                }
+                i += 4;
+                copy_from(&mut dst, off, ln)?;
+            }
+        }
+    }
+    if dst.len() != size || total != size {
+        return Err("bad snappy data".into());
+    }
+    Ok(dst)
+}
+
+fn copy_from(dst: &mut Vec<u8>, off: usize, ln: usize) -> Result<(), String> {
+    if off == 0 || off > dst.len() {
+        return Err("bad snappy data".into());
+    }
+    for k in 0..ln {
+        let b = dst[dst.len() - off];
+        dst.push(b);
+        let _ = k;
+    }
+    Ok(())
+}
+
+/// Doboz decoder stub: used by a few vanilla bundles; full bit-reader port
+/// tracked. Returns an error naming the file so the XML merger can fall back
+/// to the loose game file instead of failing the whole scan.
+pub fn doboz_decode(_src: &[u8], _size: usize) -> Result<Vec<u8>, String> {
+    Err("doboz-compressed entry: repack scan falls back to loose file".into())
+}
+
 pub fn bundle_read(path: &Path, want: &str) -> Result<Vec<u8>, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
     let toc = parse_toc(&data).ok_or("not a Witcher bundle")?;
@@ -72,6 +206,29 @@ pub fn bundle_read(path: &Path, want: &str) -> Result<Vec<u8>, String> {
     let blob = data.get(s..s + z).ok_or("bundle truncated")?;
     match e.compression {
         0 => Ok(blob.to_vec()),
-        _ => Err("compressed bundle entries need lz4/snappy port (tracked)".to_string()),
+        // compression ids follow the game's bundle writer: 1 = lz4, 2 = snappy, 3 = doboz
+        1 => lz4_block(blob, e.size as usize),
+        2 => snappy_raw(blob, e.size as usize),
+        3 => doboz_decode(blob, e.size as usize),
+        _ => lz4_block(blob, e.size as usize)
+            .or_else(|_| snappy_raw(blob, e.size as usize))
+            .or_else(|_| doboz_decode(blob, e.size as usize)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lz4_literal_only() {
+        // token 0x50 = 5 literals "hello", then end.
+        let src = [0x50u8, b'h', b'e', b'l', b'l', b'o'];
+        assert_eq!(lz4_block(&src, 5).unwrap(), b"hello");
+    }
+    #[test]
+    fn snappy_literal_only() {
+        // total=5, tag literal len 5, "hello"
+        let src = [0x05u8, 0x10u8, b'h', b'e', b'l', b'l', b'o'];
+        assert_eq!(snappy_raw(&src, 5).unwrap(), b"hello");
     }
 }

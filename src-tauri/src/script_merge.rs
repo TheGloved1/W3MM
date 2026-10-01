@@ -206,6 +206,56 @@ pub fn scan_functions(lines: &[String]) -> Vec<(String, usize, usize)> {
     out
 }
 
+/// Duplicate function definitions in merged output (python `duplicate_functions`).
+pub fn duplicate_functions(merged: &[String]) -> Vec<String> {
+    let fns = scan_functions(merged);
+    let mut seen = std::collections::HashMap::new();
+    let mut dups = vec![];
+    for (name, _, _) in fns {
+        let c = seen.entry(name.clone()).or_insert(0);
+        *c += 1;
+        if *c == 2 {
+            dups.push(name);
+        }
+    }
+    dups.sort();
+    dups
+}
+
+/// Brace-balance faults per function (python `structure_problems` subset).
+pub fn structure_problems(merged: &[String]) -> Vec<(String, String)> {
+    let mut out = vec![];
+    for (name, s, e) in scan_functions(merged) {
+        let mut depth = 0i32;
+        for l in &merged[s..=e.min(merged.len().saturating_sub(1))] {
+            // strip line comments for balance check
+            let code = l.split("//").next().unwrap_or("");
+            depth += code.chars().filter(|&c| c == '{').count() as i32;
+            depth -= code.chars().filter(|&c| c == '}').count() as i32;
+            if depth < 0 {
+                out.push((name.clone(), "extra closing brace".into()));
+                break;
+            }
+        }
+        if depth > 0 {
+            out.push((name, "missing closing brace".into()));
+        }
+    }
+    out
+}
+
+/// Full merge diagnostics for the resolver UI: dups + structure.
+pub fn function_check(merged: &[String]) -> Vec<String> {
+    let mut issues = vec![];
+    for d in duplicate_functions(merged) {
+        issues.push(format!("duplicate function {d}"));
+    }
+    for (f, w) in structure_problems(merged) {
+        issues.push(format!("{f}: {w}"));
+    }
+    issues
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +287,12 @@ mod tests {
         let (dec, fmt) = decode_script(&enc);
         assert_eq!(fmt, ScriptEncoding::Utf16Le);
         assert_eq!(dec, lines);
+    }
+    #[test]
+    fn diagnostics() {
+        let m: Vec<String> = vec!["function a() {".into(), "}".into(), "function a() {".into(), "}".into()];
+        assert_eq!(duplicate_functions(&m), vec!["a".to_string()]);
+        let bad: Vec<String> = vec!["function b() {".into(), "if (x) {".into()];
+        assert!(!structure_problems(&bad).is_empty());
     }
 }

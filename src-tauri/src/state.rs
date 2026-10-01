@@ -24,6 +24,15 @@ pub struct ModRow {
     pub section: String,
     #[serde(default)]
     pub updated: i64,
+    #[serde(default)]
+    pub collapsed: bool,
+    /// Target rels inside staging (`mods/...`, `dlc/...`, `bin/...`), posix style.
+    #[serde(default)]
+    pub targets: Vec<String>,
+    #[serde(default)]
+    pub nexus_cat: String,
+    #[serde(default)]
+    pub main_of: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -37,6 +46,12 @@ pub struct AppState {
     pub deployed: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub filelist_added: std::collections::BTreeMap<String, Vec<String>>,
+    /// Merge resolutions per key: answers the resolver gave.
+    #[serde(default)]
+    pub resolutions: std::collections::BTreeMap<String, Vec<usize>>,
+    /// Merge outputs kept for redeploy without re-asking.
+    #[serde(default)]
+    pub merge_kept: std::collections::BTreeMap<String, String>,
 }
 
 impl AppState {
@@ -114,6 +129,87 @@ impl AppState {
         }
         self.deployed = by_path;
     }
+
+    pub fn sections(&self) -> Vec<(String, String)> {
+        self.mods.iter().filter(|r| r.sep).map(|r| (r.id.clone(), r.name.clone())).collect()
+    }
+
+    pub fn section_of(&self, mid: &str) -> Option<String> {
+        let mut cur: Option<String> = None;
+        for r in &self.mods {
+            if r.sep {
+                cur = Some(r.id.clone());
+            } else if r.id == mid {
+                return cur;
+            }
+        }
+        None
+    }
+
+    pub fn add_separator(&mut self, index: usize, name: &str) -> ModRow {
+        let row = ModRow {
+            id: format!("sep{}", uuid::Uuid::new_v4().simple()),
+            sep: true, name: name.to_string(), enabled: false,
+            version: String::new(), nexus: String::new(), archive: String::new(),
+            section: String::new(), updated: 0, collapsed: false,
+            targets: vec![], nexus_cat: String::new(), main_of: String::new(),
+        };
+        let at = index.min(self.mods.len());
+        self.mods.insert(at, row.clone());
+        row
+    }
+
+    pub fn edit_mod(&mut self, mid: &str, name: &str, version: &str, nexus: &str, section: &str) {
+        if let Some(m) = self.get_mut(mid) {
+            m.name = name.to_string();
+            m.version = version.to_string();
+            m.nexus = nexus.to_string();
+            m.section = section.to_string();
+        }
+    }
+
+    /// (managed ids this install replaces, unmanaged paths it would replace).
+    /// Mirrors python `find_collisions` minus the dlc/game-owned nuance, which
+    /// the deploy scan handles via backups.
+    pub fn find_collisions(&self, targets: &[String]) -> (Vec<String>, Vec<String>) {
+        let tl: std::collections::BTreeSet<String> = targets.iter().map(|t| t.to_lowercase()).collect();
+        let mut managed = vec![];
+        for m in self.mods_only() {
+            if m.targets.iter().any(|t| tl.contains(&t.to_lowercase())) {
+                managed.push(m.id.clone());
+            }
+        }
+        (managed, vec![])
+    }
+
+    /// Who overwrites whom, in priority order: path -> [mod ids, winner last].
+    /// Python `clashes` subset used for priority badges.
+    pub fn clashes(&mut self) -> std::collections::BTreeMap<String, Vec<String>> {
+        let order = self.priority_ids();
+        let mut idx = std::collections::HashMap::new();
+        for (i, id) in order.iter().enumerate() {
+            idx.insert(id.clone(), i);
+        }
+        let mut by_path: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for m in self.mods_only().into_iter().filter(|m| m.enabled) {
+            for t in &m.targets {
+                by_path.entry(t.to_lowercase()).or_default().push(m.id.clone());
+            }
+        }
+        for v in by_path.values_mut() {
+            v.sort_by_key(|id| idx.get(id).copied().unwrap_or(usize::MAX));
+        }
+        by_path.retain(|_, v| v.len() > 1);
+        by_path
+    }
+
+    pub fn save_resolutions(&mut self, key: &str, answers: Vec<usize>) {
+        self.resolutions.insert(key.to_string(), answers);
+    }
+    pub fn forget_resolutions(&mut self, key: &str) {
+        self.resolutions.remove(key);
+        self.merge_kept.remove(key);
+    }
 }
 
 pub fn load_state(path: &PathBuf) -> Result<AppState, String> {
@@ -172,13 +268,13 @@ pub fn ensure_mod_prefix(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn row(id: &str, name: &str) -> ModRow {
+        ModRow { id: id.into(), sep: false, name: name.into(), enabled: true, version: String::new(), nexus: String::new(), archive: String::new(), section: String::new(), updated: 0, collapsed: false, targets: vec![], nexus_cat: String::new(), main_of: String::new() }
+    }
     #[test]
     fn priority_flows() {
         let mut s = AppState::default();
-        s.mods = vec![
-            ModRow { id: "a".into(), sep: false, name: "A".into(), enabled: true, version: String::new(), nexus: String::new(), archive: String::new(), section: String::new(), updated: 0 },
-            ModRow { id: "b".into(), sep: false, name: "B".into(), enabled: true, version: String::new(), nexus: String::new(), archive: String::new(), section: String::new(), updated: 0 },
-        ];
+        s.mods = vec![row("a", "A"), row("b", "B")];
         assert_eq!(s.priority_ids(), vec!["a", "b"]);
         s.set_priority_number("b", 1);
         assert_eq!(s.priority, vec!["b", "a"]);

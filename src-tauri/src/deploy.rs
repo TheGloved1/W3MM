@@ -138,3 +138,57 @@ pub fn update_filelists(game: &Path, xmls: &[String]) -> std::io::Result<()> {
 pub fn deployed_map() -> BTreeMap<String, String> {
     BTreeMap::new()
 }
+
+/// Restore backups for paths no longer wanted; drop empty dirs up to game root.
+pub fn restore_paths(game: &Path, backup: &Path, rels: &[String]) -> std::io::Result<()> {
+    for rel in rels {
+        let dst = game.join(rel);
+        let bsrc = backup.join(rel);
+        let _ = std::fs::remove_file(&dst);
+        if bsrc.is_file() {
+            if let Some(p) = dst.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::copy(&bsrc, &dst)?;
+            let _ = std::fs::remove_file(&bsrc);
+        }
+        // prune newly-empty parents
+        let mut cur = dst.parent().map(|p| p.to_path_buf());
+        while let Some(d) = cur {
+            if d == game || !d.starts_with(game) {
+                break;
+            }
+            match std::fs::remove_dir(d.clone()) {
+                Ok(()) => cur = d.parent().map(|p| p.to_path_buf()),
+                Err(_) => break,
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse existing mods.settings `[Mods]` block into ordered names.
+pub fn read_mods_settings(path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut in_mods = false;
+    let mut out = vec![];
+    for line in text.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("[Mods]") {
+            in_mods = true;
+            continue;
+        }
+        if in_mods {
+            if t.starts_with('[') {
+                break;
+            }
+            if let Some((_, v)) = t.split_once('=') {
+                let v = v.trim();
+                if !v.is_empty() {
+                    out.push(v.to_string());
+                }
+            }
+        }
+    }
+    out
+}
