@@ -304,6 +304,38 @@ pub fn function_check(merged: &[String]) -> Vec<String> {
     issues
 }
 
+/// RedKit annotation symbols a script defines: (annotation, Class.Name).
+/// Ports the symbol half of python `annotation_clashes` (add/replaceMethod, addField).
+pub fn scan_annotations(lines: &[String]) -> Vec<(String, String)> {
+    // pair annotation with following symbol name
+    let mut paired = vec![];
+    let mut pending: Option<String> = None;
+    let mut cls = String::new();
+    for l in lines {
+        let t = l.trim();
+        if t.starts_with("class ") {
+            cls = t["class ".len()..].split_whitespace().next().unwrap_or("").trim_end_matches('{').trim().to_string();
+        }
+        if ["@addMethod", "@addField", "@replaceMethod"].iter().any(|a| t.starts_with(a)) {
+            pending = Some(t.split_whitespace().next().unwrap_or("").to_string());
+            continue;
+        }
+        if let Some(a) = pending.take() {
+            let sym = if let Some(rest) = t.strip_prefix("function ") {
+                rest.split('(').next().unwrap_or("").trim().to_string()
+            } else if let Some(rest) = t.strip_prefix("var ") {
+                rest.split([' ', ':', ';']).next().unwrap_or("").trim().to_string()
+            } else {
+                continue;
+            };
+            if !sym.is_empty() {
+                paired.push((a, format!("{cls}.{sym}")));
+            }
+        }
+    }
+    paired
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +383,14 @@ mod tests {
         assert_eq!(duplicate_functions(&m), vec!["a".to_string()]);
         let bad: Vec<String> = vec!["function b() {".into(), "if (x) {".into()];
         assert!(!structure_problems(&bad).is_empty());
+    }
+    #[test]
+    fn annotations() {
+        let lines: Vec<String> = vec![
+            "class CPlayer extends CEntity {".into(),
+            "@addMethod".into(),
+            "function DoDodge() {}".into(),
+        ];
+        assert_eq!(scan_annotations(&lines), vec![("@addMethod".to_string(), "CPlayer.DoDodge".to_string())]);
     }
 }

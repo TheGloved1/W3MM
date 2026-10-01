@@ -147,6 +147,16 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
         }
         all_written.extend(written);
     }
+    // Anything previously deployed but no longer wanted (disabled/removed
+    // mods, or files a mod update dropped) goes back to backup/vanilla.
+    let stale: Vec<String> = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        let want: std::collections::HashSet<String> = all_written.iter().cloned().collect();
+        s.deployed.keys().filter(|k| !want.contains(*k)).cloned().collect()
+    };
+    if !stale.is_empty() {
+        deploy::restore_paths(&m.home.game, &m.home.backup, &stale).map_err(|e| e.to_string())?;
+    }
     // mods.settings in priority order, names as deployed folder names.
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
     let settings = m.settings_dir().join("mods.settings");
@@ -311,6 +321,41 @@ fn clashes(shared: State<Shared>) -> Result<std::collections::BTreeMap<String, V
 #[tauri::command]
 fn merge_check(lines: Vec<String>) -> Vec<String> {
     script_merge::function_check(&lines)
+}
+
+/// RedKit annotation clashes across staged mods: {(annotation, symbol): [mod names]}.
+/// Python `annotation_clashes` core (symbol ownership, no arrival-order blame).
+#[tauri::command]
+fn annotation_clashes(shared: State<Shared>) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let rows: Vec<state::ModRow> = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        s.mods_only().into_iter().cloned().collect()
+    };
+    let mut owners: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for r in rows.iter().filter(|r| r.enabled) {
+        let stage = m.home.staging.join(&r.id);
+        for t in &r.targets {
+            if !t.to_lowercase().ends_with(".ws") {
+                continue;
+            }
+            let data = std::fs::read(stage.join(t)).unwrap_or_default();
+            if data.is_empty() {
+                continue;
+            }
+            let (lines, _) = script_merge::decode_script(&data);
+            for (ann, sym) in script_merge::scan_annotations(&lines) {
+                owners.entry(format!("{ann} {sym}")).or_default().push(r.name.clone());
+            }
+        }
+    }
+    owners.retain(|_, v| {
+        v.sort();
+        v.dedup();
+        v.len() > 1
+    });
+    Ok(owners)
 }
 
 #[tauri::command]
@@ -673,6 +718,7 @@ pub fn run() {
             merge_scripts,
             merge_xml,
             merge_check,
+            annotation_clashes,
             save_resolutions,
             scan_keybinds,
             scan_snippets,

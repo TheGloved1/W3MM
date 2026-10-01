@@ -9,6 +9,7 @@
 
   let appState: AppState | null = $state(null);
   let clashMap: Record<string, string[]> = $state({});
+  let annotMap: Record<string, string[]> = $state({});
   let madeMap: Record<string, MadeFor> = $state({});
   let filesMap: Record<string, string[]> = $state({});
   let openFiles: string | null = $state(null);
@@ -45,6 +46,7 @@
   async function refresh() {
     appState = await invoke<AppState>('list_mods');
     clashMap = await invoke<Record<string, string[]>>('clashes').catch(() => ({}));
+    annotMap = await invoke<Record<string, string[]>>('annotation_clashes').catch(() => ({}));
     // made-for badges + overlap summary load lazily so the list stays fast
     madeMap = {};
     for (const m of appState.mods.filter((x) => !x.sep)) {
@@ -161,7 +163,7 @@
         <CardContent class="text-sm text-muted-foreground">Set the game + prefix in Settings, or auto-detect Steam. New home: <span class="font-mono">&lt;game&gt;/_W3LMN/</span> (clean break from <span class="font-mono">_ModManager</span>).</CardContent></Card>
       {:else}
         <Card>
-          <CardHeader><CardTitle class="text-sm">{appState.mods.filter((m) => !m.sep).length} mods · {Object.keys(clashMap).length} clash paths</CardTitle></CardHeader>
+          <CardHeader><CardTitle class="text-sm">{appState.mods.filter((m) => !m.sep).length} mods · {Object.keys(clashMap).length} clash paths{#if Object.keys(annotMap).length} · {Object.keys(annotMap).length} annotation clashes{/if}</CardTitle></CardHeader>
           <CardContent class="space-y-1">
             <div class="flex gap-2 pb-2">
               <input bind:value={archPath} placeholder="/path/to/mod.zip → Install (empty = Browse)" class="flex-1 rounded border bg-background px-2 py-1 text-sm font-mono" />

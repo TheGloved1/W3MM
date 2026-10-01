@@ -190,11 +190,81 @@ fn copy_from(dst: &mut Vec<u8>, off: usize, ln: usize) -> Result<(), String> {
     Ok(())
 }
 
-/// Doboz decoder stub: used by a few vanilla bundles; full bit-reader port
-/// tracked. Returns an error naming the file so the XML merger can fall back
-/// to the loose game file instead of failing the whole scan.
-pub fn doboz_decode(_src: &[u8], _size: usize) -> Result<Vec<u8>, String> {
-    Err("doboz-compressed entry: repack scan falls back to loose file".into())
+/// Doboz decoder (Attila T. Afra), port of python `_doboz`.
+pub fn doboz_decode(src: &[u8], size: usize) -> Result<Vec<u8>, String> {
+    const LUT: [(u32, u32, u32, u32, usize); 8] = [
+        (0xFF, 2, 0, 0, 1),
+        (0xFFFF, 2, 0, 0, 2),
+        (0xFFFF, 6, 15, 2, 2),
+        (0xFFFFFF, 8, 31, 3, 3),
+        (0xFF, 2, 0, 0, 1),
+        (0xFFFF, 2, 0, 0, 2),
+        (0xFFFF, 6, 15, 2, 2),
+        (0xFFFFFFFF, 11, 255, 3, 4),
+    ];
+    let err = || "bad doboz data".to_string();
+    let attrs = *src.first().ok_or_else(err)?;
+    let width = (((attrs >> 3) & 7) + 1) as usize;
+    if attrs & 7 != 0 || ![1, 2, 4, 8].contains(&width) {
+        return Err(err());
+    }
+    let le = |b: &[u8]| {
+        let mut v = 0u64;
+        for (k, byte) in b.iter().enumerate() {
+            v |= (*byte as u64) << (8 * k);
+        }
+        v as usize
+    };
+    let usize_ = le(src.get(1..1 + width).ok_or_else(err)?);
+    let csize = le(src.get(1 + width..1 + 2 * width).ok_or_else(err)?);
+    let mut i = 1 + 2 * width;
+    if attrs & 128 != 0 {
+        let out = src.get(i..i + usize_).ok_or_else(err)?.to_vec();
+        if out.len() != size {
+            return Err(err());
+        }
+        return Ok(out);
+    }
+    let mut buf = src.get(..csize.min(src.len())).ok_or_else(err)?.to_vec();
+    buf.extend_from_slice(&[0u8; 8]);
+    let src = buf;
+    let mut dst: Vec<u8> = Vec::with_capacity(usize_);
+    let mut control = 1u32;
+    while dst.len() < usize_ {
+        if control == 1 {
+            let b = src.get(i..i + 4).ok_or_else(err)?;
+            control = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            i += 4;
+        }
+        if control & 1 == 0 {
+            dst.push(*src.get(i).ok_or_else(err)?);
+            i += 1;
+        } else {
+            let b = src.get(i..i + 4).ok_or_else(err)?;
+            let word = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            let (mask, oshift, lmask, lshift, n) = LUT[(word & 7) as usize];
+            let offset = ((word & mask) >> oshift) as usize;
+            let length = (((word >> lshift) & lmask) as usize) + 3;
+            i += n;
+            if offset == 0 || offset > dst.len() {
+                return Err(err());
+            }
+            let start = dst.len() - offset;
+            if offset >= length {
+                dst.extend_from_slice(&dst[start..start + length].to_vec());
+            } else {
+                for k in 0..length {
+                    let v = dst[start + k];
+                    dst.push(v);
+                }
+            }
+        }
+        control >>= 1;
+    }
+    if dst.len() != size || usize_ != size {
+        return Err(err());
+    }
+    Ok(dst)
 }
 
 pub fn bundle_read(path: &Path, want: &str) -> Result<Vec<u8>, String> {
@@ -230,5 +300,11 @@ mod tests {
         // total=5, tag literal len 5, "hello"
         let src = [0x05u8, 0x10u8, b'h', b'e', b'l', b'l', b'o'];
         assert_eq!(snappy_raw(&src, 5).unwrap(), b"hello");
+    }
+    #[test]
+    fn doboz_stored() {
+        // attrs: width=1 (bits3-5 = 0), stored bit set. usize=3, csize=6, "abc".
+        let src = [0x80u8, 0x03, 0x06, b'a', b'b', b'c'];
+        assert_eq!(doboz_decode(&src, 3).unwrap(), b"abc");
     }
 }
