@@ -847,9 +847,13 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     // Dev server routes by path, the bundled app by file.
     #[cfg(dev)]
     {
-        url = if query.is_empty() { route.to_string() } else { format!("{route}?{query}") };
+        url = if query.is_empty() { format!("http://localhost:1420/{route}") } else { format!("http://localhost:1420/{route}?{query}") };
     }
-    let _win = tauri::WebviewWindowBuilder::new(&app, kind, tauri::WebviewUrl::App(url.into()))
+    #[cfg(not(dev))]
+    let webview_url = tauri::WebviewUrl::App(url.into());
+    #[cfg(dev)]
+    let webview_url = tauri::WebviewUrl::External(url.parse().expect("valid dev url"));
+    let _win = tauri::WebviewWindowBuilder::new(&app, kind, webview_url)
         .title(title)
         .inner_size(w, h)
         .center()
