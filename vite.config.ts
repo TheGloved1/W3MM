@@ -20,6 +20,15 @@ export default defineConfig(() => ({
   },
   plugins: [tailwindcss(), sveltekit()],
 
+  // These ship raw .svelte sources, so esbuild (the dep optimizer) can't
+  // pre-bundle them. Let Vite's svelte plugin compile them instead.
+  optimizeDeps: {
+    exclude: ["bits-ui", "lucide-svelte", "@lucide/svelte", "mode-watcher", "svelte-sonner"],
+  },
+  ssr: {
+    noExternal: ["bits-ui", "lucide-svelte", "@lucide/svelte", "mode-watcher", "svelte-sonner"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
