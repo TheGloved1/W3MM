@@ -2,7 +2,7 @@
 //! Ports `ModManager.sync/_deploy_missing/_restore/_read_settings/clashes/
 //! _write_mods_settings/_update_filelists` (`w3modmanager.py:5774-6400`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -133,10 +133,6 @@ pub fn update_filelists(game: &Path, xmls: &[String]) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-pub fn deployed_map() -> BTreeMap<String, String> {
-    BTreeMap::new()
 }
 
 /// Restore backups for paths no longer wanted; drop empty dirs up to game root.

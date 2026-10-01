@@ -17,7 +17,6 @@ pub const TMP_DIR: &str = "tmp";
 pub struct Home {
     pub game: PathBuf,
     pub prefix: PathBuf,
-    pub root: PathBuf,
     pub staging: PathBuf,
     pub backup: PathBuf,
     pub tmp: PathBuf,
@@ -34,7 +33,6 @@ impl Home {
             backup: root.join(BACKUP_DIR),
             tmp: root.join(TMP_DIR),
             state_file: root.join(STATE_FILE),
-            root,
             game,
             prefix,
         }

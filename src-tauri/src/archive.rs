@@ -17,11 +17,6 @@ pub enum ArchiveError {
 
 pub const ARCHIVE_EXTS: &[&str] = &[".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2"];
 
-pub fn is_archive(name: &str) -> bool {
-    let low = name.to_lowercase();
-    ARCHIVE_EXTS.iter().any(|e| low.ends_with(e))
-}
-
 pub fn is_doc_name(name: &str) -> bool {
     let low = name.to_lowercase();
     let base = low.rsplit('/').next().unwrap_or(&low);

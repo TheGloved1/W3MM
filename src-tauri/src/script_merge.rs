@@ -8,6 +8,7 @@
 
 use encoding_rs::{UTF_8, UTF_16LE};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptEncoding {
@@ -36,19 +37,6 @@ pub fn decode_script(data: &[u8]) -> (Vec<String>, ScriptEncoding) {
     (lines.lines().map(|l| l.to_string()).collect(), ScriptEncoding::Utf8)
 }
 
-pub fn encode_script(lines: &[String], fmt: ScriptEncoding) -> Vec<u8> {
-    let text = lines.join("\r\n");
-    match fmt {
-        ScriptEncoding::Utf8 => text.into_bytes(),
-        ScriptEncoding::Utf16Le => {
-            let mut out = Vec::with_capacity(text.len() * 2);
-            for u in text.encode_utf16() {
-                out.extend_from_slice(&u.to_le_bytes());
-            }
-            out
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hunk {
@@ -176,7 +164,6 @@ pub struct Cluster {
     pub mods: Vec<usize>,
     pub kind: ClusterKind,
     pub text: Vec<String>,
-    pub pure: bool,
     pub intact: bool,
 }
 
@@ -287,9 +274,8 @@ pub fn clusters(base: &[String], per_mod: &[Vec<Hunk>]) -> Vec<Cluster> {
         for i in &mods {
             texts.entry(norm_lines(&region(*i))).or_insert(*i);
         }
-        let pure = hunks.iter().all(|h| h.0 == h.1);
         if texts.len() == 1 {
-            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(texts.values().next().copied().unwrap()), pure, intact: true });
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(texts.values().next().copied().unwrap()), intact: true });
             continue;
         }
         let base_r = norm_lines(&base[lo.min(base.len())..hi.min(base.len())]);
@@ -298,7 +284,7 @@ pub fn clusters(base: &[String], per_mod: &[Vec<Hunk>]) -> Vec<Cluster> {
         if let Some(t) = top {
             // one mod's edit contains the others'
             let owner = texts[t];
-            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(owner), pure, intact: true });
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Clean, text: region(owner), intact: true });
             continue;
         }
         let mut hard = false;
@@ -318,7 +304,7 @@ pub fn clusters(base: &[String], per_mod: &[Vec<Hunk>]) -> Vec<Cluster> {
             }
         }
         if hard {
-            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Conflict, text: vec![], pure, intact: false });
+            out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Conflict, text: vec![], intact: false });
             continue;
         }
         // soft: every insertion fits, in version order
@@ -338,12 +324,10 @@ pub fn clusters(base: &[String], per_mod: &[Vec<Hunk>]) -> Vec<Cluster> {
         let text = apply_hunks_range(base, &pieces, lo, hi);
         let combined = norm_lines(&text);
         let intact = texts.keys().all(|t| is_subsequence(t, &combined));
-        out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Soft, text, pure, intact });
+        out.push(Cluster { start: lo, end: hi, mods, kind: ClusterKind::Soft, text, intact });
     }
     out
 }
-
-use std::collections::BTreeMap;
 
 pub fn apply_hunks(base: &[String], hunks: &[Hunk]) -> Vec<String> {
     apply_hunks_range(base, hunks, 0, base.len())
@@ -567,43 +551,7 @@ pub fn scan_annotations(lines: &[String]) -> Vec<(String, String)> {
 
 /// (name, mod) when a mod deletes a function but the merge still calls it.
 /// Ports python `removed_but_used`: that merge would fail to compile.
-pub fn removed_but_used(base: &[String], versions: &[(String, Vec<String>)], merged: &[String]) -> Option<(String, String)> {
-    let defined: std::collections::HashSet<String> =
-        scan_functions(merged).into_iter().map(|(n, _, _)| n.to_lowercase()).collect();
-    let base_names: std::collections::HashMap<String, String> = {
-        let mut m = std::collections::HashMap::new();
-        for (n, _, _) in scan_functions(base) {
-            m.entry(n.to_lowercase()).or_insert(n);
-        }
-        m
-    };
-    let words = |lines: &[String]| {
-        lines
-            .join("\n")
-            .to_lowercase()
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .filter(|w| !w.is_empty())
-            .map(|w| w.to_string())
-            .collect::<std::collections::HashSet<_>>()
-    };
-    let merged_words = words(merged);
-    for (label, lines) in versions {
-        let mine: std::collections::HashSet<String> =
-            scan_functions(lines).into_iter().map(|(n, _, _)| n.to_lowercase()).collect();
-        let removed: Vec<&String> =
-            base_names.keys().filter(|k| !mine.contains(*k) && !defined.contains(*k)).collect();
-        if removed.is_empty() {
-            continue;
-        }
-        let own = words(lines);
-        for k in removed {
-            if merged_words.contains(k) && !own.contains(k) {
-                return Some((base_names[k].clone(), label.clone()));
-            }
-        }
-    }
-    None
-}
+
 
 #[cfg(test)]
 mod tests {
@@ -636,14 +584,6 @@ mod tests {
         let r2 = merge_script(&base, &[vec!["a".into(), "X".into()], vec!["a".into(), "Y".into()]], &[1]);
         assert!(!r2.needs_resolution);
         assert_eq!(r2.merged, vec!["a", "Y"]);
-    }
-    #[test]
-    fn roundtrip_utf16() {
-        let lines = vec!["function foo() {".to_string(), "}".to_string()];
-        let enc = encode_script(&lines, ScriptEncoding::Utf16Le);
-        let (dec, fmt) = decode_script(&enc);
-        assert_eq!(fmt, ScriptEncoding::Utf16Le);
-        assert_eq!(dec, lines);
     }
     #[test]
     fn diagnostics() {

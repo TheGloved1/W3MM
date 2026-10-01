@@ -97,17 +97,6 @@ impl AppState {
         self.priority.retain(|id| !ids.contains(id));
     }
 
-    pub fn move_priority(&mut self, moved: &str, before: Option<&str>) {
-        self.priority.retain(|id| id != moved);
-        match before {
-            Some(b) => {
-                let pos = self.priority.iter().position(|id| id == b).unwrap_or(self.priority.len());
-                self.priority.insert(pos, moved.to_string());
-            }
-            None => self.priority.push(moved.to_string()),
-        }
-    }
-
     pub fn set_priority_number(&mut self, mid: &str, number: usize) {
         // 1-based clamp, like the Qt spinbox path.
         self.priority.retain(|id| id != mid);
@@ -128,22 +117,6 @@ impl AppState {
             by_path.insert(w, ranked.last().map(|r| r.id.clone()).unwrap_or_default());
         }
         self.deployed = by_path;
-    }
-
-    pub fn sections(&self) -> Vec<(String, String)> {
-        self.mods.iter().filter(|r| r.sep).map(|r| (r.id.clone(), r.name.clone())).collect()
-    }
-
-    pub fn section_of(&self, mid: &str) -> Option<String> {
-        let mut cur: Option<String> = None;
-        for r in &self.mods {
-            if r.sep {
-                cur = Some(r.id.clone());
-            } else if r.id == mid {
-                return cur;
-            }
-        }
-        None
     }
 
     pub fn add_separator(&mut self, index: usize, name: &str) -> ModRow {
@@ -205,10 +178,6 @@ impl AppState {
 
     pub fn save_resolutions(&mut self, key: &str, answers: Vec<usize>) {
         self.resolutions.insert(key.to_string(), answers);
-    }
-    pub fn forget_resolutions(&mut self, key: &str) {
-        self.resolutions.remove(key);
-        self.merge_kept.remove(key);
     }
 }
 

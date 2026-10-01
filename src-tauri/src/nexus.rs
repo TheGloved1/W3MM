@@ -10,15 +10,6 @@ fn nexus_new() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?P<name>.+?)[ _-]*(?:v|V)?(?P<ver>\d+(?:[._]\d+)+)(?:[ _-]+(?P<tag>[^_ -]+))?$").unwrap())
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NexusFile {
-    pub file_id: i64,
-    pub name: String,
-    pub version: String,
-    pub category: String,
-}
-
 /// Split `parse_archive_name` behaviour: (display, version, nexus_id).
 pub fn parse_archive_name(filename: &str) -> (String, String, String) {
     let mut stem = filename.to_string();
