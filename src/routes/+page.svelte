@@ -138,6 +138,7 @@
     if (qq.status === "cancelled") return { text: "Cancelled", color: "#8c96a1" };
     if (qq.status === "paused") return { text: `Paused  ·  ${humanSize(qq.done)} of ${humanSize(qq.total)}`, color: "#8c96a1" };
     if (qq.status === "queued") return { text: "Queued…", color: "#8c96a1" };
+    if (qq.status === "starting") return { text: "Asking Nexus…", color: "#8c96a1" };
     // active
     const tot = qq.total ? ` of ${humanSize(qq.total)}` : "";
     const spd = qq.speed ? `  ·  ${humanSize(qq.speed)}/s` : "";
@@ -701,16 +702,13 @@
         error = "Set Nexus API key in Settings first";
         return;
       }
-      flash("Resolving Nexus link…");
-      const id = await invoke<string>("queue_enqueue", {
-        url,
-        filename: "",
-        apiKey: cfg.nexusKey,
-      });
+      // enqueue is instant (no network); the worker thread resolves metadata
+      // and streams the file — progress/completion arrive as events.
+      const id = await invoke<string>("queue_enqueue", { url });
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
       const row = queue.find((qq) => qq.id === id);
-      if (row && (row.status === "active" || row.status === "paused")) {
+      if (row && (row.status === "active" || row.status === "starting" || row.status === "paused")) {
         return; // already fetching this file
       }
       if (row && row.status === "done") {
@@ -718,19 +716,12 @@
         if (!dlInstalled(row)) await offerInstall(row);
         return;
       }
-      const destDir = await downloadsDir();
-      // trigger the pump immediately (blocking), progress events come async
-      invoke<string>("queue_pump", { id, destDir, apiKey: cfg.nexusKey })
-        .then((dest) => {
-          flash(`Downloaded → ${dest.split("/").pop()}`);
-          notify("W3 Mod Manager", dest.split("/").pop() ?? "download done");
-        })
-        .catch((e) => {
-          error = String(e);
-        })
-        .finally(async () => {
-          queue = await invoke<QueueItem[]>("queue_list");
-        });
+      await invoke("queue_start", {
+        id,
+        destDir: await downloadsDir(),
+        apiKey: cfg.nexusKey,
+      });
+      queue = await invoke<QueueItem[]>("queue_list");
     } catch (e) {
       error = String(e);
     }
@@ -768,8 +759,7 @@
     }
     if (qq.status === "error" || qq.status === "failed" || qq.status === "paused" || qq.status === "cancelled") {
       try {
-        await invoke("queue_pause", { id: qq.id, paused: false });
-        await invoke("queue_pump", {
+        await invoke("queue_start", {
           id: qq.id,
           destDir: await downloadsDir(),
           apiKey: (await loadConfigNative()).nexusKey,
@@ -791,6 +781,7 @@
     let unlisten: (() => void) | undefined;
     let unlistenP: (() => void) | undefined;
     let unlistenD: (() => void) | undefined;
+    let unlistenMeta: (() => void) | undefined;
     let unlistenM: (() => void) | undefined;
     (async () => {
       try {
@@ -825,12 +816,17 @@
             );
           },
         );
-        unlistenD = await listen<{ id: string; path: string }>(
+        unlistenD = await listen<{ id: string; path: string; error?: string }>(
           "download-done",
           async (e) => {
             queue = await invoke<QueueItem[]>("queue_list");
             const row = queue.find((qq) => qq.id === e.payload.id);
+            if (e.payload.error) {
+              error = row?.error || e.payload.error;
+              return;
+            }
             flash(`Downloaded → ${e.payload.path.split("/").pop()}`);
+            await notify("W3 Mod Manager", e.payload.path.split("/").pop() ?? "download done");
             // original offer_install: open Install unless it's the exact file installed
             if (row && row.status === "done") {
               if (!dlInstalled(row)) {
@@ -839,6 +835,12 @@
             } else {
               archPath = e.payload.path;
             }
+          },
+        );
+        unlistenMeta = await listen<{ id: string }>(
+          "download-meta",
+          async () => {
+            queue = await invoke<QueueItem[]>("queue_list").catch(() => queue);
           },
         );
         unlistenM = await listen("mods-changed", async () => {
@@ -865,6 +867,7 @@
       unlisten?.();
       unlistenP?.();
       unlistenD?.();
+      unlistenMeta?.();
       unlistenM?.();
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);

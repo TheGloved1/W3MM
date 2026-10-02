@@ -34,7 +34,7 @@ fn queue() -> Queue {
     Q.get_or_init(|| Arc::new(Mutex::new(HashMap::new()))).clone()
 }
 
-pub fn enqueue(url: &str, filename: &str, api_key: &str) -> Result<String, String> {
+pub fn enqueue(url: &str) -> Result<String, String> {
     // Same file again (same Nexus mod + file): reuse the row like panel.add.
     if url.to_lowercase().starts_with("nxm://") {
         if let Some(link) = crate::nexus::parse_nxm(url) {
@@ -42,10 +42,10 @@ pub fn enqueue(url: &str, filename: &str, api_key: &str) -> Result<String, Strin
                 return Err(format!("wrong game: {}", link.game));
             }
             if let Some(same) = queue().lock().unwrap().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned() {
-                if same.status == "active" || same.status == "queued" || same.status == "paused" {
+                if same.status == "active" || same.status == "starting" || same.status == "queued" || same.status == "paused" {
                     return Ok(same.id); // already fetching: caller just opens the panel
                 }
-                // finished/failed row reused: refresh one-time key, bump added
+                // finished/failed row reused: refresh one-time key, requeue
                 if let Some(it) = queue().lock().unwrap().get_mut(&same.id) {
                     it.url = url.to_string();
                     it.status = "queued".into();
@@ -59,50 +59,70 @@ pub fn enqueue(url: &str, filename: &str, api_key: &str) -> Result<String, Strin
         }
     }
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-    let mut mod_id = String::new();
-    let mut file_id = String::new();
-    let mut version = String::new();
-    let mut mod_name = String::new();
-    let mut file_title = String::new();
-    let mut category = String::new();
-    let mut final_filename = filename.to_string();
-    let mut total = 0u64;
-    if url.to_lowercase().starts_with("nxm://") {
-        // parse checked above
-        if let Some(link) = crate::nexus::parse_nxm(url) {
-            mod_id = link.mod_id.clone();
-            file_id = link.file_id.clone();
-            // resolve metadata now so the row has a useful name and size
-            let (fname, ftitle, size, mname, ver, cat) = nxm_meta(&link, api_key)?;
-            final_filename = fname;
-            file_title = ftitle;
-            total = size;
-            mod_name = mname;
-            version = ver;
-            category = cat;
-        }
-    }
+    let (mod_id, file_id) = match crate::nexus::parse_nxm(url) {
+        Some(link) => (link.mod_id, link.file_id),
+        None => (String::new(), String::new()),
+    };
+    // No network here: metadata resolves on the worker thread (original
+    // spawns NexusDownload first, meta arrives via the info signal).
     queue().lock().unwrap().insert(
         id.clone(),
         QueueItem {
             id: id.clone(),
             url: url.to_string(),
-            filename: final_filename,
-            total,
+            filename: String::new(),
+            total: 0,
             done: 0,
             status: "queued".into(),
             error: String::new(),
             mod_id,
             file_id,
-            mod_name,
-            file_title,
-            version,
-            category,
+            mod_name: String::new(),
+            file_title: String::new(),
+            version: String::new(),
+            category: String::new(),
             speed: 0,
             added: chrono::Utc::now().timestamp(),
         },
     );
     Ok(id)
+}
+
+/// Claim a row for a worker thread. False when already running.
+pub fn try_begin(id: &str) -> bool {
+    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        match it.status.as_str() {
+            "active" | "starting" => false,
+            _ => {
+                it.status = "starting".into();
+                it.error = String::new();
+                true
+            }
+        }
+    } else {
+        false
+    }
+}
+
+/// Resolve Nexus metadata for an nxm row (worker thread; original info.emit).
+pub fn fetch_meta(id: &str, api_key: &str) -> Result<(), String> {
+    let url = queue()
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|i| i.url.clone())
+        .ok_or("unknown download")?;
+    let link = crate::nexus::parse_nxm(&url).ok_or("invalid nxm")?;
+    let (fname, ftitle, size, mname, ver, cat) = nxm_meta(&link, api_key)?;
+    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        it.filename = fname;
+        it.file_title = ftitle;
+        it.total = size;
+        it.mod_name = mname;
+        it.version = ver;
+        it.category = cat;
+    }
+    Ok(())
 }
 
 /// Best-effort (file_name, file_title, size_bytes, mod_name, version, category) for an nxm link.
@@ -225,9 +245,18 @@ pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
 
 pub fn cancel(id: &str) {
     if let Some(it) = queue().lock().unwrap().get_mut(id) {
-        if it.status == "queued" || it.status == "active" || it.status == "paused" {
+        if it.status == "queued" || it.status == "starting" || it.status == "active" || it.status == "paused" {
             it.status = "cancelled".into();
         }
+    }
+}
+
+/// Mark a row failed with a message (worker-thread terminal state).
+pub fn fail(id: &str, err: &str) {
+    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        it.status = "error".into();
+        it.error = err.to_string();
+        it.speed = 0;
     }
 }
 
@@ -245,15 +274,18 @@ pub fn set_paused(id: &str, paused: bool) {
     }
 }
 
-/// Blocking pump for one item; emits progress through `emit`. Cancellation
-/// and pause are polled between chunks (replaces QThread signals).
-pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, u64, u64)) -> Result<u64, String> {
+/// Blocking file fetch for one row (runs on a worker thread; replaces
+/// QThread signals with `emit` progress callbacks).
+pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, u64, u64)) -> Result<u64, String> {
     let item = {
         let qq = queue();
         let mut q = qq.lock().unwrap();
         let it = q.get_mut(id).ok_or("unknown download")?;
         if it.status == "cancelled" {
             return Err("cancelled".into());
+        }
+        if it.filename.is_empty() {
+            return Err("no file yet — still asking Nexus".into());
         }
         it.status = "active".into();
         it.clone()
@@ -291,7 +323,11 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
     // Resume: .part file from a stopped download continues where it left off.
     let part = dest.with_extension("part");
     let mut have = if part.is_file() { std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) } else { 0 };
-    let client = reqwest::blocking::Client::builder().user_agent("W3LMN/1.0").build().map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("W3LMN/1.0")
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
     let mut req = client.get(&url);
     if !api_key.is_empty() {
         req = req.header("apikey", api_key);

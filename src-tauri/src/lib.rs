@@ -807,8 +807,8 @@ fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> 
 }
 
 #[tauri::command]
-fn queue_enqueue(shared: State<Shared>, url: String, filename: String, api_key: String) -> Result<String, String> {
-    let id = downloads::enqueue(&url, &filename, &api_key)?;
+fn queue_enqueue(shared: State<Shared>, url: String) -> Result<String, String> {
+    let id = downloads::enqueue(&url)?;
     dl_save(&shared);
     log_line("rust", &format!("enqueued download id={id} url={url}"));
     Ok(id)
@@ -884,28 +884,58 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
     downloads::items()
 }
 
-/// Pump one queued download to disk, emitting `download-progress` events.
+/// Start (or resume) a queued download on a worker thread and return
+/// immediately — the UI never blocks on network (original NexusDownload
+/// QThread; progress/completion arrive as events).
 #[tauri::command]
-fn queue_pump(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_dir: String, api_key: String) -> Result<String, String> {
-    let item = downloads::items().into_iter().find(|i| i.id == id).ok_or("unknown download")?;
-    let dest = std::path::Path::new(&dest_dir).join(&item.filename);
-    let target = dest.clone();
-    let aid = id.clone();
-    let res = downloads::pump(
-        &id,
-        &dest,
-        &api_key,
-        &|done, total, speed| {
-            use tauri::Emitter;
-            let _ = app.emit("download-progress", serde_json::json!({"id": aid, "done": done, "total": total, "speed": speed}));
-        },
-    );
+fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_dir: String, api_key: String) -> Result<bool, String> {
+    if !downloads::try_begin(&id) {
+        return Ok(false); // already running
+    }
     dl_save(&shared);
-    let n = res?;
-    use tauri::Emitter;
-    let _ = app.emit("download-done", serde_json::json!({"id": id, "path": target.to_string_lossy(), "bytes": n}));
-    log_line("rust", &format!("download done id={id} path={}", target.to_string_lossy()));
-    Ok(target.to_string_lossy().to_string())
+    let hist = dl_paths(&shared).map(|(_, h)| h);
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let aid = id.clone();
+        // 1. metadata (original info.emit); row shows "Asking Nexus…" meanwhile
+        if let Err(e) = downloads::fetch_meta(&id, &api_key) {
+            downloads::fail(&id, &e);
+            let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
+            let _ = app.emit("download-done", serde_json::json!({"id": aid, "path": "", "bytes": 0, "error": e}));
+            if let Some(h) = hist {
+                downloads::save_history(&h);
+            }
+            log_line("rust", &format!("download meta failed id={aid}: {e}"));
+            return;
+        }
+        let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
+        let filename = downloads::items().into_iter().find(|i| i.id == id).map(|i| i.filename).unwrap_or_default();
+        let dest = std::path::Path::new(&dest_dir).join(&filename);
+        let target = dest.clone();
+        let aid2 = id.clone();
+        let res = downloads::pump_file(
+            &id,
+            &dest,
+            &api_key,
+            &|done, total, speed| {
+                let _ = app.emit("download-progress", serde_json::json!({"id": aid2, "done": done, "total": total, "speed": speed}));
+            },
+        );
+        if let Some(h) = hist {
+            downloads::save_history(&h);
+        }
+        match res {
+            Ok(n) => {
+                let _ = app.emit("download-done", serde_json::json!({"id": id, "path": target.to_string_lossy(), "bytes": n, "error": ""}));
+                log_line("rust", &format!("download done id={id} path={}", target.to_string_lossy()));
+            }
+            Err(e) => {
+                let _ = app.emit("download-done", serde_json::json!({"id": id, "path": "", "bytes": 0, "error": e}));
+                log_line("rust", &format!("download failed id={id}: {e}"));
+            }
+        }
+    });
+    Ok(true)
 }
 
 /// Absolute downloads-dir path (<game>/_W3LMN/downloads).
@@ -1456,7 +1486,7 @@ pub fn run() {
             queue_remove,
             queue_trash,
             queue_pause,
-            queue_pump,
+            queue_start,
             downloads_history,
             downloads_dir_path,
             settings_dir_path,
