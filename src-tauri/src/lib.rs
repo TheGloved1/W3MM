@@ -1233,6 +1233,59 @@ fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
         .collect())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstallPreview {
+    pub roots: Vec<PlanRoot>,
+    pub moves: Vec<(String, String)>,
+}
+
+/// Archive-contents table + target list from ONE extraction (the Install
+/// window used to extract the archive twice via preview_roots +
+/// preview_archive before showing anything).
+#[tauri::command]
+fn install_preview(path: String) -> Result<InstallPreview, String> {
+    use std::path::Path;
+    let archive = Path::new(&path);
+    let tmp = std::env::temp_dir().join(format!("w3lmn-preview-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let plan = (|| {
+        archive::extract_archive(archive, &tmp).map_err(|e| e.to_string())?;
+        Ok::<_, String>(install::analyze(&tmp))
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let plan = plan?;
+    // group staged targets by their top two segments (kind + folder)
+    let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    for (_src, rel) in &plan.moves {
+        let mut parts = rel.split('/');
+        let first = parts.next().unwrap_or("").to_lowercase();
+        if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
+            let folder = parts.next().unwrap_or("").to_string();
+            let kind = match first.as_str() {
+                "dlc" => "DLC",
+                "bin" => "Bin",
+                "content" => "Content",
+                _ => "Mod",
+            }
+            .to_string();
+            *groups.entry((kind, folder)).or_default() += 1;
+        } else {
+            *groups.entry(("Mod".to_string(), String::new())).or_default() += 1;
+        }
+    }
+    let roots = groups
+        .into_iter()
+        .map(|((kind, folder), files)| PlanRoot {
+            prefix: if folder.is_empty() { String::new() } else { format!("{}/{}", kind.to_lowercase(), folder) },
+            kind,
+            folder,
+            files,
+        })
+        .collect();
+    Ok(InstallPreview { roots, moves: plan.moves })
+}
+
 /// Install with per-root kind/folder mapping from the dialog's table.
 #[tauri::command]
 fn install_roots(
@@ -1415,6 +1468,7 @@ pub fn run() {
             remove_section_cmd,
             move_to_section,
             preview_roots,
+            install_preview,
             install_roots,
             frontend_log
         ])

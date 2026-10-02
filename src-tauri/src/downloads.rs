@@ -345,6 +345,9 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
     }
     let mut win: std::collections::VecDeque<(std::time::Instant, u64)> = std::collections::VecDeque::new();
     win.push_back((start, done));
+    // Like the original (progress.emit at most every 0.2s): emitting per
+    // chunk floods the webview with re-renders and freezes the main window.
+    let mut last_emit = start;
     use std::io::Read;
     loop {
         {
@@ -378,7 +381,10 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
                     it.done = done;
                     it.speed = speed;
                 }
-                emit(done, total, speed);
+                if now.duration_since(last_emit).as_secs_f32() >= 0.2 {
+                    last_emit = now;
+                    emit(done, total, speed);
+                }
             }
             Err(e) => return Err(format!("The download stopped: {e}")),
         }
@@ -397,6 +403,7 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
         let elapsed = start.elapsed().as_secs().max(1);
         it.speed = done / elapsed;
     }
+    emit(done, total, 0);
     if part != dest {
         let _ = std::fs::rename(&part, dest);
     }

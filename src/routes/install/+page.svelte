@@ -35,10 +35,10 @@
       name = page.url.searchParams.get('name') || n;
       version = page.url.searchParams.get('version') || v;
       nexus = page.url.searchParams.get('nexus') || nx;
-      roots = await invoke<Root[]>('preview_roots', { path: archPath });
+      const prev = await invoke<{ roots: Root[]; moves: [string, string][] }>('install_preview', { path: archPath });
+      roots = prev.roots;
       if (!roots.length) roots = [{ prefix: '', kind: 'Mod', folder: '', files: 0 }];
-      const plan = await invoke<{ moves: [string, string][] }>('preview_archive', { path: archPath });
-      addedFiles = plan.moves.map(([, d]) => d);
+      addedFiles = prev.moves.map(([, d]) => d);
       const [managed] = await invoke<[string[], string[]]>('find_collisions', { targets: addedFiles });
       collisions = managed;
       const st = await invoke<{ mods: { sep: boolean; id: string; name: string }[] }>('list_mods');
