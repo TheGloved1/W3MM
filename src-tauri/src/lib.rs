@@ -1050,6 +1050,22 @@ fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<
     Ok(true)
 }
 
+/// Drag-drop reorder: move a mod before another row (empty `before` = end of
+/// list). List order and priority stay in sync; section membership follows
+/// position. Redeploys afterwards so file winners follow the new order.
+#[tauri::command]
+fn move_mod(shared: State<Shared>, id: String, before: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "move_mod")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    {
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        s.move_before(&id, if before.is_empty() { None } else { Some(before.as_str()) });
+    }
+    m.save()?;
+    log_line("rust", &format!("move_mod: {id} before {before:?}"));
+    Ok(true)
+}
+
 /// Open (or focus) a tool window: install | setup | resolver.
 /// The original is a multi-window app (Install/Settings/Script-decisions
 /// dialogs); each tool is a Svelte route rendered in its own native window.
@@ -1572,6 +1588,7 @@ pub fn run() {
             mod_dir,
             remove_section_cmd,
             move_to_section,
+            move_mod,
             preview_roots,
             install_preview,
             install_roots,

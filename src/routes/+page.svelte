@@ -523,6 +523,83 @@
     collapsed[id] = !collapsed[id];
   }
 
+  // ---- drag-drop reorder (original drags rows; priority follows list order)
+  let dragId: string | null = $state(null);
+  let dropBefore: string | null = $state(null);
+
+  function onDragStart(id: string, ev: DragEvent) {
+    dragId = id;
+    dropBefore = null;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = "move";
+      try {
+        ev.dataTransfer.setData("text/plain", id);
+      } catch {}
+    }
+  }
+
+  function onDragOverRow(id: string, ev: DragEvent) {
+    if (!dragId || dragId === id) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    dropBefore = id;
+  }
+
+  async function onDropRow(id: string, ev: DragEvent) {
+    ev.preventDefault();
+    if (!dragId || dragId === id) {
+      dragId = null;
+      dropBefore = null;
+      return;
+    }
+    const moving = dragId;
+    dragId = null;
+    dropBefore = null;
+    try {
+      await invoke("move_mod", { id: moving, before: id });
+      await refresh();
+      await deploy(true);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function onDropSection(sepId: string, ev: DragEvent) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!dragId) return;
+    const moving = dragId;
+    dragId = null;
+    dropBefore = null;
+    try {
+      await invoke("move_to_section", { id: moving, sepId });
+      await refresh();
+      await deploy(true);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function onDropEnd(ev: DragEvent) {
+    ev.preventDefault();
+    if (!dragId) return;
+    const moving = dragId;
+    dragId = null;
+    dropBefore = null;
+    try {
+      await invoke("move_mod", { id: moving, before: "" });
+      await refresh();
+      await deploy(true);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  function onDragEnd() {
+    dragId = null;
+    dropBefore = null;
+  }
+
   async function pickArchives() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -1070,6 +1147,10 @@
             {#if !filtering}
               <button
                 onclick={() => toggleCollapse(m.id)}
+                ondragover={(e) => {
+                  if (dragId) e.preventDefault();
+                }}
+                ondrop={(e) => onDropSection(m.id, e)}
                 class="grid w-full grid-cols-1 items-center border-b border-border px-3 text-left hover:bg-accent/50"
                 style="min-height:40px"
               >
@@ -1086,7 +1167,7 @@
                 class="relative grid grid-cols-[90px_minmax(0,1fr)_110px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border/60 px-3 {selected ===
                 m.id
                   ? 'bg-[#c9a45c]/15 text-white'
-                  : 'hover:bg-accent/30'}"
+                  : 'hover:bg-accent/30'} {dropBefore === m.id && dragId ? 'border-t-2 border-t-primary' : ''}"
                 style="min-height:40px"
                 onclick={() => {
                   selected = m.id;
@@ -1098,6 +1179,11 @@
                 }}
                 role="row"
                 tabindex="0"
+                draggable={!filtering}
+                ondragstart={(e) => onDragStart(m.id, e)}
+                ondragover={(e) => onDragOverRow(m.id, e)}
+                ondrop={(e) => onDropRow(m.id, e)}
+                ondragend={onDragEnd}
               >
                 <span class="flex justify-center">
                   {#if clashCount(m.id) || sharedScripts(m.id).length || sharedXmls(m.id).length}
@@ -1190,6 +1276,16 @@
             {/if}
           {/if}
         {/each}
+        {#if appState && appState.mods.length && !filtering}
+          <div
+            role="presentation"
+            class="min-h-[24px] {dragId ? 'bg-primary/10' : ''}"
+            ondragover={(e) => {
+              if (dragId) e.preventDefault();
+            }}
+            ondrop={onDropEnd}
+          ></div>
+        {/if}
       {/if}
     </div>
 

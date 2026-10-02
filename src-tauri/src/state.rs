@@ -98,10 +98,31 @@ impl AppState {
     }
 
     pub fn set_priority_number(&mut self, mid: &str, number: usize) {
-        // 1-based clamp, like the Qt spinbox path.
-        self.priority.retain(|id| id != mid);
-        let idx = number.saturating_sub(1).min(self.priority.len());
-        self.priority.insert(idx, mid.to_string());
+        // 1-based clamp, like the Qt spinbox path. Moves the row itself so
+        // list order and priority order stay one and the same (original
+        // derives priority from list order).
+        let at = self.mods.iter().position(|r| r.id == mid && !r.sep);
+        let Some(at) = at else { return };
+        let row = self.mods.remove(at);
+        let slots: Vec<usize> = self.mods.iter().enumerate().filter(|(_, r)| !r.sep).map(|(i, _)| i).collect();
+        let idx = number.saturating_sub(1).min(slots.len());
+        let pos = slots.get(idx).copied().unwrap_or(self.mods.len());
+        self.mods.insert(pos, row);
+        self.priority = self.mods_only().iter().map(|m| m.id.clone()).collect();
+    }
+
+    /// Drag-drop reorder: move a mod before another row (or to the end).
+    /// `before` may be a mod or a separator id; separators themselves stay put
+    /// and section membership follows position, like the original list.
+    pub fn move_before(&mut self, mid: &str, before: Option<&str>) {
+        let at = self.mods.iter().position(|r| r.id == mid && !r.sep);
+        let Some(at) = at else { return };
+        let row = self.mods.remove(at);
+        let pos = before
+            .and_then(|b| self.mods.iter().position(|r| r.id == b))
+            .unwrap_or(self.mods.len());
+        self.mods.insert(pos.min(self.mods.len()), row);
+        self.priority = self.mods_only().iter().map(|m| m.id.clone()).collect();
     }
 
     pub fn state_deployed(&mut self, written: Vec<String>, ranked: &[ModRow]) {
