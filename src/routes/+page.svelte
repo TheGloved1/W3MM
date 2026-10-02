@@ -1015,6 +1015,14 @@
   const [enCount, totalCount] = $derived(enabledCounts());
 </script>
 
+<style>
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+</style>
+
 <div class="flex h-full min-h-0">
   <div
     class="flex min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[18px] pb-[12px]"
