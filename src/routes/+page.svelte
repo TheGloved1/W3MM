@@ -1180,7 +1180,7 @@
           {:else}
             <Table.Cell class="text-center">
               {#if m.enabled}
-                <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins" class="w-[52px] rounded-full border border-primary/60 bg-primary/15 px-1 py-[3px] text-center text-[13px] font-semibold text-primary outline-none" />
+                <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins" class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none" style="-moz-appearance:textfield;-webkit-appearance:none;" />
               {:else}
                 <span class="text-muted-foreground/50">–</span>
               {/if}
