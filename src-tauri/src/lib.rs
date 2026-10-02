@@ -622,6 +622,22 @@ fn staged_files(shared: State<Shared>, id: String) -> Result<Vec<String>, String
     Ok(deploy::mod_files(&stage).into_iter().map(|p| p.to_string_lossy().to_string()).collect())
 }
 
+/// Folder-level ownership: a game dir counts as managed when a target equals
+/// it or lives under it. Installed rows carry per-file targets
+/// (`mods/foo/...`) while imported rows carry the folder itself (`mods/foo`);
+/// both must mark the folder owned (original `unmanaged_mods`).
+fn owns_folder(owned: &std::collections::HashSet<String>, rel: &str) -> bool {
+    let low = rel.to_lowercase();
+    let prefix = format!("{low}/");
+    owned.contains(&low) || owned.iter().any(|t| t.starts_with(&prefix))
+}
+
+/// Script-merger output folders are never unmanaged (original MERGED_NAME /
+/// AUTO_MERGE_NAME exclusions).
+fn is_merger_output(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "mod0000_mergedfiles" | "mod0000_automerged")
+}
+
 /// Mod folders sitting in the game that no managed mod owns
 /// (python `unmanaged_mods`): `mods/<name>` dirs, not symlinks, not ours.
 #[tauri::command]
@@ -641,8 +657,11 @@ fn unmanaged_mods(shared: State<Shared>) -> Result<Vec<String>, String> {
                 continue;
             }
             let name = e.file_name().to_string_lossy().to_string();
+            if is_merger_output(&name) {
+                continue;
+            }
             let rel = format!("mods/{name}");
-            if owned.contains(&rel.to_lowercase()) {
+            if owns_folder(&owned, &rel) {
                 continue;
             }
             out.push(rel);
@@ -688,8 +707,18 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     }
     let mut sorted = rels;
     sorted.sort_by_key(|r| (prio.get(&r.split('/').nth(1).unwrap_or("").to_lowercase()).copied().unwrap_or(9999), r.clone()));
+    let owned: std::collections::HashSet<String> = {
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        s.mods_only().iter().flat_map(|r| r.targets.iter().map(|t| t.to_lowercase())).collect()
+    };
     let mut ids = vec![];
     for rel in sorted {
+        // Defensive: never adopt a folder a managed mod already owns (stale
+        // banner lists must not duplicate a just-installed mod).
+        if owns_folder(&owned, &rel) {
+            log_line("rust", &format!("import_unmanaged: skipping owned {rel}"));
+            continue;
+        }
         let src = m.home.game.join(&rel);
         if !src.is_dir() {
             continue;
