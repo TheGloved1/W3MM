@@ -46,6 +46,18 @@
 
   const filtering = $derived(filter.trim().length > 0);
   const q = $derived(filter.trim().toLowerCase());
+  const groupedQueue = $derived(
+    queue.reduce(
+      (acc, qq) => {
+        const key = qq.mod_id || qq.file_id || qq.filename;
+        if (!acc[key])
+          acc[key] = { key, mod_name: qq.mod_name || qq.filename, rows: [] };
+        acc[key].rows.push(qq);
+        return acc;
+      },
+      {} as Record<string, { key: string; mod_name: string; rows: QueueItem[] }>,
+    ),
+  );
 
   function modById(id: string) {
     return appState?.mods.find((m) => m.id === id);
@@ -553,14 +565,30 @@
         return;
       }
       flash("Resolving Nexus link…");
-      const dest = await invoke<string>("download_nxm", {
+      const id = await invoke<string>("queue_enqueue", {
         url,
+        filename: "",
         apiKey: cfg.nexusKey,
-        destDir: "/tmp",
       });
-      flash(`Downloaded → ${dest.split("/").pop()}`);
-      archPath = dest;
-      await notify("W3 Mod Manager", dest.split("/").pop() ?? "download done");
+      dlOpen = true;
+      queue = await invoke<QueueItem[]>("queue_list");
+      // trigger the pump immediately (blocking), progress events come async
+      invoke<string>("queue_pump", {
+        id,
+        destDir: "/tmp",
+        apiKey: cfg.nexusKey,
+      })
+        .then((dest) => {
+          flash(`Downloaded → ${dest.split("/").pop()}`);
+          archPath = dest;
+          notify("W3 Mod Manager", dest.split("/").pop() ?? "download done");
+        })
+        .catch((e) => {
+          error = String(e);
+        })
+        .finally(async () => {
+          queue = await invoke<QueueItem[]>("queue_list");
+        });
     } catch (e) {
       error = String(e);
     }
@@ -1108,7 +1136,10 @@
           >Get</button
         >
       </div>
-      {#each queue as qq}
+      {#each Object.values(groupedQueue) as group}
+        <div class="rounded-[7px] border border-border bg-card p-3">
+          <div class="mb-2 text-sm font-semibold">{group.mod_name}</div>
+          {#each group.rows as qq}
         <div
           class="rounded-[7px] border border-border bg-background/60 p-2 text-[12px]"
         >
@@ -1127,7 +1158,10 @@
                 · {Math.round(
                   (100 * qq.done) / Math.max(1, qq.total),
                 )}%{/if}{#if qq.error}
-                · {qq.error}{/if}</span
+                · {qq.error}{/if}{#if qq.status === "active" && qq.speed}
+                  · {qq.speed > 1024 * 1024
+                    ? Math.round(qq.speed / 1024 / 1024) + " MB/s"
+                    : Math.round(qq.speed / 1024) + " KB/s"}{/if}</span
             >
             {#if qq.status === "queued"}<button
                 class="hover:text-foreground"
@@ -1155,6 +1189,8 @@
               }}>✕</button
             >
           </div>
+        </div>
+          {/each}
         </div>
       {/each}
       {#if !queue.length}

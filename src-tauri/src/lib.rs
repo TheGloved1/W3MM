@@ -778,8 +778,8 @@ fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> 
 }
 
 #[tauri::command]
-fn queue_enqueue(url: String, filename: String) -> String {
-    downloads::enqueue(&url, &filename)
+fn queue_enqueue(url: String, filename: String, api_key: String) -> String {
+    downloads::enqueue(&url, &filename, &api_key)
 }
 
 #[tauri::command]

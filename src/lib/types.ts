@@ -80,4 +80,10 @@ export interface QueueItem {
   done: number;
   status: string;
   error: string;
+  mod_id: string;
+  file_id: string;
+  mod_name: string;
+  version: string;
+  category: string;
+  speed: number;
 }
