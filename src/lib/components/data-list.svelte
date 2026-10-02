@@ -61,6 +61,10 @@
   let dragOverKey: string | number | null = $state(null);
   let dragOverPos: "before" | "after" | null = $state(null);
   let scroller: HTMLDivElement | null = $state(null);
+  let colWidths: Record<string, number> = $state({});
+  let resizeCol: string | null = $state(null);
+  let resizeStartX = 0;
+  let resizeStartW = 0;
   // Insertion-line position in scroll-content coordinates. A real overlay
   // element: box-shadow on <tr> doesn't paint under border-collapse.
   let indicatorTop: number | null = $state(null);
@@ -97,15 +101,21 @@
   {#if items.length === 0}
     {@render empty?.()}
   {:else}
-    <table class="w-full caption-bottom text-sm">
+    <table class="w-full caption-bottom text-sm" style="table-layout: fixed;">
+      <colgroup>
+        {#each columns as col}
+          <col style="width: {colWidths[col.id] ?? 'auto'};" />
+        {/each}
+      </colgroup>
       <Table.Header class="sticky top-0 z-10 bg-muted/70 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
         <Table.Row class="border-b border-border hover:bg-transparent">
           {#each columns as col}
             <Table.Head
-              class="text-[11px] tracking-wide text-muted-foreground {col.align ===
+              class="relative text-[11px] tracking-wide text-muted-foreground {col.align ===
               'right'
                 ? 'text-right'
                 : ''}"
+              style="width: {colWidths[col.id] ?? 'auto'};"
             >
               {#if col.sortable && onSort}
                 <SortHeader
@@ -118,6 +128,28 @@
               {:else}
                 <span class="uppercase">{col.label}</span>
               {/if}
+              <span
+                role="presentation"
+                class="absolute right-0 top-0 h-full w-3 cursor-col-resize"
+                onpointerdown={(e) => {
+                  e.preventDefault();
+                  resizeCol = col.id;
+                  resizeStartX = e.clientX;
+                  const th = (e.currentTarget as HTMLElement).parentElement;
+                  resizeStartW = th?.getBoundingClientRect().width ?? 100;
+                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                }}
+                onpointermove={(e) => {
+                  if (resizeCol !== col.id) return;
+                  const delta = e.clientX - resizeStartX;
+                  colWidths = { ...colWidths, [col.id]: Math.max(40, resizeStartW + delta) };
+                }}
+                onpointerup={(e) => {
+                  if (resizeCol === col.id) {
+                    resizeCol = null;
+                  }
+                }}
+              ></span>
             </Table.Head>
           {/each}
         </Table.Row>

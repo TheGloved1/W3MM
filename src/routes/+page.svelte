@@ -52,12 +52,20 @@
       (acc, qq) => {
         const key = qq.mod_id || qq.file_id || qq.filename;
         if (!acc[key])
-          acc[key] = { key, mod_id: qq.mod_id, mod_name: qq.mod_name || qq.filename, rows: [] };
+          acc[key] = {
+            key,
+            mod_id: qq.mod_id,
+            mod_name: qq.mod_name || qq.filename,
+            rows: [],
+          };
         acc[key].rows.push(qq);
         if (!acc[key].mod_name && qq.mod_name) acc[key].mod_name = qq.mod_name;
         return acc;
       },
-      {} as Record<string, { key: string; mod_id: string; mod_name: string; rows: QueueItem[] }>,
+      {} as Record<
+        string,
+        { key: string; mod_id: string; mod_name: string; rows: QueueItem[] }
+      >,
     ),
   );
 
@@ -65,7 +73,10 @@
     if (n === null || n === undefined) return "?";
     let v = n;
     for (const unit of ["B", "KB", "MB", "GB"] as const) {
-      if (v < 1024 || unit === "GB") return unit === "B" || unit === "KB" ? `${Math.round(v)} ${unit}` : `${(Math.round(v * 10) / 10).toFixed(1)} ${unit}`;
+      if (v < 1024 || unit === "GB")
+        return unit === "B" || unit === "KB"
+          ? `${Math.round(v)} ${unit}`
+          : `${(Math.round(v * 10) / 10).toFixed(1)} ${unit}`;
       v /= 1024;
     }
     return `${v} B`;
@@ -74,7 +85,10 @@
   const dlSummary = $derived(
     queue.length
       ? (() => {
-          const bytes = queue.reduce((a, qq) => a + (qq.total || qq.done || 0), 0);
+          const bytes = queue.reduce(
+            (a, qq) => a + (qq.total || qq.done || 0),
+            0,
+          );
           const n = Object.keys(groupedQueue).length;
           return `${n} mod${n === 1 ? "" : "s"}  ·  ${humanSize(bytes)}`;
         })()
@@ -82,7 +96,9 @@
   );
 
   function cleanVer(v: string): string {
-    return (v ?? "").replace(/^(?:version|ver\.?|v)\s*\.?\s*(?=\d)/i, "").trim();
+    return (v ?? "")
+      .replace(/^(?:version|ver\.?|v)\s*\.?\s*(?=\d)/i, "")
+      .trim();
   }
   function verTuple(v: string): number[] {
     const m = cleanVer(v).match(/\d+(?:\.\d+)*/);
@@ -90,14 +106,17 @@
     return m[0].split(".").map((x) => parseInt(x, 10) || 0);
   }
   function verVerdict(nw: string, old: string): string {
-    const a = (nw ?? "").trim(), b = (old ?? "").trim();
+    const a = (nw ?? "").trim(),
+      b = (old ?? "").trim();
     if (!a || !b) return "";
     if (a.toLowerCase() === b.toLowerCase()) return "same";
-    const ta = verTuple(a), tb = verTuple(b);
+    const ta = verTuple(a),
+      tb = verTuple(b);
     if (ta.length && tb.length) {
       const n = Math.max(ta.length, tb.length);
       for (let i = 0; i < n; i++) {
-        const x = ta[i] ?? 0, y = tb[i] ?? 0;
+        const x = ta[i] ?? 0,
+          y = tb[i] ?? 0;
         if (x !== y) return x > y ? "newer" : "older";
       }
       return "same";
@@ -109,9 +128,16 @@
     if (!appState) return "Install";
     const nid = qq.mod_id || "";
     const fname = (qq.filename || "").toLowerCase();
-    let hit = appState.mods.find((m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname);
+    let hit = appState.mods.find(
+      (m) =>
+        !m.sep &&
+        m.archive &&
+        m.archive.split("/").pop()?.toLowerCase() === fname,
+    );
     if (!hit && nid) {
-      const samePage = appState.mods.filter((m) => !m.sep && (m.nexus || "") === nid);
+      const samePage = appState.mods.filter(
+        (m) => !m.sep && (m.nexus || "") === nid,
+      );
       if (samePage.length === 1) hit = samePage[0];
     }
     if (!hit) return "Install";
@@ -121,9 +147,14 @@
     if (v === "older") return "Downgrade";
     // Unknown verdict: same archive name → harmless re-download of the same
     // file, anything else → a different file worth deciding about.
-    const sameName = !!fname && !!appState?.mods.some(
-      (m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname,
-    );
+    const sameName =
+      !!fname &&
+      !!appState?.mods.some(
+        (m) =>
+          !m.sep &&
+          m.archive &&
+          m.archive.split("/").pop()?.toLowerCase() === fname,
+      );
     return sameName ? "Reinstall" : "Replace";
   }
   /** File identity with an installed mod (original already_installed: same
@@ -134,7 +165,10 @@
     if (!appState || qq.status !== "done" || !qq.filename) return false;
     const fname = qq.filename.toLowerCase();
     return appState.mods.some(
-      (m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname,
+      (m) =>
+        !m.sep &&
+        m.archive &&
+        m.archive.split("/").pop()?.toLowerCase() === fname,
     );
   }
   function dlMetaLine(qq: QueueItem): string {
@@ -148,12 +182,23 @@
     return bits.join("  ·  ");
   }
   function dlStatus(qq: QueueItem): { text: string; color: string } {
-    if (qq.status === "done") return { text: `Downloaded  ·  ${humanSize(qq.total || qq.done)}`, color: "#7fbf8a" };
-    if (qq.status === "error" || qq.status === "failed") return { text: qq.error || "Download failed", color: "#e3735f" };
-    if (qq.status === "cancelled") return { text: "Cancelled", color: "#8c96a1" };
-    if (qq.status === "paused") return { text: `Paused  ·  ${humanSize(qq.done)} of ${humanSize(qq.total)}`, color: "#8c96a1" };
+    if (qq.status === "done")
+      return {
+        text: `Downloaded  ·  ${humanSize(qq.total || qq.done)}`,
+        color: "#7fbf8a",
+      };
+    if (qq.status === "error" || qq.status === "failed")
+      return { text: qq.error || "Download failed", color: "#e3735f" };
+    if (qq.status === "cancelled")
+      return { text: "Cancelled", color: "#8c96a1" };
+    if (qq.status === "paused")
+      return {
+        text: `Paused  ·  ${humanSize(qq.done)} of ${humanSize(qq.total)}`,
+        color: "#8c96a1",
+      };
     if (qq.status === "queued") return { text: "Queued…", color: "#8c96a1" };
-    if (qq.status === "starting") return { text: "Asking Nexus…", color: "#8c96a1" };
+    if (qq.status === "starting")
+      return { text: "Asking Nexus…", color: "#8c96a1" };
     // active
     const tot = qq.total ? ` of ${humanSize(qq.total)}` : "";
     const spd = qq.speed ? `  ·  ${humanSize(qq.speed)}/s` : "";
@@ -370,18 +415,22 @@
   function openResolver() {
     menuOpen = false;
     console.debug("[w3lmn] open_tool_window resolver");
-    invoke("open_tool_window", { kind: "resolver", query: "", path: "" }).catch((e) => {
-      console.error("[w3lmn] open_tool_window resolver failed", e);
-      error = String(e);
-    });
+    invoke("open_tool_window", { kind: "resolver", query: "", path: "" }).catch(
+      (e) => {
+        console.error("[w3lmn] open_tool_window resolver failed", e);
+        error = String(e);
+      },
+    );
   }
   function openSettings() {
     menuOpen = false;
     console.debug("[w3lmn] open_tool_window settings");
-    invoke("open_tool_window", { kind: "settings", query: "", path: "" }).catch((e) => {
-      console.error("[w3lmn] open_tool_window settings failed", e);
-      error = String(e);
-    });
+    invoke("open_tool_window", { kind: "settings", query: "", path: "" }).catch(
+      (e) => {
+        console.error("[w3lmn] open_tool_window settings failed", e);
+        error = String(e);
+      },
+    );
   }
 
   async function openNexusPage(id: string) {
@@ -521,7 +570,11 @@
     }
   }
 
-  async function handleDataListReorder(from: string | number, to: string | number, pos: "before" | "after") {
+  async function handleDataListReorder(
+    from: string | number,
+    to: string | number,
+    pos: "before" | "after",
+  ) {
     if (!appState) return;
     const fromId = String(from);
     const toId = String(to);
@@ -798,7 +851,8 @@
     const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
     if (key(modName) && key(title).includes(key(modName))) return title;
     const base = modName.split(/\s+[-\u2013\u2014:|]\s+/)[0].trim();
-    if (base && key(base).length >= 4 && key(title).includes(key(base))) return title;
+    if (base && key(base).length >= 4 && key(title).includes(key(base)))
+      return title;
     return `${base || modName} - ${title}`;
   }
 
@@ -830,7 +884,9 @@
     try {
       console.debug(`[w3lmn] dlNxm: loading config`);
       const cfg = await loadConfigNative();
-      console.debug(`[w3lmn] dlNxm: config ok, nexusKey=${cfg.nexusKey ? "set" : "MISSING"}`);
+      console.debug(
+        `[w3lmn] dlNxm: config ok, nexusKey=${cfg.nexusKey ? "set" : "MISSING"}`,
+      );
       if (!cfg.nexusKey) {
         error = "Set Nexus API key in Settings first";
         return;
@@ -843,7 +899,12 @@
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
       const row = queue.find((qq) => qq.id === id);
-      if (row && (row.status === "active" || row.status === "starting" || row.status === "paused")) {
+      if (
+        row &&
+        (row.status === "active" ||
+          row.status === "starting" ||
+          row.status === "paused")
+      ) {
         return; // already fetching this file
       }
       if (row && row.status === "done") {
@@ -875,7 +936,8 @@
   }
 
   async function dlTrash(qq: QueueItem) {
-    if (!confirm(`Move ${qq.filename || "this download"} to the Trash?`)) return;
+    if (!confirm(`Move ${qq.filename || "this download"} to the Trash?`))
+      return;
     try {
       await invoke("queue_trash", { id: qq.id, destDir: await downloadsDir() });
       queue = await invoke<QueueItem[]>("queue_list");
@@ -885,7 +947,10 @@
   }
 
   async function dlMain(qq: QueueItem) {
-    const running = qq.status === "active" || qq.status === "starting" || qq.status === "queued";
+    const running =
+      qq.status === "active" ||
+      qq.status === "starting" ||
+      qq.status === "queued";
     if (running) {
       try {
         await invoke("queue_cancel", { id: qq.id });
@@ -895,7 +960,12 @@
       }
       return;
     }
-    if (qq.status === "error" || qq.status === "failed" || qq.status === "paused" || qq.status === "cancelled") {
+    if (
+      qq.status === "error" ||
+      qq.status === "failed" ||
+      qq.status === "paused" ||
+      qq.status === "cancelled"
+    ) {
       try {
         await invoke("queue_start", {
           id: qq.id,
@@ -924,7 +994,9 @@
     (async () => {
       try {
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
-        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
+        const { getCurrent, onOpenUrl } = await import(
+          "@tauri-apps/plugin-deep-link"
+        );
         const cur = await getCurrent().catch(() => []);
         console.debug(`[w3lmn] deep-link getCurrent: ${JSON.stringify(cur)}`);
         if (cur?.length) {
@@ -938,22 +1010,24 @@
             await dlNxm(urls[0]);
           }
         });
-        unlistenP = await listen<{ id: string; done: number; total: number; speed?: number }>(
-          "download-progress",
-          (e) => {
-            queue = queue.map((qq) =>
-              qq.id === e.payload.id
-                ? {
-                    ...qq,
-                    done: e.payload.done,
-                    total: e.payload.total,
-                    speed: e.payload.speed ?? qq.speed,
-                    status: "active",
-                  }
-                : qq,
-            );
-          },
-        );
+        unlistenP = await listen<{
+          id: string;
+          done: number;
+          total: number;
+          speed?: number;
+        }>("download-progress", (e) => {
+          queue = queue.map((qq) =>
+            qq.id === e.payload.id
+              ? {
+                  ...qq,
+                  done: e.payload.done,
+                  total: e.payload.total,
+                  speed: e.payload.speed ?? qq.speed,
+                  status: "active",
+                }
+              : qq,
+          );
+        });
         unlistenD = await listen<{ id: string; path: string; error?: string }>(
           "download-done",
           async (e) => {
@@ -964,7 +1038,10 @@
               return;
             }
             flash(`Downloaded → ${e.payload.path.split("/").pop()}`);
-            await notify("W3 Mod Manager", e.payload.path.split("/").pop() ?? "download done");
+            await notify(
+              "W3 Mod Manager",
+              e.payload.path.split("/").pop() ?? "download done",
+            );
             // original offer_install: open Install unless it's the exact file installed
             if (row && row.status === "done") {
               if (!dlSameFile(row)) {
@@ -1014,14 +1091,6 @@
 
   const [enCount, totalCount] = $derived(enabledCounts());
 </script>
-
-<style>
-  input[type="number"]::-webkit-inner-spin-button,
-  input[type="number"]::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
-</style>
 
 <div class="flex h-full min-h-0">
   <div
@@ -1152,10 +1221,12 @@
       </div>
     {/if}
 
-    <div class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card">
+    <div
+      class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card"
+    >
       <DataList
         columns={[
-          { id: "priority", label: "Priority", sortable: false },
+          { id: "priority", label: "Priority", sortable: false, align: "left" },
           { id: "name", label: "Mod", sortable: false },
           { id: "version", label: "Version", sortable: false },
           { id: "status", label: "Status", sortable: false },
@@ -1179,7 +1250,10 @@
         {#snippet row(m, sel)}
           {#if m.sep}
             <Table.Cell colspan={5} class="px-3 py-2 text-left">
-              <button class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2" onclick={() => toggleCollapse(m.id)}>
+              <button
+                class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2"
+                onclick={() => toggleCollapse(m.id)}
+              >
                 <span>{collapsed[m.id] ? "›" : "⌄"}</span>
                 {m.name}
                 <span class="font-normal">({countMembers(m.id)})</span>
@@ -1188,14 +1262,27 @@
           {:else}
             <Table.Cell class="text-center">
               {#if m.enabled}
-                <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins" class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none" style="-moz-appearance:textfield;-webkit-appearance:none;" />
+                <input
+                  type="number"
+                  min="1"
+                  value={prioOf(m.id)}
+                  onchange={(e) => setPrio(m.id, e)}
+                  title="Priority — 1 wins"
+                  class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none"
+                  style="-moz-appearance:textfield;-webkit-appearance:none;"
+                />
               {:else}
                 <span class="text-muted-foreground/50">–</span>
               {/if}
             </Table.Cell>
             <Table.Cell class="max-w-md">
               <div class="flex min-w-0 items-center gap-2">
-                <input type="checkbox" checked={m.enabled} onchange={() => toggle(m.id, m.enabled)} class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat" />
+                <input
+                  type="checkbox"
+                  checked={m.enabled}
+                  onchange={() => toggle(m.id, m.enabled)}
+                  class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat"
+                />
                 <span
                   role="button"
                   tabindex="0"
@@ -1253,11 +1340,15 @@
                 {/each}
               </div>
             </Table.Cell>
-            <Table.Cell class="truncate text-[13px]">{fmtDate(m.updated)}</Table.Cell>
+            <Table.Cell class="truncate text-[13px]"
+              >{fmtDate(m.updated)}</Table.Cell
+            >
           {/if}
         {/snippet}
         {#snippet empty()}
-          <div class="flex h-full min-h-0 items-center justify-center p-8 text-center text-[12pt] text-muted-foreground">
+          <div
+            class="flex h-full min-h-0 items-center justify-center p-8 text-center text-[12pt] text-muted-foreground"
+          >
             {#if !appState}
               Set the game folder in Settings…
             {:else}
@@ -1267,7 +1358,6 @@
         {/snippet}
       </DataList>
     </div>
-
 
     <div class="flex items-center gap-2">
       <span
@@ -1296,9 +1386,15 @@
         class="flex shrink-0 items-center gap-2 rounded-[7px] border px-3 py-1.5 text-sm {dlOpen
           ? 'border-primary bg-primary/15 text-primary'
           : 'border-border bg-popover text-muted-foreground hover:text-foreground hover:bg-accent'}"
-        ><span>Downloads</span>{#if queue.some((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued")}<span
+        ><span>Downloads</span
+        >{#if queue.some((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued")}<span
             class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9a45c] px-1 text-[11px] font-bold text-[#1c2127]"
-            >{queue.filter((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued").length}</span
+            >{queue.filter(
+              (qq) =>
+                qq.status === "active" ||
+                qq.status === "starting" ||
+                qq.status === "queued",
+            ).length}</span
           >{/if}<span>{dlOpen ? "‹" : "›"}</span></button
       >
     </div>
@@ -1374,24 +1470,43 @@
       {#each Object.values(groupedQueue) as group}
         {@const rows = group.rows}
         {@const nested = rows.length > 1}
-        {@const collapsed = dlCollapsed[group.key] ?? rows.every((r) => r.status === "done" && dlSameFile(r))}
+        {@const collapsed =
+          dlCollapsed[group.key] ??
+          rows.every((r) => r.status === "done" && dlSameFile(r))}
         {@const single = rows.length === 1 ? rows[0] : null}
-        {@const running = rows.some((r) => r.status === "active" || r.status === "starting" || r.status === "queued" || r.status === "paused")}
-        <div class="rounded-[8px] border border-[#363e48] bg-[#2b323a] p-[14px]">
+        {@const running = rows.some(
+          (r) =>
+            r.status === "active" ||
+            r.status === "starting" ||
+            r.status === "queued" ||
+            r.status === "paused",
+        )}
+        <div
+          class="rounded-[8px] border border-[#363e48] bg-[#2b323a] p-[14px]"
+        >
           <div class="flex items-start gap-1.5">
             <button
-              onclick={() => { dlCollapsed[group.key] = !collapsed; }}
+              onclick={() => {
+                dlCollapsed[group.key] = !collapsed;
+              }}
               title={collapsed ? "Expand" : "Collapse"}
               class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[13px] text-[#8c96a1] hover:text-[#dbb977]"
               >{collapsed ? "›" : "⌄"}</button
             >
             <button
-              onclick={() => { dlCollapsed[group.key] = !collapsed; }}
+              onclick={() => {
+                dlCollapsed[group.key] = !collapsed;
+              }}
               class="min-w-0 flex-1 text-left text-[13.5px] font-semibold leading-snug text-[#d9dee4]"
-              >{group.mod_name || (group.mod_id ? `Nexus mod ${group.mod_id}` : "Mod")}</button
+              >{group.mod_name ||
+                (group.mod_id ? `Nexus mod ${group.mod_id}` : "Mod")}</button
             >
             {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlSameFile(r))}
-              <span title="Installed: this exact version" class="mt-0.5 shrink-0 text-[14px] font-semibold text-[#7fbf8a]">✓</span>
+              <span
+                title="Installed: this exact version"
+                class="mt-0.5 shrink-0 text-[14px] font-semibold text-[#7fbf8a]"
+                >✓</span
+              >
             {/if}
             {#if single && !collapsed && !running && single.status === "done"}
               <button
@@ -1403,56 +1518,98 @@
             {/if}
           </div>
           {#if !collapsed}
-          <div class={nested ? "mt-3 flex flex-col gap-2 pl-[26px]" : "mt-3 flex flex-col gap-2"}>
-            {#each rows as qq}
-              {@const st = dlStatus(qq)}
-              {@const meta = dlMetaLine(qq)}
-              {@const action = qq.status === "done" ? dlAction(qq) : ""}
-              {@const isRunning = qq.status === "active" || qq.status === "starting" || qq.status === "queued"}
-              {@const mainLabel = isRunning ? "Cancel" : qq.status === "error" || qq.status === "failed" ? "Retry" : qq.status === "paused" || qq.status === "cancelled" ? "Retry" : action}
-              <div class={nested ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-[10px_12px]" : ""}>
-                {#if nested}
-                  <div class="mb-2 truncate text-[13px] text-[#d9dee4]" title={(qq.filename ?? "")}>{qq.filename || "Downloading…"}</div>
-                {/if}
-                {#if isRunning}
-                  <div class="mb-2 h-[6px] overflow-hidden rounded bg-[#13171b]">
+            <div
+              class={nested
+                ? "mt-3 flex flex-col gap-2 pl-[26px]"
+                : "mt-3 flex flex-col gap-2"}
+            >
+              {#each rows as qq}
+                {@const st = dlStatus(qq)}
+                {@const meta = dlMetaLine(qq)}
+                {@const action = qq.status === "done" ? dlAction(qq) : ""}
+                {@const isRunning =
+                  qq.status === "active" ||
+                  qq.status === "starting" ||
+                  qq.status === "queued"}
+                {@const mainLabel = isRunning
+                  ? "Cancel"
+                  : qq.status === "error" || qq.status === "failed"
+                    ? "Retry"
+                    : qq.status === "paused" || qq.status === "cancelled"
+                      ? "Retry"
+                      : action}
+                <div
+                  class={nested
+                    ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-[10px_12px]"
+                    : ""}
+                >
+                  {#if nested}
                     <div
-                      class="h-full rounded bg-[#c9a45c]"
-                      style="width:{qq.total ? Math.round((100 * qq.done) / Math.max(1, qq.total)) : 0}%"
-                    ></div>
+                      class="mb-2 truncate text-[13px] text-[#d9dee4]"
+                      title={qq.filename ?? ""}
+                    >
+                      {qq.filename || "Downloading…"}
+                    </div>
+                  {/if}
+                  {#if isRunning}
+                    <div
+                      class="mb-2 h-[6px] overflow-hidden rounded bg-[#13171b]"
+                    >
+                      <div
+                        class="h-full rounded bg-[#c9a45c]"
+                        style="width:{qq.total
+                          ? Math.round((100 * qq.done) / Math.max(1, qq.total))
+                          : 0}%"
+                      ></div>
+                    </div>
+                  {/if}
+                  <div class="text-[13px]" style="color:{st.color}">
+                    {st.text}
                   </div>
-                {/if}
-                <div class="text-[13px]" style="color:{st.color}">{st.text}</div>
-                <div class="mt-2 flex items-center gap-1.5">
-                  <span class="min-w-0 flex-1 truncate text-[12.5px] text-[#8c96a1]" title={meta}>{meta}</span>
-                  {#if !isRunning}
-                    <button
-                      onclick={() => dlRemove(qq)}
-                      title="Take it off this list. A downloaded file stays in the downloads folder."
-                      class="shrink-0 rounded-[6px] border border-[#363e48] bg-[#2b323a] px-3 py-1.5 text-[13px] text-[#d9dee4] hover:bg-[#363e48]"
-                      >Remove</button
+                  <div class="mt-2 flex items-center gap-1.5">
+                    <span
+                      class="min-w-0 flex-1 truncate text-[12.5px] text-[#8c96a1]"
+                      title={meta}>{meta}</span
                     >
-                  {/if}
-                  {#if mainLabel}
-                    <button
-                      onclick={() => dlMain(qq)}
-                      class="shrink-0 rounded-[6px] px-3.5 py-1.5 text-[13px] font-semibold {action === "Downgrade" ? "border border-[#363e48] bg-[#2b323a] text-[#d9dee4] hover:bg-[#363e48]" : "bg-[#c9a45c] text-[#1c2127] hover:bg-[#dbb977]"}"
-                      >{mainLabel}</button
-                    >
-                  {/if}
+                    {#if !isRunning}
+                      <button
+                        onclick={() => dlRemove(qq)}
+                        title="Take it off this list. A downloaded file stays in the downloads folder."
+                        class="shrink-0 rounded-[6px] border border-[#363e48] bg-[#2b323a] px-3 py-1.5 text-[13px] text-[#d9dee4] hover:bg-[#363e48]"
+                        >Remove</button
+                      >
+                    {/if}
+                    {#if mainLabel}
+                      <button
+                        onclick={() => dlMain(qq)}
+                        class="shrink-0 rounded-[6px] px-3.5 py-1.5 text-[13px] font-semibold {action ===
+                        'Downgrade'
+                          ? 'border border-[#363e48] bg-[#2b323a] text-[#d9dee4] hover:bg-[#363e48]'
+                          : 'bg-[#c9a45c] text-[#1c2127] hover:bg-[#dbb977]'}"
+                        >{mainLabel}</button
+                      >
+                    {/if}
+                  </div>
                 </div>
-              </div>
-            {/each}
-          </div>
+              {/each}
+            </div>
           {/if}
         </div>
       {/each}
       {#if !queue.length}
         <p class="text-[13px] leading-relaxed text-[#8c96a1]">
-          Click “Mod Manager Download” on a Witcher 3 mod's Nexus page. It downloads
-          here, then the Install window opens.
+          Click “Mod Manager Download” on a Witcher 3 mod's Nexus page. It
+          downloads here, then the Install window opens.
         </p>
       {/if}
     </div>
   {/if}
 </div>
+
+<style>
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+</style>
