@@ -27,7 +27,7 @@
       "desktop": { "schemes": ["nxm"] }
     },
     "shell": {
-      "open": true
+      "open": "(/|https?://|steam://|mailto:|tel:|[A-Za-z]:).*"
     }
   },
   "bundle": {
