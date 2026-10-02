@@ -43,6 +43,7 @@
   let archPath: string = $state("");
   let archNames: string[] = $state([]);
   let archMoves: [string, string][] = $state([]);
+  let dlCollapsed: Record<string, boolean> = $state({});
 
   const filtering = $derived(filter.trim().length > 0);
   const q = $derived(filter.trim().toLowerCase());
@@ -57,6 +58,22 @@
       },
       {} as Record<string, { key: string; mod_name: string; rows: QueueItem[] }>,
     ),
+  );
+  const dlSummary = $derived(
+    queue.length
+      ? (() => {
+          const bytes = queue.reduce((a, q) => a + (q.done || 0), 0);
+          const label =
+            bytes < 1024
+              ? `${bytes} B`
+              : bytes < 1024 * 1024
+                ? `${Math.round(bytes / 1024)} KB`
+                : bytes < 1024 * 1024 * 1024
+                  ? `${Math.round(bytes / 1024 / 1024)} MB`
+                  : `${Math.round(bytes / 1024 / 1024 / 1024)} GB`;
+          return `${Object.keys(groupedQueue).length} mods · ${label}`;
+        })()
+      : "",
   );
 
   function modById(id: string) {
@@ -1109,9 +1126,9 @@
       <div class="flex items-center gap-1.5">
         <div class="flex-1 leading-tight">
           <div class="text-[13pt] font-semibold">Downloads</div>
-          {#if queue.length}<div class="text-[12px] text-muted-foreground">
-              {queue.length} file{queue.length === 1 ? "" : "s"}
-            </div>{/if}
+          {#if dlSummary}
+            <div class="text-[12px] text-muted-foreground">{dlSummary}</div>
+          {/if}
         </div>
         <button
           onclick={async () => {
@@ -1138,7 +1155,21 @@
       </div>
       {#each Object.values(groupedQueue) as group}
         <div class="rounded-[7px] border border-border bg-card p-3">
-          <div class="mb-2 text-sm font-semibold">{group.mod_name}</div>
+          <button
+            onclick={() => {
+              dlCollapsed[group.key] = !dlCollapsed[group.key];
+            }}
+            class="mb-2 flex w-full items-center gap-2 text-left text-sm font-semibold hover:text-primary"
+          >
+            <span class="inline-block w-5 text-center text-muted-foreground"
+              >{dlCollapsed[group.key] ? "▶" : "▼"}</span
+            >
+            {group.mod_name}
+            {#if group.rows.some((r) => r.status === "done")}
+              <span class="ml-1 text-emerald-400">✓</span>
+            {/if}
+          </button>
+          {#if !dlCollapsed[group.key]}
           {#each group.rows as qq}
         <div
           class="rounded-[7px] border border-border bg-background/60 p-2 text-[12px]"
@@ -1191,6 +1222,7 @@
           </div>
         </div>
           {/each}
+          {/if}
         </div>
       {/each}
       {#if !queue.length}

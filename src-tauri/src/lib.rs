@@ -1241,6 +1241,11 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
+                // In dev mode the scheme isn't installed yet, so register it.
+                #[cfg(any(windows, target_os = "linux"))]
+                if let Err(e) = app.deep_link().register_all() {
+                    log_line("rust", &format!("deep_link register_all failed: {e}"));
+                }
                 app.deep_link().on_open_url(move |event| {
                     log_line("rust", &format!("deep_link event urls={:?}", event.urls().iter().map(|u| u.to_string()).collect::<Vec<_>>()));
                 });
