@@ -1417,6 +1417,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            log_line("rust", &format!("W3LMN v{} starting, worker-thread downloads", env!("CARGO_PKG_VERSION")));
             // Forward OS deep-link opens (nxm://…) to the frontend as events.
             // The .desktop MimeType registration comes from the
             // `security.deepLinkProtocols` entry in tauri.conf.json — no
