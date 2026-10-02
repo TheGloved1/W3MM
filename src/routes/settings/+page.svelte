@@ -18,10 +18,17 @@
   const codeFonts = ['JetBrains Mono', 'Fira Code', 'Hack', 'DejaVu Sans Mono', 'monospace'];
 
   onMount(async () => {
-    config = await loadConfigNative();
-    if (!config.gameDir) detect(true);
-    else checkGame();
-    checkMerger();
+    console.debug("[w3lmn] settings window mounted");
+    try {
+      config = await loadConfigNative();
+      console.debug("[w3lmn] settings config loaded", config);
+      if (!config.gameDir) detect(true);
+      else checkGame();
+      checkMerger();
+    } catch (e) {
+      console.error("[w3lmn] settings init failed", e);
+      warn = String(e);
+    }
   });
 
   async function pickDir(current: string, title: string, into: 'gameDir' | 'prefix') {

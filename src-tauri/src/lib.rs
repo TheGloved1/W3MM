@@ -821,20 +821,25 @@ fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<
 #[tauri::command]
 fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: String) -> Result<(), String> {
     use tauri::Manager;
+    eprintln!("[w3lmn] open_tool_window called kind={kind:?} query={query:?} path={path:?}");
     let (title, w, h) = match kind.as_str() {
         "install" => ("Install mod", 820.0, 660.0),
         "edit" => ("Edit mod", 860.0, 520.0),
-        "setup" => ("Settings", 700.0, 640.0),
+        "setup" | "settings" => ("Settings", 700.0, 640.0),
         "resolver" => ("Script decisions", 1150.0, 760.0),
-        _ => return Err("unknown window".into()),
+        _ => {
+            eprintln!("[w3lmn] open_tool_window: unknown kind={kind:?}");
+            return Err("unknown window".into());
+        }
     };
     // Window labels are stable ids; routes are what SvelteKit builds.
     let route = match kind.as_str() {
-        "setup" => "settings",
+        "setup" | "settings" => "settings",
         "resolver" => "merges",
         _ => kind.as_str(),
     };
     if let Some(win) = app.get_webview_window(&kind) {
+        eprintln!("[w3lmn] open_tool_window: window {kind:?} already exists, focusing");
         win.set_focus().map_err(|e| e.to_string())?;
         if !path.is_empty() {
             use tauri::Emitter;
@@ -853,13 +858,18 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     let webview_url = tauri::WebviewUrl::App(url.into());
     #[cfg(dev)]
     let webview_url = tauri::WebviewUrl::External(url.parse().expect("valid dev url"));
-    let _win = tauri::WebviewWindowBuilder::new(&app, kind, webview_url)
+    eprintln!("[w3lmn] open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}");
+    let _win = tauri::WebviewWindowBuilder::new(&app, kind.clone(), webview_url)
         .title(title)
         .inner_size(w, h)
         .center()
         .focused(true)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("[w3lmn] open_tool_window: build failed: {e}");
+            e.to_string()
+        })?;
+    eprintln!("[w3lmn] open_tool_window: window {kind:?} created");
     Ok(())
 }
 

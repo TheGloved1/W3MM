@@ -238,20 +238,32 @@
 
   function openEdit(id: string) {
     ctx = null;
+    console.debug("[w3lmn] open_tool_window edit", id);
     invoke("open_tool_window", {
       kind: "edit",
       query: `id=${encodeURIComponent(id)}`,
       path: id,
+    }).catch((e) => {
+      console.error("[w3lmn] open_tool_window edit failed", e);
+      error = String(e);
     });
   }
 
   function openResolver() {
     menuOpen = false;
-    invoke("open_tool_window", { kind: "resolver", query: "", path: "" });
+    console.debug("[w3lmn] open_tool_window resolver");
+    invoke("open_tool_window", { kind: "resolver", query: "", path: "" }).catch((e) => {
+      console.error("[w3lmn] open_tool_window resolver failed", e);
+      error = String(e);
+    });
   }
   function openSettings() {
     menuOpen = false;
-    invoke("open_tool_window", { kind: "settings", query: "", path: "" });
+    console.debug("[w3lmn] open_tool_window settings");
+    invoke("open_tool_window", { kind: "settings", query: "", path: "" }).catch((e) => {
+      console.error("[w3lmn] open_tool_window settings failed", e);
+      error = String(e);
+    });
   }
 
   async function openNexusPage(id: string) {
@@ -309,10 +321,14 @@
       flash("No archive recorded — pick the file again.");
       return;
     }
+    console.debug("[w3lmn] open_tool_window install (reinstall)", m.archive);
     await invoke("open_tool_window", {
       kind: "install",
       query: `path=${encodeURIComponent(m.archive)}`,
       path: m.archive,
+    }).catch((e) => {
+      console.error("[w3lmn] open_tool_window install failed", e);
+      error = String(e);
     });
   }
 
@@ -402,13 +418,19 @@
           ? [sel as string]
           : [];
       for (const p of paths) {
+        console.debug("[w3lmn] open_tool_window install (picked)", p);
         await invoke("open_tool_window", {
           kind: "install",
           query: `path=${encodeURIComponent(p)}`,
           path: p,
+        }).catch((e) => {
+          console.error("[w3lmn] open_tool_window install failed", e);
+          error = String(e);
         });
       }
-    } catch {}
+    } catch (e) {
+      console.error("[w3lmn] pickArchives failed", e);
+    }
   }
 
   function onRowContext(id: string, ev: MouseEvent) {
@@ -601,10 +623,14 @@
 
   async function archInstall() {
     if (!archPath) return;
+    console.debug("[w3lmn] open_tool_window install (panel)", archPath);
     await invoke("open_tool_window", {
       kind: "install",
       query: `path=${encodeURIComponent(archPath)}`,
       path: archPath,
+    }).catch((e) => {
+      console.error("[w3lmn] open_tool_window install failed", e);
+      error = String(e);
     });
   }
 
