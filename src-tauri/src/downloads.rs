@@ -130,6 +130,10 @@ pub fn cancel(id: &str) {
     }
 }
 
+pub fn remove(id: &str) {
+    queue().lock().unwrap().remove(id);
+}
+
 pub fn set_paused(id: &str, paused: bool) {
     if let Some(it) = queue().lock().unwrap().get_mut(id) {
         if paused && it.status == "active" {
@@ -142,7 +146,7 @@ pub fn set_paused(id: &str, paused: bool) {
 
 /// Blocking pump for one item; emits progress through `emit`. Cancellation
 /// and pause are polled between chunks (replaces QThread signals).
-pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, u64)) -> Result<u64, String> {
+pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, u64, u64)) -> Result<u64, String> {
     let item = {
         let qq = queue();
         let mut q = qq.lock().unwrap();
@@ -189,6 +193,7 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
     let mut buf = [0u8; 1 << 16];
     let start = std::time::Instant::now();
     let mut done = 0u64;
+    let mut win: std::collections::VecDeque<(std::time::Instant, u64)> = std::collections::VecDeque::new();
     use std::io::Read;
     loop {
         {
@@ -209,10 +214,20 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
                 use std::io::Write;
                 f.write_all(&buf[..n]).map_err(|e| e.to_string())?;
                 done += n as u64;
+                let now = std::time::Instant::now();
+                win.push_back((now, done));
+                while win.len() > 2 && now.duration_since(win[0].0).as_secs_f32() > 3.0 {
+                    win.pop_front();
+                }
+                let speed = if win.len() >= 2 {
+                    let dt = now.duration_since(win[0].0).as_secs_f32();
+                    if dt > 0.0 { ((done - win[0].1) as f32 / dt) as u64 } else { 0 }
+                } else { 0 };
                 if let Some(it) = queue().lock().unwrap().get_mut(id) {
                     it.done = done;
+                    it.speed = speed;
                 }
-                emit(done, total);
+                emit(done, total, speed);
             }
             Err(e) => return Err(e.to_string()),
         }

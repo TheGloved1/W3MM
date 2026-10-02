@@ -792,6 +792,32 @@ fn queue_cancel(id: String) {
     downloads::cancel(&id);
 }
 
+/// Remove a row from the list, keeping the file (original Remove button).
+#[tauri::command]
+fn queue_remove(id: String) {
+    downloads::remove(&id);
+}
+
+/// Move a row's file to the trash, then drop the row (original trash icon).
+#[tauri::command]
+fn queue_trash(id: String, dest_dir: String) -> Result<bool, String> {
+    let item = downloads::items().into_iter().find(|i| i.id == id);
+    if let Some(it) = item {
+        if !it.filename.is_empty() && !dest_dir.is_empty() {
+            let p = std::path::Path::new(&dest_dir).join(&it.filename);
+            if p.is_file() {
+                let _ = trash::delete(&p);
+            }
+            let part = std::path::Path::new(&dest_dir).join(format!("{}.part", it.filename));
+            if part.is_file() {
+                let _ = trash::delete(&part);
+            }
+        }
+    }
+    downloads::remove(&id);
+    Ok(true)
+}
+
 #[tauri::command]
 fn queue_pause(id: String, paused: bool) {
     downloads::set_paused(&id, paused);
@@ -808,14 +834,25 @@ fn queue_pump(app: tauri::AppHandle, id: String, dest_dir: String, api_key: Stri
         &id,
         &dest,
         &api_key,
-        &|done, total| {
+        &|done, total, speed| {
             use tauri::Emitter;
-            let _ = app.emit("download-progress", serde_json::json!({"id": aid, "done": done, "total": total}));
+            let _ = app.emit("download-progress", serde_json::json!({"id": aid, "done": done, "total": total, "speed": speed}));
         },
     )?;
     use tauri::Emitter;
     let _ = app.emit("download-done", serde_json::json!({"id": id, "path": target.to_string_lossy(), "bytes": n}));
+    log_line("rust", &format!("download done id={id} path={}", target.to_string_lossy()));
     Ok(target.to_string_lossy().to_string())
+}
+
+/// Absolute downloads-dir path (<game>/_W3LMN/downloads).
+#[tauri::command]
+fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let d = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+    let _ = std::fs::create_dir_all(&d);
+    Ok(d.to_string_lossy().to_string())
 }
 
 /// Absolute settings-dir path for the Open menu.
@@ -1300,8 +1337,11 @@ pub fn run() {
             queue_enqueue,
             queue_list,
             queue_cancel,
+            queue_remove,
+            queue_trash,
             queue_pause,
             queue_pump,
+            downloads_dir_path,
             settings_dir_path,
             open_tool_window,
             merger_apply,

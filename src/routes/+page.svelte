@@ -52,29 +52,99 @@
       (acc, qq) => {
         const key = qq.mod_id || qq.file_id || qq.filename;
         if (!acc[key])
-          acc[key] = { key, mod_name: qq.mod_name || qq.filename, rows: [] };
+          acc[key] = { key, mod_id: qq.mod_id, mod_name: qq.mod_name || qq.filename, rows: [] };
         acc[key].rows.push(qq);
+        if (!acc[key].mod_name && qq.mod_name) acc[key].mod_name = qq.mod_name;
         return acc;
       },
-      {} as Record<string, { key: string; mod_name: string; rows: QueueItem[] }>,
+      {} as Record<string, { key: string; mod_id: string; mod_name: string; rows: QueueItem[] }>,
     ),
   );
+
+  function humanSize(n: number | null | undefined): string {
+    if (n === null || n === undefined) return "?";
+    let v = n;
+    for (const unit of ["B", "KB", "MB", "GB"] as const) {
+      if (v < 1024 || unit === "GB") return unit === "B" || unit === "KB" ? `${Math.round(v)} ${unit}` : `${(Math.round(v * 10) / 10).toFixed(1)} ${unit}`;
+      v /= 1024;
+    }
+    return `${v} B`;
+  }
+
   const dlSummary = $derived(
     queue.length
       ? (() => {
-          const bytes = queue.reduce((a, q) => a + (q.done || 0), 0);
-          const label =
-            bytes < 1024
-              ? `${bytes} B`
-              : bytes < 1024 * 1024
-                ? `${Math.round(bytes / 1024)} KB`
-                : bytes < 1024 * 1024 * 1024
-                  ? `${Math.round(bytes / 1024 / 1024)} MB`
-                  : `${Math.round(bytes / 1024 / 1024 / 1024)} GB`;
-          return `${Object.keys(groupedQueue).length} mods · ${label}`;
+          const bytes = queue.reduce((a, qq) => a + (qq.total || qq.done || 0), 0);
+          const n = Object.keys(groupedQueue).length;
+          return `${n} mod${n === 1 ? "" : "s"}  ·  ${humanSize(bytes)}`;
         })()
       : "",
   );
+
+  function cleanVer(v: string): string {
+    return (v ?? "").replace(/^(?:version|ver\.?|v)\s*\.?\s*(?=\d)/i, "").trim();
+  }
+  function verTuple(v: string): number[] {
+    const m = cleanVer(v).match(/\d+(?:\.\d+)*/);
+    if (!m) return [];
+    return m[0].split(".").map((x) => parseInt(x, 10) || 0);
+  }
+  function verVerdict(nw: string, old: string): string {
+    const a = (nw ?? "").trim(), b = (old ?? "").trim();
+    if (!a || !b) return "";
+    if (a.toLowerCase() === b.toLowerCase()) return "same";
+    const ta = verTuple(a), tb = verTuple(b);
+    if (ta.length && tb.length) {
+      const n = Math.max(ta.length, tb.length);
+      for (let i = 0; i < n; i++) {
+        const x = ta[i] ?? 0, y = tb[i] ?? 0;
+        if (x !== y) return x > y ? "newer" : "older";
+      }
+      return "same";
+    }
+    return "";
+  }
+  /** What the main button says for a finished row, like DownloadsPanel.match. */
+  function dlAction(qq: QueueItem): string {
+    if (!appState) return "Install";
+    const nid = qq.mod_id || "";
+    const fname = (qq.filename || "").toLowerCase();
+    let hit = appState.mods.find((m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname);
+    if (!hit && nid) {
+      const samePage = appState.mods.filter((m) => !m.sep && (m.nexus || "") === nid);
+      if (samePage.length === 1) hit = samePage[0];
+    }
+    if (!hit) return "Install";
+    const v = verVerdict(qq.version, hit.version);
+    if (v === "newer") return "Update";
+    if (v === "same") return "Reinstall";
+    if (v === "older") return "Downgrade";
+    return fname ? "Reinstall" : "Replace";
+  }
+  function dlInstalled(qq: QueueItem) {
+    return dlAction(qq) === "Reinstall";
+  }
+  function dlMetaLine(qq: QueueItem): string {
+    const bits: string[] = [];
+    const v = cleanVer(qq.version);
+    if (v) bits.push(v[0] && /\d/.test(v[0]) ? `v${v}` : v);
+    if (qq.category && qq.category.toUpperCase() !== "MAIN") {
+      const c = qq.category.toLowerCase();
+      bits.push(c[0].toUpperCase() + c.slice(1));
+    }
+    return bits.join("  ·  ");
+  }
+  function dlStatus(qq: QueueItem): { text: string; color: string } {
+    if (qq.status === "done") return { text: `Downloaded  ·  ${humanSize(qq.total || qq.done)}`, color: "#7fbf8a" };
+    if (qq.status === "error" || qq.status === "failed") return { text: qq.error || "Download failed", color: "#e3735f" };
+    if (qq.status === "cancelled") return { text: "Cancelled", color: "#8c96a1" };
+    if (qq.status === "paused") return { text: `Paused  ·  ${humanSize(qq.done)} of ${humanSize(qq.total)}`, color: "#8c96a1" };
+    if (qq.status === "queued") return { text: "Queued…", color: "#8c96a1" };
+    // active
+    const tot = qq.total ? ` of ${humanSize(qq.total)}` : "";
+    const spd = qq.speed ? `  ·  ${humanSize(qq.speed)}/s` : "";
+    return { text: `${humanSize(qq.done)}${tot}${spd}`, color: "#8c96a1" };
+  }
 
   function modById(id: string) {
     return appState?.mods.find((m) => m.id === id);
@@ -570,10 +640,41 @@
     } catch {}
   }
 
+  async function downloadsDir(): Promise<string> {
+    try {
+      return await invoke<string>("downloads_dir_path");
+    } catch {
+      return "/tmp";
+    }
+  }
+
+  async function openDownloadsFolder() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(await downloadsDir());
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Open the Install window for a finished row (original offer_install). */
+  async function offerInstall(qq: QueueItem, destOverride?: string) {
+    const dest = destOverride ?? (await downloadsDir()) + "/" + qq.filename;
+    archPath = dest;
+    await invoke("open_tool_window", {
+      kind: "install",
+      query: `path=${encodeURIComponent(dest)}`,
+      path: dest,
+    }).catch((e) => {
+      error = String(e);
+    });
+  }
+
   async function dlNxm(preset?: string) {
     const url = preset ?? nxm;
     if (!url) return;
     nxm = url;
+    console.debug(`[w3lmn] nxm received: ${url}`);
     error = "";
     try {
       const cfg = await loadConfigNative();
@@ -589,15 +690,11 @@
       });
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
+      const destDir = await downloadsDir();
       // trigger the pump immediately (blocking), progress events come async
-      invoke<string>("queue_pump", {
-        id,
-        destDir: "/tmp",
-        apiKey: cfg.nexusKey,
-      })
+      invoke<string>("queue_pump", { id, destDir, apiKey: cfg.nexusKey })
         .then((dest) => {
           flash(`Downloaded → ${dest.split("/").pop()}`);
-          archPath = dest;
           notify("W3 Mod Manager", dest.split("/").pop() ?? "download done");
         })
         .catch((e) => {
@@ -617,13 +714,63 @@
     try {
       await invoke("queue_pump", {
         id: next.id,
-        destDir: "/tmp",
+        destDir: await downloadsDir(),
         apiKey: (await loadConfigNative()).nexusKey,
       });
       queue = await invoke<QueueItem[]>("queue_list");
     } catch (e) {
       error = String(e);
       queue = await invoke<QueueItem[]>("queue_list");
+    }
+  }
+
+  async function dlRemove(qq: QueueItem) {
+    try {
+      await invoke("queue_remove", { id: qq.id });
+      queue = await invoke<QueueItem[]>("queue_list");
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function dlTrash(qq: QueueItem) {
+    if (!confirm(`Move ${qq.filename || "this download"} to the Trash?`)) return;
+    try {
+      await invoke("queue_trash", { id: qq.id, destDir: await downloadsDir() });
+      queue = await invoke<QueueItem[]>("queue_list");
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function dlMain(qq: QueueItem) {
+    const running = qq.status === "active" || qq.status === "starting" || qq.status === "queued";
+    if (running) {
+      try {
+        await invoke("queue_cancel", { id: qq.id });
+        queue = await invoke<QueueItem[]>("queue_list");
+      } catch (e) {
+        error = String(e);
+      }
+      return;
+    }
+    if (qq.status === "error" || qq.status === "failed" || qq.status === "paused" || qq.status === "cancelled") {
+      try {
+        await invoke("queue_pause", { id: qq.id, paused: false });
+        await invoke("queue_pump", {
+          id: qq.id,
+          destDir: await downloadsDir(),
+          apiKey: (await loadConfigNative()).nexusKey,
+        });
+        queue = await invoke<QueueItem[]>("queue_list");
+      } catch (e) {
+        error = String(e);
+        queue = await invoke<QueueItem[]>("queue_list").catch(() => queue);
+      }
+      return;
+    }
+    if (qq.status === "done") {
+      await offerInstall(qq);
     }
   }
 
@@ -690,17 +837,19 @@
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         const cur = await getCurrent().catch(() => []);
+        console.debug(`[w3lmn] deep-link getCurrent: ${JSON.stringify(cur)}`);
         if (cur?.length) {
           dlOpen = true;
           await dlNxm(cur[0]);
         }
         unlisten = await onOpenUrl(async (urls) => {
+          console.debug(`[w3lmn] deep-link onOpenUrl: ${JSON.stringify(urls)}`);
           if (urls?.length) {
             dlOpen = true;
             await dlNxm(urls[0]);
           }
         });
-        unlistenP = await listen<{ id: string; done: number; total: number }>(
+        unlistenP = await listen<{ id: string; done: number; total: number; speed?: number }>(
           "download-progress",
           (e) => {
             queue = queue.map((qq) =>
@@ -709,6 +858,7 @@
                     ...qq,
                     done: e.payload.done,
                     total: e.payload.total,
+                    speed: e.payload.speed ?? qq.speed,
                     status: "active",
                   }
                 : qq,
@@ -719,8 +869,16 @@
           "download-done",
           async (e) => {
             queue = await invoke<QueueItem[]>("queue_list");
-            archPath = e.payload.path;
+            const row = queue.find((qq) => qq.id === e.payload.id);
             flash(`Downloaded → ${e.payload.path.split("/").pop()}`);
+            // original offer_install: open Install unless it's the exact file installed
+            if (row && row.status === "done") {
+              if (!dlInstalled(row)) {
+                await offerInstall(row, e.payload.path);
+              }
+            } else {
+              archPath = e.payload.path;
+            }
           },
         );
         unlistenM = await listen("mods-changed", async () => {
@@ -1061,11 +1219,14 @@
         onclick={() => {
           dlOpen = !dlOpen;
         }}
-        title="Downloads"
-        class="shrink-0 rounded-[7px] border px-3 py-1.5 text-sm {dlOpen
+        title={dlOpen ? "Hide downloads" : "Show downloads"}
+        class="flex shrink-0 items-center gap-2 rounded-[7px] border px-3 py-1.5 text-sm {dlOpen
           ? 'border-primary bg-primary/15 text-primary'
           : 'border-border bg-popover text-muted-foreground hover:text-foreground hover:bg-accent'}"
-        >Downloads {dlOpen ? "‹" : "›"}</button
+        ><span>Downloads</span>{#if queue.some((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued")}<span
+            class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9a45c] px-1 text-[11px] font-bold text-[#1c2127]"
+            >{queue.filter((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued").length}</span
+          >{/if}<span>{dlOpen ? "‹" : "›"}</span></button
       >
     </div>
   </div>
@@ -1121,153 +1282,104 @@
 
   {#if dlOpen}
     <div
-      class="flex w-[330px] max-w-[80vw] shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-card px-4 py-[18px]"
+      class="flex w-[330px] max-w-[80vw] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[#363e48] bg-[#232930] px-4 py-[18px]"
     >
-      <div class="flex items-center gap-1.5">
+      <div class="flex items-start gap-1.5">
         <div class="flex-1 leading-tight">
-          <div class="text-[13pt] font-semibold">Downloads</div>
+          <div class="text-[13pt] font-semibold text-[#d9dee4]">Downloads</div>
           {#if dlSummary}
-            <div class="text-[12px] text-muted-foreground">{dlSummary}</div>
+            <div class="mt-0.5 text-[12px] text-[#8c96a1]">{dlSummary}</div>
           {/if}
         </div>
         <button
-          onclick={async () => {
-            try {
-              const { open } = await import("@tauri-apps/plugin-shell");
-              await open("/tmp");
-            } catch {}
-          }}
-          class="rounded px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          onclick={openDownloadsFolder}
+          title="Open the downloads folder"
+          class="rounded px-2 py-1 text-[13px] text-[#8c96a1] hover:bg-[#2b323a] hover:text-[#d9dee4]"
           >Open folder</button
         >
       </div>
-      <div class="flex gap-2">
-        <input
-          bind:value={nxm}
-          placeholder="nxm:// link"
-          class="min-w-0 flex-1 rounded-[7px] border border-input bg-background px-2 py-1.5 font-mono text-[12px] outline-none focus:border-primary"
-        />
-        <button
-          onclick={() => dlNxm()}
-          class="rounded-[7px] border border-border bg-popover px-3 py-1.5 text-sm hover:bg-accent"
-          >Get</button
-        >
-      </div>
       {#each Object.values(groupedQueue) as group}
-        <div class="rounded-[7px] border border-border bg-card p-3">
-          <button
-            onclick={() => {
-              dlCollapsed[group.key] = !dlCollapsed[group.key];
-            }}
-            class="mb-2 flex w-full items-center gap-2 text-left text-sm font-semibold hover:text-primary"
-          >
-            <span class="inline-block w-5 text-center text-muted-foreground"
-              >{dlCollapsed[group.key] ? "▶" : "▼"}</span
-            >
-            {group.mod_name}
-            {#if group.rows.some((r) => r.status === "done")}
-              <span class="ml-1 text-emerald-400">✓</span>
-            {/if}
-          </button>
-          {#if !dlCollapsed[group.key]}
-          {#each group.rows as qq}
-        <div
-          class="rounded-[7px] border border-border bg-background/60 p-2 text-[12px]"
-        >
-          <div class="truncate font-mono">{qq.filename}</div>
-          <div class="mt-1 h-[5px] overflow-hidden rounded bg-muted">
-            <div
-              class="h-full rounded bg-primary"
-              style="width:{qq.total
-                ? Math.round((100 * qq.done) / qq.total)
-                : 0}%"
-            ></div>
-          </div>
-          <div class="mt-1 flex items-center gap-2 text-muted-foreground">
-            <span class="flex-1"
-              >{qq.status}{#if qq.total}
-                · {Math.round(
-                  (100 * qq.done) / Math.max(1, qq.total),
-                )}%{/if}{#if qq.error}
-                · {qq.error}{/if}{#if qq.status === "active" && qq.speed}
-                  · {qq.speed > 1024 * 1024
-                    ? Math.round(qq.speed / 1024 / 1024) + " MB/s"
-                    : Math.round(qq.speed / 1024) + " KB/s"}{/if}</span
-            >
-            {#if qq.status === "queued"}<button
-                class="hover:text-foreground"
-                onclick={pumpNext}>Start</button
-              >{/if}
-            {#if qq.status === "active"}<button
-                class="hover:text-foreground"
-                onclick={async () => {
-                  await invoke("queue_pause", { id: qq.id, paused: true });
-                  queue = await invoke<QueueItem[]>("queue_list");
-                }}>Pause</button
-              >{/if}
-            {#if qq.status === "paused"}<button
-                class="hover:text-foreground"
-                onclick={async () => {
-                  await invoke("queue_pause", { id: qq.id, paused: false });
-                  queue = await invoke<QueueItem[]>("queue_list");
-                }}>Resume</button
-              >{/if}
+        {@const rows = group.rows}
+        {@const nested = rows.length > 1}
+        {@const collapsed = dlCollapsed[group.key] ?? rows.every((r) => r.status === "done" && dlInstalled(r))}
+        {@const single = rows.length === 1 ? rows[0] : null}
+        {@const running = rows.some((r) => r.status === "active" || r.status === "starting" || r.status === "queued" || r.status === "paused")}
+        <div class="rounded-[8px] border border-[#363e48] bg-[#2b323a] p-[14px]">
+          <div class="flex items-start gap-1.5">
             <button
-              class="hover:text-foreground"
-              onclick={async () => {
-                await invoke("queue_cancel", { id: qq.id });
-                queue = await invoke<QueueItem[]>("queue_list");
-              }}>✕</button
+              onclick={() => { dlCollapsed[group.key] = !collapsed; }}
+              title={collapsed ? "Expand" : "Collapse"}
+              class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[13px] text-[#8c96a1] hover:text-[#dbb977]"
+              >{collapsed ? "›" : "⌄"}</button
             >
+            <button
+              onclick={() => { dlCollapsed[group.key] = !collapsed; }}
+              class="min-w-0 flex-1 text-left text-[13.5px] font-semibold leading-snug text-[#d9dee4]"
+              >{group.mod_name || (group.mod_id ? `Nexus mod ${group.mod_id}` : "Mod")}</button
+            >
+            {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlInstalled(r))}
+              <span title="Installed: this exact version" class="mt-0.5 shrink-0 text-[14px] font-semibold text-[#7fbf8a]">✓</span>
+            {/if}
+            {#if single && !collapsed && !running && single.status === "done"}
+              <button
+                onclick={() => dlTrash(single)}
+                title="Move the downloaded file to the Trash"
+                class="mt-0.5 shrink-0 rounded p-1 text-[14px] text-[#8c96a1] hover:bg-[#e3735f]/15 hover:text-[#e3735f]"
+                >🗑</button
+              >
+            {/if}
           </div>
-        </div>
-          {/each}
+          {#if !collapsed}
+          <div class={nested ? "mt-3 flex flex-col gap-2 pl-[26px]" : "mt-3 flex flex-col gap-2"}>
+            {#each rows as qq}
+              {@const st = dlStatus(qq)}
+              {@const meta = dlMetaLine(qq)}
+              {@const action = qq.status === "done" ? dlAction(qq) : ""}
+              {@const isRunning = qq.status === "active" || qq.status === "starting" || qq.status === "queued"}
+              {@const mainLabel = isRunning ? "Cancel" : qq.status === "error" || qq.status === "failed" ? "Retry" : qq.status === "paused" || qq.status === "cancelled" ? "Retry" : action}
+              <div class={nested ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-[10px_12px]" : ""}>
+                {#if nested}
+                  <div class="mb-2 truncate text-[13px] text-[#d9dee4]" title={(qq.filename ?? "")}>{qq.filename || "Downloading…"}</div>
+                {/if}
+                {#if isRunning}
+                  <div class="mb-2 h-[6px] overflow-hidden rounded bg-[#13171b]">
+                    <div
+                      class="h-full rounded bg-[#c9a45c]"
+                      style="width:{qq.total ? Math.round((100 * qq.done) / Math.max(1, qq.total)) : 0}%"
+                    ></div>
+                  </div>
+                {/if}
+                <div class="text-[13px]" style="color:{st.color}">{st.text}</div>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="min-w-0 flex-1 truncate text-[12.5px] text-[#8c96a1]" title={meta}>{meta}</span>
+                  {#if !isRunning}
+                    <button
+                      onclick={() => dlRemove(qq)}
+                      title="Take it off this list. A downloaded file stays in the downloads folder."
+                      class="shrink-0 rounded-[6px] border border-[#363e48] bg-[#2b323a] px-3 py-1.5 text-[13px] text-[#d9dee4] hover:bg-[#363e48]"
+                      >Remove</button
+                    >
+                  {/if}
+                  {#if mainLabel}
+                    <button
+                      onclick={() => dlMain(qq)}
+                      class="shrink-0 rounded-[6px] px-3.5 py-1.5 text-[13px] font-semibold {action === "Downgrade" ? "border border-[#363e48] bg-[#2b323a] text-[#d9dee4] hover:bg-[#363e48]" : "bg-[#c9a45c] text-[#1c2127] hover:bg-[#dbb977]"}"
+                      >{mainLabel}</button
+                    >
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
           {/if}
         </div>
       {/each}
       {#if !queue.length}
-        <p class="text-[13px] text-muted-foreground">
-          Click “Mod Manager Download” on a Witcher 3 mod's Nexus page. It
-          downloads here, then install it below.
+        <p class="text-[13px] leading-relaxed text-[#8c96a1]">
+          Click “Mod Manager Download” on a Witcher 3 mod's Nexus page. It downloads
+          here, then the Install window opens.
         </p>
       {/if}
-      <div class="border-t border-border pt-3">
-        <div class="mb-2 text-[13px] font-semibold">Install from file</div>
-        <input
-          bind:value={archPath}
-          placeholder="/path/to/mod.zip"
-          class="mb-2 w-full rounded-[7px] border border-input bg-background px-2 py-1.5 font-mono text-[12px] outline-none focus:border-primary"
-        />
-        <div class="flex gap-2">
-          <button
-            onclick={archList}
-            class="rounded-[7px] border border-border bg-popover px-2 py-1 text-[13px] hover:bg-accent"
-            >List</button
-          >
-          <button
-            onclick={archPreview}
-            class="rounded-[7px] border border-border bg-popover px-2 py-1 text-[13px] hover:bg-accent"
-            >Preview</button
-          >
-          <button
-            onclick={archInstall}
-            class="rounded-[7px] bg-primary px-2 py-1 text-[13px] font-semibold text-primary-foreground hover:brightness-110"
-            disabled={!archPath}>Install</button
-          >
-        </div>
-        {#if archNames.length}
-          <pre
-            class="mt-2 max-h-40 overflow-auto rounded bg-well p-2 font-mono text-[11px] whitespace-pre-wrap">{archNames
-              .slice(0, 200)
-              .join("\n")}</pre>
-        {/if}
-        {#if archMoves.length}
-          <pre
-            class="mt-2 max-h-40 overflow-auto rounded bg-well p-2 font-mono text-[11px] whitespace-pre-wrap">{archMoves
-              .map(([, d]) => d)
-              .join("\n")}</pre>
-        {/if}
-      </div>
     </div>
   {/if}
 </div>
