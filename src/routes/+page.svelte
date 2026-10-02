@@ -239,6 +239,7 @@
   }
 
   async function refresh() {
+    console.debug(`[w3lmn] refresh: start`);
     appState = await invoke<AppState>("list_mods");
     queue = await invoke<QueueItem[]>("downloads_history").catch(() => queue);
     clashMap = await invoke<Record<string, string[]>>("clashes").catch(
@@ -266,6 +267,7 @@
     );
     void qtip;
     quotaText = qt;
+    console.debug(`[w3lmn] refresh: done`);
   }
 
   function flash(msg: string) {
@@ -284,6 +286,7 @@
       busy = "Deploying…";
       error = "";
     }
+    console.debug(`[w3lmn] deploy: invoking`);
     try {
       const running = await invoke<boolean>("game_running");
       if (running) {
@@ -292,6 +295,7 @@
         return;
       }
       const files = await invoke<string[]>("deploy");
+      console.debug(`[w3lmn] deploy: done ${files.length} files`);
       busy = "";
       flash(`Deployed ${files.length} file${files.length === 1 ? "" : "s"}`);
       await refresh();

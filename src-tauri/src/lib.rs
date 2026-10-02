@@ -54,7 +54,8 @@ fn log_path() -> &'static PathBuf {
 
 fn log_line(level: &str, msg: &str) {
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let line = format!("{stamp} [{level}] {msg}\n");
+    let tid = format!("{:?}", std::thread::current().id()).replace("ThreadId(", "").replace(')', "");
+    let line = format!("{stamp} [{level}:t{tid}] {msg}\n");
     eprintln!("{}", line.trim_end());
     let _ = std::fs::OpenOptions::new()
         .create(true)
@@ -71,10 +72,35 @@ fn frontend_log(msg: String) {
 
 type Shared = Mutex<Option<Manager>>;
 
+/// Lock the global state, logging whenever we have to wait on it — a stuck
+/// holder freezes every command behind it, so waits are always suspicious.
+fn lock_shared<'a>(shared: &'a State<Shared>, ctx: &str) -> Result<std::sync::MutexGuard<'a, Option<Manager>>, String> {
+    let start = std::time::Instant::now();
+    let mut warned = false;
+    loop {
+        match shared.try_lock() {
+            Ok(g) => {
+                if warned {
+                    log_line("rust", &format!("lock {ctx}: acquired after {:.1}s", start.elapsed().as_secs_f32()));
+                }
+                return Ok(g);
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("state lock poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if !warned && start.elapsed().as_secs_f32() >= 1.0 {
+                    warned = true;
+                    log_line("rust", &format!("lock {ctx}: WAITING on state lock..."));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn open_manager(shared: State<Shared>, game_dir: String, prefix: String) -> Result<bool, String> {
     let m = Manager::open(&game_dir, &prefix)?;
-    *shared.lock().map_err(|e| e.to_string())? = Some(m);
+    *lock_shared(&shared, "open_manager")? = Some(m);
     Ok(true)
 }
 
@@ -96,7 +122,7 @@ fn is_game_dir(path: String) -> bool {
 #[tauri::command]
 fn list_mods(shared: State<Shared>) -> Result<state::AppState, String> {
     let cloned = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "list_mods")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         s.clone()
@@ -106,7 +132,7 @@ fn list_mods(shared: State<Shared>) -> Result<state::AppState, String> {
 
 #[tauri::command]
 fn set_enabled(shared: State<Shared>, ids: Vec<String>, on: bool) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "set_enabled")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.set_enabled(&ids, on);
     m.save()?;
@@ -115,7 +141,7 @@ fn set_enabled(shared: State<Shared>, ids: Vec<String>, on: bool) -> Result<bool
 
 #[tauri::command]
 fn set_priority(shared: State<Shared>, id: String, number: usize) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "set_priority")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     {
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
@@ -128,7 +154,7 @@ fn set_priority(shared: State<Shared>, id: String, number: usize) -> Result<bool
 
 #[tauri::command]
 fn rename_mod(shared: State<Shared>, id: String, name: String) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "rename_mod")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.rename_mod(&id, &state::ensure_mod_prefix(&name));
     m.save()?;
@@ -139,7 +165,7 @@ fn rename_mod(shared: State<Shared>, id: String, name: String) -> Result<bool, S
 fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> {
     // Drop staged folders first (slow) without the lock so disk matches state.
     let staging: std::path::PathBuf = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "remove_mods")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         m.home.staging.clone()
     };
@@ -149,7 +175,7 @@ fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> 
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "remove_mods")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.remove_rows(&ids);
     m.save()?;
@@ -165,7 +191,7 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     // commands (starting a download, listing mods) never queue behind a big
     // deploy. State is re-read and committed under a fresh lock at the end.
     let (home, ranked): (crate::home::Home, Vec<state::ModRow>) = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         let order = s.priority_ids();
@@ -178,6 +204,8 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
         ranked.sort_by_key(|r| order_idx.get(&r.id).copied().unwrap_or(usize::MAX));
         (m.home.clone(), ranked)
     };
+    let t0 = std::time::Instant::now();
+    log_line("rust", &format!("deploy: start, {} ranked mods", ranked.len()));
     let mut all_written: Vec<String> = vec![];
     let mut menu_xmls: Vec<String> = vec![];
     for r in &ranked {
@@ -188,6 +216,7 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
         let rels = deploy::mod_files(&stage);
         let written = deploy::deploy_mod(&home.game, &stage, &rels, &home.backup)
             .map_err(|e| format!("{}: {e}", r.name))?;
+        log_line("rust", &format!("deploy: {} ({} files)", r.name, written.len()));
         for w in &written {
             if w.to_lowercase().ends_with(".xml") && w.to_lowercase().contains("bin/") {
                 menu_xmls.push(w.clone());
@@ -200,7 +229,7 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     // Commit phase: snapshot what to restore/write, do it lock-free, then
     // persist state under a fresh lock.
     let (stale, kept): (Vec<String>, Vec<(String, String)>) = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let want: std::collections::HashSet<String> = all_written.iter().cloned().collect();
@@ -241,13 +270,14 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     deploy::update_filelists(&home.game, &menu_xmls).map_err(|e| e.to_string())?;
     // Persist deployed map (path -> mod id, last-writer-wins in rank order reversed).
     {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         s.state_deployed(all_written.clone(), &ranked);
         let snapshot = s.clone();
         crate::state::save_state(&m.home.state_file, &snapshot)?;
     }
+    log_line("rust", &format!("deploy: done, {} files in {:.1}s", all_written.len(), t0.elapsed().as_secs_f32()));
     Ok(all_written)
 }
 
@@ -335,7 +365,7 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
         let plan = install::analyze(&tmp);
         let staging: std::path::PathBuf = {
-            let g = shared.lock().map_err(|e| e.to_string())?;
+            let g = lock_shared(&shared, "install_archive")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
             m.home.staging.clone()
         };
@@ -344,7 +374,7 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
         let stage = staging.join(&id);
         let (targets, _docs) = install::build_staging(&plan, &stage, &folder)?;
         {
-            let g = shared.lock().map_err(|e| e.to_string())?;
+            let g = lock_shared(&shared, "install_archive")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
             let mut s = m.state.lock().map_err(|e| e.to_string())?;
             s.mods.push(state::ModRow {
@@ -364,7 +394,7 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
 
 #[tauri::command]
 fn add_separator(shared: State<Shared>, index: usize, name: String) -> Result<state::ModRow, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "add_separator")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let row = m.state.lock().map_err(|e| e.to_string())?.add_separator(index, &name);
     m.save()?;
@@ -373,7 +403,7 @@ fn add_separator(shared: State<Shared>, index: usize, name: String) -> Result<st
 
 #[tauri::command]
 fn edit_mod(shared: State<Shared>, id: String, name: String, version: String, nexus_id: String, section: String) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "edit_mod")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.edit_mod(&id, &name, &version, &nexus_id, &section);
     m.save()?;
@@ -383,7 +413,7 @@ fn edit_mod(shared: State<Shared>, id: String, name: String, version: String, ne
 #[tauri::command]
 fn find_collisions(shared: State<Shared>, targets: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
     let out = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "find_collisions")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         s.find_collisions(&targets)
@@ -394,7 +424,7 @@ fn find_collisions(shared: State<Shared>, targets: Vec<String>) -> Result<(Vec<S
 #[tauri::command]
 fn clashes(shared: State<Shared>) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
     let out = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "clashes")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         s.clashes()
@@ -411,7 +441,7 @@ fn merge_check(lines: Vec<String>) -> Vec<String> {
 /// Python `annotation_clashes` core (symbol ownership, no arrival-order blame).
 #[tauri::command]
 fn annotation_clashes(shared: State<Shared>) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "annotation_clashes")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let rows: Vec<state::ModRow> = {
         let s = m.state.lock().map_err(|e| e.to_string())?;
@@ -444,7 +474,7 @@ fn annotation_clashes(shared: State<Shared>) -> Result<std::collections::BTreeMa
 
 #[tauri::command]
 fn save_resolutions(shared: State<Shared>, key: String, answers: Vec<usize>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "save_resolutions")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.save_resolutions(&key, answers);
     m.save()?;
@@ -467,7 +497,7 @@ fn game_running() -> bool {
 
 #[tauri::command]
 fn undeploy_removed(shared: State<Shared>, rels: Vec<String>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "undeploy_removed")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     deploy::restore_paths(&m.home.game, &m.home.backup, &rels).map_err(|e| e.to_string())?;
     Ok(true)
@@ -475,7 +505,7 @@ fn undeploy_removed(shared: State<Shared>, rels: Vec<String>) -> Result<bool, St
 
 #[tauri::command]
 fn write_input_settings(shared: State<Shared>, keybinds: std::collections::BTreeMap<String, Vec<String>>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "write_input_settings")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     settings::write_input_settings(&m.settings_dir().join("input.settings"), &keybinds)?;
     Ok(true)
@@ -483,7 +513,7 @@ fn write_input_settings(shared: State<Shared>, keybinds: std::collections::BTree
 
 #[tauri::command]
 fn write_user_settings(shared: State<Shared>, snippets: std::collections::BTreeMap<String, Vec<String>>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "write_user_settings")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     settings::write_user_settings(&m.settings_dir().join("user.settings"), &snippets)?;
     Ok(true)
@@ -491,7 +521,7 @@ fn write_user_settings(shared: State<Shared>, snippets: std::collections::BTreeM
 
 #[tauri::command]
 fn read_mods_settings(shared: State<Shared>) -> Result<Vec<String>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "read_mods_settings")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     Ok(deploy::read_mods_settings(&m.settings_dir().join("mods.settings")))
 }
@@ -510,7 +540,7 @@ fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit
         return Err("Set a Nexus API key first".into());
     }
     let mods: Vec<state::ModRow> = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "check_updates")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let v: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
@@ -559,7 +589,7 @@ fn kind_of(rel: &str) -> Option<&'static str> {
 /// (python `made_for`/`compare_made_for`, fingerprints in `version.rs`).
 #[tauri::command]
 fn made_for(shared: State<Shared>, id: String) -> Result<version::MadeFor, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "made_for")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let game = m.home.game.clone();
     let prefix = m.home.prefix.clone();
@@ -624,7 +654,7 @@ fn quota() -> (String, String, i64) {
 /// External Script Merger path check (python `merger_path_check`).
 #[tauri::command]
 fn merger_check(shared: State<Shared>, exe_path: String) -> Result<merger::MergerReport, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "merger_check")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     merger::merger_path_check(&m.home.prefix.to_string_lossy(), &m.home.game.to_string_lossy(), &exe_path)
 }
@@ -632,7 +662,7 @@ fn merger_check(shared: State<Shared>, exe_path: String) -> Result<merger::Merge
 /// Staged file list for one mod (powers per-mod file view + clash details).
 #[tauri::command]
 fn staged_files(shared: State<Shared>, id: String) -> Result<Vec<String>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "staged_files")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let stage = m.home.staging.join(&id);
     Ok(deploy::mod_files(&stage).into_iter().map(|p| p.to_string_lossy().to_string()).collect())
@@ -658,7 +688,7 @@ fn is_merger_output(name: &str) -> bool {
 /// (python `unmanaged_mods`): `mods/<name>` dirs, not symlinks, not ours.
 #[tauri::command]
 fn unmanaged_mods(shared: State<Shared>) -> Result<Vec<String>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "unmanaged_mods")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let owned: std::collections::HashSet<String> = {
         let s = m.state.lock().map_err(|e| e.to_string())?;
@@ -693,7 +723,7 @@ fn unmanaged_mods(shared: State<Shared>) -> Result<Vec<String>, String> {
 fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<String>, String> {
     // Snapshot paths + settings first; folder moves happen lock-free.
     let (game, staging, settings_path): (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "import_unmanaged")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         (m.home.game.clone(), m.home.staging.clone(), m.settings_dir().join("mods.settings"))
     };
@@ -728,7 +758,7 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     let mut sorted = rels;
     sorted.sort_by_key(|r| (prio.get(&r.split('/').nth(1).unwrap_or("").to_lowercase()).copied().unwrap_or(9999), r.clone()));
     let owned: std::collections::HashSet<String> = {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "import_unmanaged")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         s.mods_only().iter().flat_map(|r| r.targets.iter().map(|t| t.to_lowercase())).collect()
@@ -755,7 +785,7 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     }
     let mut ids = vec![];
     {
-        let g = shared.lock().map_err(|e| e.to_string())?;
+        let g = lock_shared(&shared, "import_unmanaged")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         for (id, folder, enabled) in &staged {
@@ -783,7 +813,7 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
 /// (python `analysis` core: sharing + lost, minus merge-registry detail).
 #[tauri::command]
 fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "analysis_summary")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let (rows, order) = {
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
@@ -851,7 +881,7 @@ fn queue_list() -> Vec<downloads::QueueItem> {
 
 /// downloads.json path next to the downloads folder (None when no game open).
 fn dl_paths(shared: &State<Shared>) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let g = shared.lock().ok()?;
+    let g = lock_shared(&shared, "dl_paths").ok()?;
     let m = g.as_ref()?;
     let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
     let _ = std::fs::create_dir_all(&dir);
@@ -929,6 +959,7 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
     std::thread::spawn(move || {
         use tauri::Emitter;
         let aid = id.clone();
+        log_line("rust", &format!("worker {aid}: fetching meta"));
         // 1. metadata (original info.emit); row shows "Asking Nexus…" meanwhile
         if let Err(e) = downloads::fetch_meta(&id, &api_key) {
             downloads::fail(&id, &e);
@@ -942,6 +973,7 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
         }
         let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
         let filename = downloads::items().into_iter().find(|i| i.id == id).map(|i| i.filename).unwrap_or_default();
+        log_line("rust", &format!("worker {aid}: meta ok file={filename}"));
         let dest = std::path::Path::new(&dest_dir).join(&filename);
         let target = dest.clone();
         let aid2 = id.clone();
@@ -973,7 +1005,7 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
 /// Absolute downloads-dir path (<game>/_W3LMN/downloads).
 #[tauri::command]
 fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "downloads_dir_path")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let d = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
     let _ = std::fs::create_dir_all(&d);
@@ -983,7 +1015,7 @@ fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
 /// Absolute settings-dir path for the Open menu.
 #[tauri::command]
 fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "settings_dir_path")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     Ok(m.settings_dir().to_string_lossy().to_string())
 }
@@ -991,7 +1023,7 @@ fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
 /// Move a mod under a section separator (or to the unsectioned end).
 #[tauri::command]
 fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "move_to_section")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     {
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
@@ -1142,7 +1174,7 @@ pub struct MergeVersion {
 /// else first bundle hit) + every enabled staged copy, top priority first.
 #[tauri::command]
 fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "merge_inputs")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     let kind = if rel.to_lowercase().ends_with(".xml") { "xml" } else { "script" }.to_string();
     let (rows, order) = {
@@ -1202,7 +1234,7 @@ fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, Strin
 /// Keep a resolved merge: stored under the rel, applied on top of deploys.
 #[tauri::command]
 fn save_merge(shared: State<Shared>, rel: String, text: String, answers: Vec<usize>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "save_merge")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     {
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
@@ -1216,7 +1248,7 @@ fn save_merge(shared: State<Shared>, rel: String, text: String, answers: Vec<usi
 /// Staged dir of one mod (context-menu Open folder).
 #[tauri::command]
 fn mod_dir(shared: State<Shared>, id: String) -> Result<String, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "mod_dir")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     Ok(m.home.staging.join(&id).to_string_lossy().to_string())
 }
@@ -1225,7 +1257,7 @@ fn mod_dir(shared: State<Shared>, id: String) -> Result<String, String> {
 /// order, priorities unchanged (python `remove_section`).
 #[tauri::command]
 fn remove_section_cmd(shared: State<Shared>, sep_id: String) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
+    let g = lock_shared(&shared, "remove_section_cmd")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     {
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
@@ -1363,12 +1395,14 @@ fn install_roots(
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
+        log_line("rust", &format!("install_roots: extracting {path}"));
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
         let plan = install::analyze(&tmp);
+        log_line("rust", &format!("install_roots: plan has {} moves", plan.moves.len()));
         // Staging dir first; the lock is only taken to commit the row, so a
         // big archive extraction never blocks other commands.
         let staging: std::path::PathBuf = {
-            let g = shared.lock().map_err(|e| e.to_string())?;
+            let g = lock_shared(&shared, "install_roots")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
             m.home.staging.clone()
         };
@@ -1409,7 +1443,7 @@ fn install_roots(
         let folder = state::ensure_mod_prefix(&name);
         let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
         {
-            let g = shared.lock().map_err(|e| e.to_string())?;
+            let g = lock_shared(&shared, "install_roots")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
             let mut s = m.state.lock().map_err(|e| e.to_string())?;
             s.mods.push(state::ModRow {
@@ -1421,6 +1455,7 @@ fn install_roots(
             s.priority_ids();
             m.save()?;
         }
+        log_line("rust", &format!("install_roots: committed {name} ({})", targets.len()));
         Ok(id)
     })();
     let _ = std::fs::remove_dir_all(&tmp);
