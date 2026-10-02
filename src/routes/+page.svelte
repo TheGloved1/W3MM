@@ -117,10 +117,23 @@
     if (v === "newer") return "Update";
     if (v === "same") return "Reinstall";
     if (v === "older") return "Downgrade";
-    return fname ? "Reinstall" : "Replace";
+    // Unknown verdict: same archive name → harmless re-download of the same
+    // file, anything else → a different file worth deciding about.
+    const sameName = !!fname && !!appState?.mods.some(
+      (m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname,
+    );
+    return sameName ? "Reinstall" : "Replace";
   }
-  function dlInstalled(qq: QueueItem) {
-    return dlAction(qq) === "Reinstall";
+  /** File identity with an installed mod (original already_installed: same
+  archive name). Only this suppresses the auto Install window and earns the
+  tick — version verdicts alone must not, or genuinely different files (e.g.
+  unknown versions) would never offer install. */
+  function dlSameFile(qq: QueueItem): boolean {
+    if (!appState || qq.status !== "done" || !qq.filename) return false;
+    const fname = qq.filename.toLowerCase();
+    return appState.mods.some(
+      (m) => !m.sep && m.archive && m.archive.split("/").pop()?.toLowerCase() === fname,
+    );
   }
   function dlMetaLine(qq: QueueItem): string {
     const bits: string[] = [];
@@ -721,7 +734,7 @@
       }
       if (row && row.status === "done") {
         // already here: nothing to download again — offer install
-        if (!dlInstalled(row)) await offerInstall(row);
+        if (!dlSameFile(row)) await offerInstall(row);
         return;
       }
       console.debug(`[w3lmn] dlNxm: invoking queue_start id=${id}`);
@@ -840,7 +853,7 @@
             await notify("W3 Mod Manager", e.payload.path.split("/").pop() ?? "download done");
             // original offer_install: open Install unless it's the exact file installed
             if (row && row.status === "done") {
-              if (!dlInstalled(row)) {
+              if (!dlSameFile(row)) {
                 await offerInstall(row, e.payload.path);
               }
             } else {
@@ -1275,7 +1288,7 @@
       {#each Object.values(groupedQueue) as group}
         {@const rows = group.rows}
         {@const nested = rows.length > 1}
-        {@const collapsed = dlCollapsed[group.key] ?? rows.every((r) => r.status === "done" && dlInstalled(r))}
+        {@const collapsed = dlCollapsed[group.key] ?? rows.every((r) => r.status === "done" && dlSameFile(r))}
         {@const single = rows.length === 1 ? rows[0] : null}
         {@const running = rows.some((r) => r.status === "active" || r.status === "starting" || r.status === "queued" || r.status === "paused")}
         <div class="rounded-[8px] border border-[#363e48] bg-[#2b323a] p-[14px]">
@@ -1291,7 +1304,7 @@
               class="min-w-0 flex-1 text-left text-[13.5px] font-semibold leading-snug text-[#d9dee4]"
               >{group.mod_name || (group.mod_id ? `Nexus mod ${group.mod_id}` : "Mod")}</button
             >
-            {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlInstalled(r))}
+            {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlSameFile(r))}
               <span title="Installed: this exact version" class="mt-0.5 shrink-0 text-[14px] font-semibold text-[#7fbf8a]">✓</span>
             {/if}
             {#if single && !collapsed && !running && single.status === "done"}
