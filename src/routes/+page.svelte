@@ -1186,7 +1186,7 @@
                 ondragend={onDragEnd}
               >
                 <span class="flex justify-center">
-                  {#if clashCount(m.id) || sharedScripts(m.id).length || sharedXmls(m.id).length}
+                  {#if m.enabled}
                     <input
                       type="number"
                       min="1"
