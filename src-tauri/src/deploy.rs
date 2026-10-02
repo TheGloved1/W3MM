@@ -39,6 +39,48 @@ pub fn mod_files(staging_mod: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Already our own deployed copy? Same inode (hardlink) or byte-identical
+/// content. The original checks `os.path.samefile(src, dst)` so re-deploys
+/// over unchanged files don't snapshot our own output as an "original" —
+/// without this, disabling later restores our own files from backup and the
+/// mod folder wrongly survives. Content equality is observationally equivalent
+/// (restoring would put back identical bytes) and also heals copies.
+fn is_ours(src: &Path, dst: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (sm, dm) = match (std::fs::metadata(src), std::fs::metadata(dst)) {
+        (Ok(s), Ok(d)) => (s, d),
+        _ => return false,
+    };
+    if sm.dev() == dm.dev() && sm.ino() == dm.ino() {
+        return true;
+    }
+    if sm.len() != dm.len() {
+        return false;
+    }
+    if sm.len() > 64 << 20 {
+        return false; // don't hash huge files; back up instead
+    }
+    let hash = |p: &Path| {
+        use sha1::Digest;
+        use std::io::Read;
+        let mut h = sha1::Sha1::new();
+        let mut f = std::fs::File::open(p).ok()?;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = f.read(&mut buf).ok()?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
+        }
+        Some(h.finalize().to_vec())
+    };
+    match (hash(src), hash(dst)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Case-insensitive deploy: lowercase key -> actual relative path.
 /// Mirrors python CIResolver/ci_path behaviour at a coarse level.
 pub fn deploy_mod(game: &Path, staging_mod: &Path, rels: &[PathBuf], backup: &Path) -> std::io::Result<Vec<String>> {
@@ -46,8 +88,9 @@ pub fn deploy_mod(game: &Path, staging_mod: &Path, rels: &[PathBuf], backup: &Pa
     for rel in rels {
         let src = staging_mod.join(rel);
         let dst = game.join(rel);
-        // Back up anything we'd overwrite exactly once.
-        if dst.is_file() {
+        // Back up anything we'd overwrite exactly once — but never our own
+        // output (see is_ours): that isn't an original worth restoring.
+        if dst.is_file() && !is_ours(&src, &dst) {
             let bdst = backup.join(rel);
             if !bdst.exists() {
                 if let Some(p) = bdst.parent() {
@@ -187,4 +230,56 @@ pub fn read_mods_settings(path: &Path) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn setup_tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("w3lmn-deploy-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let game = base.join("game");
+        let staging = base.join("staging").join("mod1");
+        let backup = base.join("backup");
+        std::fs::create_dir_all(staging.join("mods/modFoo/content")).unwrap();
+        let mut f = std::fs::File::create(staging.join("mods/modFoo/content/a.ws")).unwrap();
+        f.write_all(b"function f() {}").unwrap();
+        (game, staging, backup)
+    }
+
+    #[test]
+    fn disable_removes_deployed_files() {
+        let (game, staging, backup) = setup_tree("a");
+        let rels = mod_files(&staging);
+        assert_eq!(rels.len(), 1);
+        // first deploy: nothing pre-exists, so no backup may be taken
+        let w1 = deploy_mod(&game, &staging, &rels, &backup).unwrap();
+        assert_eq!(w1.len(), 1);
+        assert!(game.join(&w1[0]).is_file());
+        assert!(!backup.join(&w1[0]).exists(), "no original existed: no backup expected");
+        // re-deploy over our own output must NOT snapshot our files as originals
+        let _ = deploy_mod(&game, &staging, &rels, &backup).unwrap();
+        assert!(!backup.join(&w1[0]).exists(), "own output must never be backed up");
+        // disable: stale restore removes the file and prunes the mod folder
+        restore_paths(&game, &backup, &w1).unwrap();
+        assert!(!game.join(&w1[0]).exists(), "disabled mod file must be gone");
+        assert!(!game.join("mods/modFoo").exists(), "empty mod folder must be pruned");
+        let _ = std::fs::remove_dir_all(game.parent().unwrap());
+    }
+
+    #[test]
+    fn disable_restores_genuine_originals() {
+        let (game, staging, backup) = setup_tree("b");
+        // a foreign file pre-exists in the game dir
+        std::fs::create_dir_all(game.join("mods/modFoo/content")).unwrap();
+        std::fs::write(game.join("mods/modFoo/content/a.ws"), b"vanilla").unwrap();
+        let rels = mod_files(&staging);
+        let _ = deploy_mod(&game, &staging, &rels, &backup).unwrap();
+        assert!(backup.join(&rels[0].to_string_lossy().to_string()).is_file(), "genuine original must be backed up");
+        restore_paths(&game, &backup, &["mods/modFoo/content/a.ws".to_string()]).unwrap();
+        assert_eq!(std::fs::read(game.join("mods/modFoo/content/a.ws")).unwrap(), b"vanilla");
+        let _ = std::fs::remove_dir_all(game.parent().unwrap());
+    }
 }
