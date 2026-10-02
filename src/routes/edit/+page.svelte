@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import FileTree from '$lib/components/file-tree.svelte';
 
   type Row = { id: string; sep: boolean; name: string; version: string; nexus: string; archive: string; updated: number };
 
@@ -111,7 +112,7 @@
     <span class="text-muted-foreground">{files.length} files</span>
   </button>
   {#if filesOpen}
-    <pre class="max-h-48 overflow-auto rounded-[7px] border border-border bg-well p-2 font-mono text-[11px] whitespace-pre-wrap">{files.join('\n')}</pre>
+    <FileTree paths={files} maxHeight="12rem" />
   {/if}
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
