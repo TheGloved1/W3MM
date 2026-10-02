@@ -25,6 +25,9 @@
   "plugins": {
     "deep-link": {
       "desktop": { "schemes": ["nxm"] }
+    },
+    "shell": {
+      "open": true
     }
   },
   "bundle": {

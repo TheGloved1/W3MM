@@ -394,6 +394,7 @@
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(`https://www.nexusmods.com/witcher3/mods/${nid}`);
     } catch (e) {
+      console.error(`[w3lmn] open nexus page failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -405,6 +406,7 @@
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(dir);
     } catch (e) {
+      console.error(`[w3lmn] open mod folder failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -503,11 +505,16 @@
     menuOpen = false;
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
-      if (kind === "game") await open(gameDir);
-      else if (kind === "settings")
-        await open(await invoke<string>("settings_dir_path"));
-      else await open(`${await invoke<string>("settings_dir_path")}/${kind}`);
+      const target =
+        kind === "game"
+          ? gameDir
+          : kind === "settings"
+            ? await invoke<string>("settings_dir_path")
+            : `${await invoke<string>("settings_dir_path")}/${kind}`;
+      console.debug(`[w3lmn] opening ${kind}: ${target}`);
+      await open(target);
     } catch (e) {
+      console.error(`[w3lmn] open ${kind} failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -668,8 +675,11 @@
   async function openDownloadsFolder() {
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
-      await open(await downloadsDir());
+      const d = await downloadsDir();
+      console.debug(`[w3lmn] opening downloads folder: ${d}`);
+      await open(d);
     } catch (e) {
+      console.error(`[w3lmn] open downloads folder failed: ${String(e)}`);
       error = String(e);
     }
   }
