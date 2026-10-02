@@ -26,7 +26,48 @@ mod xml_merge;
 
 use manager::Manager;
 use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::io::Write;
+use std::path::PathBuf;
 use tauri::State;
+
+/// XDG state dir log file (e.g. ~/.local/state/w3lmn/w3lmn.log).
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+fn log_path() -> &'static PathBuf {
+    LOG_PATH.get_or_init(|| {
+        let base = std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let mut p = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+                p.push(".local");
+                p.push("state");
+                p
+            });
+        let mut dir = base;
+        dir.push("w3lmn");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.push("w3lmn.log");
+        dir
+    })
+}
+
+fn log_line(level: &str, msg: &str) {
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("{stamp} [{level}] {msg}\n");
+    eprintln!("{}", line.trim_end());
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+        .and_then(|mut f| f.write_all(line.as_bytes()));
+}
+
+/// Frontend can push a line into the same file.
+#[tauri::command]
+fn frontend_log(msg: String) {
+    log_line("frontend", &msg);
+}
 
 type Shared = Mutex<Option<Manager>>;
 
@@ -821,14 +862,14 @@ fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<
 #[tauri::command]
 fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: String) -> Result<(), String> {
     use tauri::Manager;
-    eprintln!("[w3lmn] open_tool_window called kind={kind:?} query={query:?} path={path:?}");
+    log_line("rust", &format!("open_tool_window called kind={kind:?} query={query:?} path={path:?}"));
     let (title, w, h) = match kind.as_str() {
         "install" => ("Install mod", 820.0, 660.0),
         "edit" => ("Edit mod", 860.0, 520.0),
         "setup" | "settings" => ("Settings", 700.0, 640.0),
         "resolver" => ("Script decisions", 1150.0, 760.0),
         _ => {
-            eprintln!("[w3lmn] open_tool_window: unknown kind={kind:?}");
+            log_line("rust", &format!("open_tool_window: unknown kind={kind:?}"));
             return Err("unknown window".into());
         }
     };
@@ -839,7 +880,7 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         _ => kind.as_str(),
     };
     if let Some(win) = app.get_webview_window(&kind) {
-        eprintln!("[w3lmn] open_tool_window: window {kind:?} already exists, focusing");
+        log_line("rust", &format!("open_tool_window: window {kind:?} already exists, focusing"));
         win.set_focus().map_err(|e| e.to_string())?;
         if !path.is_empty() {
             use tauri::Emitter;
@@ -858,7 +899,7 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     let webview_url = tauri::WebviewUrl::App(url.into());
     #[cfg(dev)]
     let webview_url = tauri::WebviewUrl::External(url.parse().expect("valid dev url"));
-    eprintln!("[w3lmn] open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}");
+    log_line("rust", &format!("open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}"));
     let _win = tauri::WebviewWindowBuilder::new(&app, kind.clone(), webview_url)
         .title(title)
         .inner_size(w, h)
@@ -866,10 +907,10 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         .focused(true)
         .build()
         .map_err(|e| {
-            eprintln!("[w3lmn] open_tool_window: build failed: {e}");
+            log_line("rust", &format!("open_tool_window: build failed: {e}"));
             e.to_string()
         })?;
-    eprintln!("[w3lmn] open_tool_window: window {kind:?} created");
+    log_line("rust", &format!("open_tool_window: window {kind:?} created"));
     Ok(())
 }
 
@@ -1277,7 +1318,8 @@ pub fn run() {
             remove_section_cmd,
             move_to_section,
             preview_roots,
-            install_roots
+            install_roots,
+            frontend_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

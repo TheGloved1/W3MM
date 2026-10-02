@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { loadConfigNative } from '$lib/config';
   let { children } = $props();
 
@@ -14,7 +15,27 @@
     document.documentElement.setAttribute('data-font', f);
   }
 
+  function forwardConsole() {
+    const origDebug = console.debug;
+    console.debug = (...args: any[]) => {
+      origDebug(...args);
+      invoke("frontend_log", { msg: args.map(String).join(" ") }).catch(() => {});
+    };
+    const origError = console.error;
+    console.error = (...args: any[]) => {
+      origError(...args);
+      invoke("frontend_log", { msg: args.map(String).join(" ") }).catch(() => {});
+    };
+    window.addEventListener("error", (e) => {
+      invoke("frontend_log", { msg: `window error: ${e.message}` }).catch(() => {});
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      invoke("frontend_log", { msg: `unhandled rejection: ${e.reason}` }).catch(() => {});
+    });
+  }
+
   onMount(() => {
+    forwardConsole();
     let id: ReturnType<typeof setInterval> | undefined;
     (async () => {
       try {
