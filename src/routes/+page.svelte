@@ -4,6 +4,8 @@
   import { listen } from "@tauri-apps/api/event";
   import type { AppState, MadeFor, QueueItem } from "$lib/types";
   import { loadConfigNative } from "$lib/config";
+  import DataList from "$lib/components/data-list.svelte";
+  import * as Table from "$lib/components/ui/table/index.js";
 
   let appState: AppState | null = $state(null);
   let clashMap: Record<string, string[]> = $state({});
@@ -515,6 +517,31 @@
       await open(target);
     } catch (e) {
       console.error(`[w3lmn] open ${kind} failed: ${String(e)}`);
+      error = String(e);
+    }
+  }
+
+  async function handleDataListReorder(from: string | number, to: string | number, pos: "before" | "after") {
+    if (!appState) return;
+    const fromId = String(from);
+    const toId = String(to);
+    if (fromId === toId) return;
+    const fromIdx = appState.mods.findIndex((m) => m.id === fromId);
+    const toIdx = appState.mods.findIndex((m) => m.id === toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    // Build the list as it would be after removing the dragged row.
+    const withoutFrom = appState.mods.filter((m) => m.id !== fromId);
+    // The index at which we want the dragged row to sit in that list.
+    let targetIdx = pos === "before" ? toIdx : toIdx + 1;
+    if (fromIdx < targetIdx) targetIdx--;
+    if (targetIdx < 0) targetIdx = 0;
+    if (targetIdx > withoutFrom.length) targetIdx = withoutFrom.length;
+    const beforeId = withoutFrom[targetIdx]?.id ?? "";
+    try {
+      await invoke("move_mod", { id: fromId, before: beforeId });
+      await refresh();
+      await deploy(true);
+    } catch (e) {
       error = String(e);
     }
   }
@@ -1117,177 +1144,122 @@
       </div>
     {/if}
 
-    <div
-      role="presentation"
-      class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card"
-      oncontextmenu={(e) => e.preventDefault()}
-    >
-      <div
-        class="sticky top-0 z-10 grid grid-cols-[90px_minmax(0,1fr)_110px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border bg-card px-3 py-2 text-[12px] text-muted-foreground"
+    <div class="min-h-0 flex-1 overflow-auto rounded-[7px] border border-border bg-card">
+      <DataList
+        columns={[
+          { id: "priority", label: "Priority", sortable: false },
+          { id: "name", label: "Mod", sortable: false },
+          { id: "version", label: "Version", sortable: false },
+          { id: "status", label: "Status", sortable: false },
+          { id: "installed", label: "Installed", sortable: false },
+        ]}
+        items={appState ? appState.mods : []}
+        keyOf={(m) => m.id}
+        isSelected={(m) => selected === m.id}
+        sortKey={null}
+        sortDir="asc"
+        onSelect={(m, e) => {
+          selected = m.id;
+        }}
+        onBackgroundClear={() => {
+          selected = null;
+        }}
+        onActivate={(m) => openEdit(m.id)}
+        isDraggable={(m) => !m.sep && !filtering}
+        onReorder={(from, to, pos) => handleDataListReorder(from, to, pos)}
       >
-        <span class="text-center">Priority</span><span>Mod</span><span
-          >Version</span
-        ><span>Status</span><span>Installed</span>
-      </div>
-      {#if !appState}
-        <div
-          class="flex h-64 items-center justify-center px-6 text-center text-[12pt] text-muted-foreground"
-        >
-          Set the game folder in Settings…
-        </div>
-      {:else if !appState.mods.length}
-        <div
-          class="flex h-64 items-center justify-center px-6 text-center text-[12pt] text-muted-foreground whitespace-pre-line"
-        >
-          {"No mods yet\n\nClick Install mods, or drop .zip / .7z / .rar files here"}
-        </div>
-      {:else}
-        {#each appState.mods as m}
+        {#snippet row(m, sel)}
           {#if m.sep}
-            {#if !filtering}
-              <button
-                onclick={() => toggleCollapse(m.id)}
-                ondragover={(e) => {
-                  if (dragId) e.preventDefault();
-                }}
-                ondrop={(e) => onDropSection(m.id, e)}
-                class="grid w-full grid-cols-1 items-center border-b border-border px-3 text-left hover:bg-accent/50"
-                style="min-height:40px"
-              >
-                <span class="text-[13px] font-semibold text-muted-foreground"
-                  >{collapsed[m.id] ? "›" : "⌄"}
-                  {m.name}
-                  <span class="font-normal">({countMembers(m.id)})</span></span
-                >
+            <Table.Cell colspan={5} class="px-3 py-2 text-left">
+              <button class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2" onclick={() => toggleCollapse(m.id)}>
+                <span>{collapsed[m.id] ? "›" : "⌄"}</span>
+                {m.name}
+                <span class="font-normal">({countMembers(m.id)})</span>
               </button>
-            {/if}
-          {:else if !filtering || m.name.toLowerCase().includes(q)}
-            {#if !isHiddenByCollapse(m.id)}
-              <div
-                class="relative grid grid-cols-[90px_minmax(0,1fr)_110px_minmax(0,1.2fr)_110px] items-center gap-2 border-b border-border/60 px-3 {selected ===
-                m.id
-                  ? 'bg-[#c9a45c]/15 text-white'
-                  : 'hover:bg-accent/30'} {dropBefore === m.id && dragId ? 'border-t-2 border-t-primary' : ''}"
-                style="min-height:40px"
-                onclick={() => {
-                  selected = m.id;
-                }}
-                ondblclick={() => openEdit(m.id)}
-                oncontextmenu={(e) => onRowContext(m.id, e)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter") openEdit(m.id);
-                }}
-                role="row"
-                tabindex="0"
-                draggable={!filtering}
-                ondragstart={(e) => onDragStart(m.id, e)}
-                ondragover={(e) => onDragOverRow(m.id, e)}
-                ondrop={(e) => onDropRow(m.id, e)}
-                ondragend={onDragEnd}
-              >
-                <span class="flex justify-center">
-                  {#if m.enabled}
-                    <input
-                      type="number"
-                      min="1"
-                      value={prioOf(m.id)}
-                      onchange={(e) => setPrio(m.id, e)}
-                      title="Priority — 1 wins"
-                      onclick={(e) => e.stopPropagation()}
-                      class="w-[52px] rounded-full border border-primary/60 bg-primary/15 px-1 py-[3px] text-center text-[13px] font-semibold text-primary outline-none"
-                    />
-                  {:else}
-                    <span class="text-muted-foreground/50">–</span>
+            </Table.Cell>
+          {:else}
+            <Table.Cell class="text-center">
+              {#if m.enabled}
+                <input type="number" min="1" value={prioOf(m.id)} onchange={(e) => setPrio(m.id, e)} title="Priority — 1 wins" class="w-[52px] rounded-full border border-primary/60 bg-primary/15 px-1 py-[3px] text-center text-[13px] font-semibold text-primary outline-none" />
+              {:else}
+                <span class="text-muted-foreground/50">–</span>
+              {/if}
+            </Table.Cell>
+            <Table.Cell class="max-w-md">
+              <div class="flex min-w-0 items-center gap-2">
+                <input type="checkbox" checked={m.enabled} onchange={() => toggle(m.id, m.enabled)} class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat" />
+                <span
+                  role="button"
+                  tabindex="0"
+                  class="relative min-w-0"
+                  onmouseenter={(e) => {
+                    hoverTip = { id: m.id, x: e.clientX, y: e.clientY };
+                  }}
+                  onmouseleave={() => {
+                    hoverTip = null;
+                  }}
+                  onfocus={() => {
+                    hoverTip = null;
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") openEdit(m.id);
+                  }}
+                >
+                  <span class="block truncate text-sm">{m.name}</span>
+                  {#if hoverTip?.id === m.id && targetsOf(m.id).length}
+                    <span
+                      class="pointer-events-none fixed z-50 max-w-[420px] rounded-[6px] border border-[#5d6773] bg-[#2f3740] px-3 py-2 shadow-xl"
+                      style="left:{Math.min(
+                        hoverTip.x + 12,
+                        window.innerWidth - 440,
+                      )}px;top:{hoverTip.y + 14}px"
+                    >
+                      <span
+                        class="block border-b border-[#5d6773] pb-1 text-[13px] font-semibold"
+                        >Installs to</span
+                      >
+                      {#each targetsOf(m.id).slice(0, 12) as t}
+                        <span
+                          class="block truncate font-mono text-[12px] text-[#86b0cf]"
+                          >{t}</span
+                        >
+                      {/each}
+                      {#if targetsOf(m.id).length > 12}<span
+                          class="block text-[11px] text-muted-foreground"
+                          >… {targetsOf(m.id).length - 12} more</span
+                        >{/if}
+                    </span>
                   {/if}
                 </span>
-                <span class="flex min-w-0 items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={m.enabled}
-                    onchange={() => toggle(m.id, m.enabled)}
-                    onclick={(e) => e.stopPropagation()}
-                    aria-label="enabled for {m.name}"
-                    class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat"
-                  />
-                  <span
-                    role="button"
-                    tabindex="0"
-                    class="relative min-w-0"
-                    onmouseenter={(e) => {
-                      hoverTip = { id: m.id, x: e.clientX, y: e.clientY };
-                    }}
-                    onmouseleave={() => {
-                      hoverTip = null;
-                    }}
-                    onfocus={() => {
-                      hoverTip = null;
-                    }}
-                    onkeydown={(e) => {
-                      if (e.key === "Enter") openEdit(m.id);
-                    }}
-                  >
-                    <span class="block truncate text-sm">{m.name}</span>
-                    {#if hoverTip?.id === m.id && targetsOf(m.id).length}
-                      <span
-                        class="pointer-events-none fixed z-50 max-w-[420px] rounded-[6px] border border-[#5d6773] bg-[#2f3740] px-3 py-2 shadow-xl"
-                        style="left:{Math.min(
-                          hoverTip.x + 12,
-                          window.innerWidth - 440,
-                        )}px;top:{hoverTip.y + 14}px"
-                      >
-                        <span
-                          class="block border-b border-[#5d6773] pb-1 text-[13px] font-semibold"
-                          >Installs to</span
-                        >
-                        {#each targetsOf(m.id).slice(0, 12) as t}
-                          <span
-                            class="block truncate font-mono text-[12px] text-[#86b0cf]"
-                            >{t}</span
-                          >
-                        {/each}
-                        {#if targetsOf(m.id).length > 12}<span
-                            class="block text-[11px] text-muted-foreground"
-                            >… {targetsOf(m.id).length - 12} more</span
-                          >{/if}
-                      </span>
-                    {/if}
-                  </span>
-                </span>
-                <span
-                  class="truncate text-[13px] {selected === m.id
-                    ? 'text-white/80'
-                    : 'text-muted-foreground'}">{m.version}</span
-                >
-                <span class="flex flex-wrap gap-1 py-1">
-                  {#each chipsFor(m) as c}
-                    <span
-                      title={c.tip}
-                      class="rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
-                      >{c.text}</span
-                    >
-                  {/each}
-                </span>
-                <span
-                  class="truncate text-[13px] {selected === m.id
-                    ? 'text-white/80'
-                    : 'text-muted-foreground'}">{fmtDate(m.updated)}</span
-                >
               </div>
-            {/if}
+            </Table.Cell>
+            <Table.Cell class="truncate text-[13px]">{m.version}</Table.Cell>
+            <Table.Cell>
+              <div class="flex flex-wrap gap-1 py-1">
+                {#each chipsFor(m) as c}
+                  <span
+                    title={c.tip}
+                    class="rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
+                    >{c.text}</span
+                  >
+                {/each}
+              </div>
+            </Table.Cell>
+            <Table.Cell class="truncate text-[13px]">{fmtDate(m.updated)}</Table.Cell>
           {/if}
-        {/each}
-        {#if appState && appState.mods.length && !filtering}
-          <div
-            role="presentation"
-            class="min-h-[24px] {dragId ? 'bg-primary/10' : ''}"
-            ondragover={(e) => {
-              if (dragId) e.preventDefault();
-            }}
-            ondrop={onDropEnd}
-          ></div>
-        {/if}
-      {/if}
+        {/snippet}
+        {#snippet empty()}
+          <div class="flex h-full min-h-0 items-center justify-center p-8 text-center text-[12pt] text-muted-foreground">
+            {#if !appState}
+              Set the game folder in Settings…
+            {:else}
+              {"No mods yet\n\nClick Install mods, or drop .zip / .7z / .rar files here"}
+            {/if}
+          </div>
+        {/snippet}
+      </DataList>
     </div>
+
 
     <div class="flex items-center gap-2">
       <span
