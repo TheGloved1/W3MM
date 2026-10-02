@@ -2,8 +2,9 @@
   interface Props {
     paths: string[];
     maxHeight?: string;
+    class?: string;
   }
-  let { paths, maxHeight = "16rem" }: Props = $props();
+  let { paths, maxHeight = "16rem", class: className = "" }: Props = $props();
 
   type Node = {
     name: string;
@@ -66,7 +67,7 @@
   });
 </script>
 
-<div class="overflow-hidden rounded-[7px] border border-border bg-card">
+<div class="overflow-hidden rounded-[7px] border border-border bg-card {className}">
   <div
     class="grid grid-cols-[minmax(0,1fr)_56px] border-b border-border px-2 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground"
   >

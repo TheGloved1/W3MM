@@ -106,14 +106,16 @@
     <button onclick={removeSection} disabled={!section} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent disabled:opacity-50">Remove section</button>
   </div>
 
-  <button onclick={() => (filesOpen = !filesOpen)} class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-3 py-2 text-left text-sm hover:bg-accent/40">
-    <span class="text-muted-foreground">{filesOpen ? '⌄' : '›'}</span>
-    <span class="flex-1">Installed files</span>
-    <span class="text-muted-foreground">{files.length} files</span>
-  </button>
-  {#if filesOpen}
-    <FileTree paths={files} maxHeight="12rem" />
-  {/if}
+  <div class="flex flex-col">
+    <button onclick={() => (filesOpen = !filesOpen)} class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-3 py-2 text-left text-sm hover:bg-accent/40 {filesOpen ? 'rounded-b-none border-b-0' : ''}">
+      <span class="text-muted-foreground">{filesOpen ? '⌄' : '›'}</span>
+      <span class="flex-1">Installed files</span>
+      <span class="text-muted-foreground">{files.length} files</span>
+    </button>
+    {#if filesOpen}
+      <FileTree paths={files} maxHeight="12rem" class="rounded-t-none border-t-0" />
+    {/if}
+  </div>
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <div class="flex items-center gap-2">
