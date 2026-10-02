@@ -1249,7 +1249,10 @@
       >
         {#snippet row(m, sel)}
           {#if m.sep}
-            <Table.Cell colspan={5} class="px-3 py-2 text-left">
+            <Table.Cell
+              colspan={5}
+              class="border border-border px-3 py-2 text-left"
+            >
               <button
                 class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2"
                 onclick={() => toggleCollapse(m.id)}
@@ -1328,7 +1331,9 @@
                 </span>
               </div>
             </Table.Cell>
-            <Table.Cell class="truncate text-[13px]">{m.version}</Table.Cell>
+            <Table.Cell class="truncate text-[13px]"
+              >{m.version}</Table.Cell
+            >
             <Table.Cell>
               <div class="flex flex-wrap gap-1 py-1">
                 {#each chipsFor(m) as c}

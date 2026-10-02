@@ -107,11 +107,13 @@
           <col style="width: {colWidths[col.id] ?? 'auto'};" />
         {/each}
       </colgroup>
-      <Table.Header class="sticky top-0 z-10 bg-muted/70 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
+      <Table.Header
+        class="sticky top-0 z-10 bg-muted/70 backdrop-blur supports-[backdrop-filter]:bg-muted/70"
+      >
         <Table.Row class="border-b border-border hover:bg-transparent">
           {#each columns as col}
             <Table.Head
-              class="relative text-[11px] tracking-wide text-muted-foreground {col.align ===
+              class="relative border border-border text-[11px] tracking-wide text-muted-foreground {col.align ===
               'right'
                 ? 'text-right'
                 : ''}"
@@ -130,24 +132,32 @@
               {/if}
               <span
                 role="presentation"
-                class="absolute right-0 top-0 h-full w-3 cursor-col-resize"
+                class="absolute inset-y-0 right-0 w-2 cursor-col-resize touch-none select-none bg-border/50 hover:bg-primary/60"
                 onpointerdown={(e) => {
                   e.preventDefault();
                   resizeCol = col.id;
                   resizeStartX = e.clientX;
                   const th = (e.currentTarget as HTMLElement).parentElement;
                   resizeStartW = th?.getBoundingClientRect().width ?? 100;
-                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                  (e.currentTarget as HTMLElement).setPointerCapture(
+                    e.pointerId,
+                  );
                 }}
                 onpointermove={(e) => {
                   if (resizeCol !== col.id) return;
                   const delta = e.clientX - resizeStartX;
-                  colWidths = { ...colWidths, [col.id]: Math.max(40, resizeStartW + delta) };
+                  colWidths = {
+                    ...colWidths,
+                    [col.id]: Math.max(40, resizeStartW + delta),
+                  };
                 }}
                 onpointerup={(e) => {
                   if (resizeCol === col.id) {
                     resizeCol = null;
                   }
+                }}
+                onpointercancel={() => {
+                  resizeCol = null;
                 }}
               ></span>
             </Table.Head>
@@ -161,7 +171,6 @@
           {@const isOver = dragOverKey !== null && dragOverKey === keyOf(item)}
           <Table.Row
             tabindex={0}
-            {draggable}
             ondragstart={(e) => {
               if (!draggable) return;
               dragFromKey = keyOf(item);
