@@ -173,7 +173,6 @@
               }
             }}
             ondblclick={() => onActivate?.(item)}
-            title={draggable ? "Drag to reorder" : undefined}
             class="{draggable
               ? 'cursor-grab active:cursor-grabbing'
               : 'cursor-pointer'} {selected
