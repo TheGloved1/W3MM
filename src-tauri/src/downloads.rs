@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueItem {
@@ -27,11 +27,13 @@ pub struct QueueItem {
     pub added: i64, // unix timestamp
 }
 
-type Queue = Arc<Mutex<HashMap<String, QueueItem>>>;
-
-fn queue() -> Queue {
-    static Q: OnceLock<Queue> = OnceLock::new();
-    Q.get_or_init(|| Arc::new(Mutex::new(HashMap::new()))).clone()
+/// Lock the queue, recovering from poisoning (a panicking worker must not
+/// brick every later queue command).
+fn qlock() -> std::sync::MutexGuard<'static, HashMap<String, QueueItem>> {
+    static Q: OnceLock<Mutex<HashMap<String, QueueItem>>> = OnceLock::new();
+    Q.get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn enqueue(url: &str) -> Result<String, String> {
@@ -41,12 +43,12 @@ pub fn enqueue(url: &str) -> Result<String, String> {
             if link.game != "witcher3" {
                 return Err(format!("wrong game: {}", link.game));
             }
-            if let Some(same) = queue().lock().unwrap().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned() {
+            if let Some(same) = qlock().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned() {
                 if same.status == "active" || same.status == "starting" || same.status == "queued" || same.status == "paused" {
                     return Ok(same.id); // already fetching: caller just opens the panel
                 }
                 // finished/failed row reused: refresh one-time key, requeue
-                if let Some(it) = queue().lock().unwrap().get_mut(&same.id) {
+                if let Some(it) = qlock().get_mut(&same.id) {
                     it.url = url.to_string();
                     it.status = "queued".into();
                     it.error = String::new();
@@ -65,7 +67,7 @@ pub fn enqueue(url: &str) -> Result<String, String> {
     };
     // No network here: metadata resolves on the worker thread (original
     // spawns NexusDownload first, meta arrives via the info signal).
-    queue().lock().unwrap().insert(
+    qlock().insert(
         id.clone(),
         QueueItem {
             id: id.clone(),
@@ -90,7 +92,7 @@ pub fn enqueue(url: &str) -> Result<String, String> {
 
 /// Claim a row for a worker thread. False when already running.
 pub fn try_begin(id: &str) -> bool {
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         match it.status.as_str() {
             "active" | "starting" => false,
             _ => {
@@ -106,15 +108,13 @@ pub fn try_begin(id: &str) -> bool {
 
 /// Resolve Nexus metadata for an nxm row (worker thread; original info.emit).
 pub fn fetch_meta(id: &str, api_key: &str) -> Result<(), String> {
-    let url = queue()
-        .lock()
-        .unwrap()
+    let url = qlock()
         .get(id)
         .map(|i| i.url.clone())
         .ok_or("unknown download")?;
     let link = crate::nexus::parse_nxm(&url).ok_or("invalid nxm")?;
     let (fname, ftitle, size, mname, ver, cat) = nxm_meta(&link, api_key)?;
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         it.filename = fname;
         it.file_title = ftitle;
         it.total = size;
@@ -188,14 +188,14 @@ fn nxm_meta(link: &crate::nexus::NxmLink, api_key: &str) -> Result<(String, Stri
 }
 
 pub fn items() -> Vec<QueueItem> {
-    let mut v: Vec<QueueItem> = queue().lock().unwrap().values().cloned().collect();
+    let mut v: Vec<QueueItem> = qlock().values().cloned().collect();
     v.sort_by(|a, b| b.added.cmp(&a.added));
     v
 }
 
 /// downloads.json next to the downloads folder (python DownloadsPanel history).
 pub fn save_history(path: &std::path::Path) {
-    let rows: Vec<QueueItem> = queue().lock().unwrap().values().cloned().collect();
+    let rows: Vec<QueueItem> = qlock().values().cloned().collect();
     let data = serde_json::to_string_pretty(&rows).unwrap_or_default();
     if data.is_empty() {
         return;
@@ -216,8 +216,7 @@ pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
     }
     let records: Vec<QueueItem> = serde_json::from_str(&text).unwrap_or_default();
     let mut seen = std::collections::HashSet::new();
-    let qq = queue();
-    let mut q = qq.lock().unwrap();
+    let mut q = qlock();
     for mut r in records {
         if r.mod_id.is_empty() && r.file_id.is_empty() && r.filename.is_empty() {
             continue;
@@ -244,7 +243,7 @@ pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
 }
 
 pub fn cancel(id: &str) {
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         if it.status == "queued" || it.status == "starting" || it.status == "active" || it.status == "paused" {
             it.status = "cancelled".into();
         }
@@ -253,7 +252,7 @@ pub fn cancel(id: &str) {
 
 /// Mark a row failed with a message (worker-thread terminal state).
 pub fn fail(id: &str, err: &str) {
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         it.status = "error".into();
         it.error = err.to_string();
         it.speed = 0;
@@ -261,11 +260,11 @@ pub fn fail(id: &str, err: &str) {
 }
 
 pub fn remove(id: &str) {
-    queue().lock().unwrap().remove(id);
+    qlock().remove(id);
 }
 
 pub fn set_paused(id: &str, paused: bool) {
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         if paused && it.status == "active" {
             it.status = "paused".into();
         } else if !paused && it.status == "paused" {
@@ -278,8 +277,7 @@ pub fn set_paused(id: &str, paused: bool) {
 /// QThread signals with `emit` progress callbacks).
 pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, u64, u64)) -> Result<u64, String> {
     let item = {
-        let qq = queue();
-        let mut q = qq.lock().unwrap();
+        let mut q = qlock();
         let it = q.get_mut(id).ok_or("unknown download")?;
         if it.status == "cancelled" {
             return Err("cancelled".into());
@@ -312,7 +310,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     if item.total > 0 {
         if let Ok(md) = std::fs::metadata(dest) {
             if md.len() == item.total {
-                if let Some(it) = queue().lock().unwrap().get_mut(id) {
+                if let Some(it) = qlock().get_mut(id) {
                     it.status = "done".into();
                     it.done = item.total;
                 }
@@ -340,7 +338,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
         // the partial file is already complete
         std::fs::rename(&part, dest).map_err(|e| e.to_string())?;
         let done = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(have);
-        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        if let Some(it) = qlock().get_mut(id) {
             it.status = "done".into();
             it.done = done;
             if it.total == 0 {
@@ -351,7 +349,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     }
     if !resp.status().is_success() {
         let e = format!("The download server returned HTTP {}.", resp.status());
-        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        if let Some(it) = qlock().get_mut(id) {
             it.status = "error".into();
             it.error = e.clone();
         }
@@ -361,7 +359,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     let total = resp.content_length().unwrap_or(0);
     let total = if have > 0 && resp.status() == 206 { have + total } else { if total == 0 { fallback_total } else { total } };
     {
-        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        if let Some(it) = qlock().get_mut(id) {
             it.total = total;
         }
     }
@@ -376,7 +374,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     let mut buf = [0u8; 1 << 16];
     let start = std::time::Instant::now();
     let mut done = have;
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         it.done = done;
     }
     let mut win: std::collections::VecDeque<(std::time::Instant, u64)> = std::collections::VecDeque::new();
@@ -387,8 +385,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     use std::io::Read;
     loop {
         {
-            let qq = queue();
-            let q = qq.lock().unwrap();
+            let q = qlock();
             match q.get(id).map(|i| i.status.clone()).as_deref() {
                 Some("cancelled") => return Err("cancelled".into()),
                 Some("paused") => {
@@ -413,7 +410,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
                     let dt = now.duration_since(win[0].0).as_secs_f32();
                     if dt > 0.0 { ((done - win[0].1) as f32 / dt) as u64 } else { 0 }
                 } else { 0 };
-                if let Some(it) = queue().lock().unwrap().get_mut(id) {
+                if let Some(it) = qlock().get_mut(id) {
                     it.done = done;
                     it.speed = speed;
                 }
@@ -427,13 +424,13 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     }
     if total > 0 && done < total {
         let e = "The download ended early — Retry picks up where it stopped.".to_string();
-        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        if let Some(it) = qlock().get_mut(id) {
             it.status = "error".into();
             it.error = e.clone();
         }
         return Err(e);
     }
-    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+    if let Some(it) = qlock().get_mut(id) {
         it.status = "done".into();
         it.done = done;
         let elapsed = start.elapsed().as_secs().max(1);

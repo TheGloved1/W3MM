@@ -808,6 +808,7 @@ fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> 
 
 #[tauri::command]
 fn queue_enqueue(shared: State<Shared>, url: String) -> Result<String, String> {
+    log_line("rust", &format!("queue_enqueue enter url={url}"));
     let id = downloads::enqueue(&url)?;
     dl_save(&shared);
     log_line("rust", &format!("enqueued download id={id} url={url}"));
@@ -889,7 +890,9 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
 /// QThread; progress/completion arrive as events).
 #[tauri::command]
 fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_dir: String, api_key: String) -> Result<bool, String> {
+    log_line("rust", &format!("queue_start enter id={id}"));
     if !downloads::try_begin(&id) {
+        log_line("rust", &format!("queue_start id={id}: already running"));
         return Ok(false); // already running
     }
     dl_save(&shared);

@@ -697,14 +697,18 @@
     console.debug(`[w3lmn] nxm received: ${url}`);
     error = "";
     try {
+      console.debug(`[w3lmn] dlNxm: loading config`);
       const cfg = await loadConfigNative();
+      console.debug(`[w3lmn] dlNxm: config ok, nexusKey=${cfg.nexusKey ? "set" : "MISSING"}`);
       if (!cfg.nexusKey) {
         error = "Set Nexus API key in Settings first";
         return;
       }
       // enqueue is instant (no network); the worker thread resolves metadata
       // and streams the file — progress/completion arrive as events.
+      console.debug(`[w3lmn] dlNxm: invoking queue_enqueue`);
       const id = await invoke<string>("queue_enqueue", { url });
+      console.debug(`[w3lmn] dlNxm: enqueued id=${id}`);
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
       const row = queue.find((qq) => qq.id === id);
@@ -716,13 +720,16 @@
         if (!dlInstalled(row)) await offerInstall(row);
         return;
       }
+      console.debug(`[w3lmn] dlNxm: invoking queue_start id=${id}`);
       await invoke("queue_start", {
         id,
         destDir: await downloadsDir(),
         apiKey: cfg.nexusKey,
       });
+      console.debug(`[w3lmn] dlNxm: queue_start acked id=${id}`);
       queue = await invoke<QueueItem[]>("queue_list");
     } catch (e) {
+      console.error(`[w3lmn] dlNxm FAILED: ${String(e)}`);
       error = String(e);
     }
   }
