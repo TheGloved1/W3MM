@@ -101,7 +101,7 @@
   {#if items.length === 0}
     {@render empty?.()}
   {:else}
-    <table class="w-full caption-bottom text-sm" style="table-layout: fixed;">
+    <table class="w-full caption-bottom text-sm">
       <colgroup>
         {#each columns as col}
           <col style="width: {colWidths[col.id] ?? 'auto'};" />
