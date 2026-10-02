@@ -137,15 +137,20 @@ fn rename_mod(shared: State<Shared>, id: String, name: String) -> Result<bool, S
 
 #[tauri::command]
 fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
-    // Drop staged folders first so disk matches state.
+    // Drop staged folders first (slow) without the lock so disk matches state.
+    let staging: std::path::PathBuf = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        m.home.staging.clone()
+    };
     for id in &ids {
-        let dir = m.home.staging.join(id);
+        let dir = staging.join(id);
         if dir.is_dir() {
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
+    let g = shared.lock().map_err(|e| e.to_string())?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
     m.state.lock().map_err(|e| e.to_string())?.remove_rows(&ids);
     m.save()?;
     Ok(true)
@@ -153,33 +158,35 @@ fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> 
 
 #[tauri::command]
 fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
     if steam::game_running() {
         return Err("Close the game before deploying".to_string());
     }
-    let (enabled, order): (Vec<state::ModRow>, Vec<String>) = {
+    // Snapshot under lock; every slow file op below runs lock-free so other
+    // commands (starting a download, listing mods) never queue behind a big
+    // deploy. State is re-read and committed under a fresh lock at the end.
+    let (home, ranked): (crate::home::Home, Vec<state::ModRow>) = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         let order = s.priority_ids();
         let mods = s.mods_only().into_iter().cloned().collect::<Vec<_>>();
-        (mods, order)
+        let mut order_idx = std::collections::HashMap::new();
+        for (i, id) in order.iter().enumerate() {
+            order_idx.insert(id.clone(), i);
+        }
+        let mut ranked: Vec<state::ModRow> = mods.into_iter().filter(|r| r.enabled).collect();
+        ranked.sort_by_key(|r| order_idx.get(&r.id).copied().unwrap_or(usize::MAX));
+        (m.home.clone(), ranked)
     };
-    let mut order_idx = std::collections::HashMap::new();
-    for (i, id) in order.iter().enumerate() {
-        order_idx.insert(id.clone(), i);
-    }
-    let mut ranked: Vec<state::ModRow> = enabled.into_iter().filter(|r| r.enabled).collect();
-    ranked.sort_by_key(|r| order_idx.get(&r.id).copied().unwrap_or(usize::MAX));
-
     let mut all_written: Vec<String> = vec![];
     let mut menu_xmls: Vec<String> = vec![];
     for r in &ranked {
-        let stage = m.home.staging.join(&r.id);
+        let stage = home.staging.join(&r.id);
         if !stage.is_dir() {
             continue;
         }
         let rels = deploy::mod_files(&stage);
-        let written = deploy::deploy_mod(&m.home.game, &stage, &rels, &m.home.backup)
+        let written = deploy::deploy_mod(&home.game, &stage, &rels, &home.backup)
             .map_err(|e| format!("{}: {e}", r.name))?;
         for w in &written {
             if w.to_lowercase().ends_with(".xml") && w.to_lowercase().contains("bin/") {
@@ -190,25 +197,27 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     }
     // Anything previously deployed but no longer wanted (disabled/removed
     // mods, or files a mod update dropped) goes back to backup/vanilla.
-    let stale: Vec<String> = {
+    // Commit phase: snapshot what to restore/write, do it lock-free, then
+    // persist state under a fresh lock.
+    let (stale, kept): (Vec<String>, Vec<(String, String)>) = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let want: std::collections::HashSet<String> = all_written.iter().cloned().collect();
-        s.deployed.keys().filter(|k| !want.contains(*k)).cloned().collect()
+        let stale = s.deployed.keys().filter(|k| !want.contains(*k)).cloned().collect();
+        let kept = s.merge_kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        (stale, kept)
     };
     if !stale.is_empty() {
-        deploy::restore_paths(&m.home.game, &m.home.backup, &stale).map_err(|e| e.to_string())?;
+        deploy::restore_paths(&home.game, &home.backup, &stale).map_err(|e| e.to_string())?;
     }
     // Kept merges win over every staged copy: write them over the deployed file.
-    let kept: Vec<(String, String)> = {
-        let s = m.state.lock().map_err(|e| e.to_string())?;
-        s.merge_kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-    };
     let mut merged_count = 0;
     for (rel, text) in kept {
-        let dst = m.home.game.join(&rel);
+        let dst = home.game.join(&rel);
         let bytes = text.replace('\n', "\r\n").into_bytes();
         if dst.is_file() {
-            let bdst = m.home.backup.join(&rel);
+            let bdst = home.backup.join(&rel);
             if !bdst.exists() {
                 if let Some(p) = bdst.parent() {
                     std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
@@ -227,11 +236,13 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     let _ = merged_count;
     // mods.settings in priority order, names as deployed folder names.
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
-    let settings = m.settings_dir().join("mods.settings");
+    let settings = home.prefix.join("drive_c/users/steamuser/Documents/The Witcher 3").join("mods.settings");
     deploy::write_mods_settings(&settings, &names).map_err(|e| e.to_string())?;
-    deploy::update_filelists(&m.home.game, &menu_xmls).map_err(|e| e.to_string())?;
+    deploy::update_filelists(&home.game, &menu_xmls).map_err(|e| e.to_string())?;
     // Persist deployed map (path -> mod id, last-writer-wins in rank order reversed).
     {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         s.state_deployed(all_written.clone(), &ranked);
         let snapshot = s.clone();
@@ -323,13 +334,18 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
     let res: Result<String, String> = (|| {
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
         let plan = install::analyze(&tmp);
-        let g = shared.lock().map_err(|e| e.to_string())?;
-        let m = g.as_ref().ok_or("open a game folder first")?;
+        let staging: std::path::PathBuf = {
+            let g = shared.lock().map_err(|e| e.to_string())?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
+            m.home.staging.clone()
+        };
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let folder = state::ensure_mod_prefix(&name);
-        let stage = m.home.staging.join(&id);
+        let stage = staging.join(&id);
         let (targets, _docs) = install::build_staging(&plan, &stage, &folder)?;
         {
+            let g = shared.lock().map_err(|e| e.to_string())?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
             let mut s = m.state.lock().map_err(|e| e.to_string())?;
             s.mods.push(state::ModRow {
                 id: id.clone(), sep: false, name: name.clone(), enabled: true,
@@ -338,8 +354,8 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
                 collapsed: false, targets, nexus_cat: String::new(), main_of: String::new(),
             });
             s.priority_ids();
+            m.save()?;
         }
-        m.save()?;
         Ok(id)
     })();
     let _ = std::fs::remove_dir_all(&tmp);
@@ -675,10 +691,14 @@ fn unmanaged_mods(shared: State<Shared>) -> Result<Vec<String>, String> {
 /// each folder into staging and creates an enabled row for it.
 #[tauri::command]
 fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<String>, String> {
-    let g = shared.lock().map_err(|e| e.to_string())?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
+    // Snapshot paths + settings first; folder moves happen lock-free.
+    let (game, staging, settings_path): (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        (m.home.game.clone(), m.home.staging.clone(), m.settings_dir().join("mods.settings"))
+    };
     // mods.settings priorities/enabled for ordering + initial state
-    let settings = std::fs::read_to_string(m.settings_dir().join("mods.settings")).unwrap_or_default();
+    let settings = std::fs::read_to_string(&settings_path).unwrap_or_default();
     let mut prio: std::collections::HashMap<String, i64> = Default::default();
     let mut en: std::collections::HashMap<String, bool> = Default::default();
     {
@@ -708,10 +728,13 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     let mut sorted = rels;
     sorted.sort_by_key(|r| (prio.get(&r.split('/').nth(1).unwrap_or("").to_lowercase()).copied().unwrap_or(9999), r.clone()));
     let owned: std::collections::HashSet<String> = {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         s.mods_only().iter().flat_map(|r| r.targets.iter().map(|t| t.to_lowercase())).collect()
     };
-    let mut ids = vec![];
+    // (id, folder, enabled) staged lock-free, committed in one lock at the end.
+    let mut staged: Vec<(String, String, bool)> = vec![];
     for rel in sorted {
         // Defensive: never adopt a folder a managed mod already owns (stale
         // banner lists must not duplicate a just-installed mod).
@@ -719,34 +742,40 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
             log_line("rust", &format!("import_unmanaged: skipping owned {rel}"));
             continue;
         }
-        let src = m.home.game.join(&rel);
+        let src = game.join(&rel);
         if !src.is_dir() {
             continue;
         }
         let folder = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-        let dst = m.home.staging.join(&id).join("mods").join(&folder);
+        let dst = staging.join(&id).join("mods").join(&folder);
         std::fs::create_dir_all(dst.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::rename(&src, &dst).map_err(|e| format!("{}: {e}", rel))?;
-        let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
-            folder[3..].to_string()
-        } else {
-            folder.clone()
-        };
-        {
-            let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        staged.push((id, folder.clone(), *en.get(&folder.to_lowercase()).unwrap_or(&true)));
+    }
+    let mut ids = vec![];
+    {
+        let g = shared.lock().map_err(|e| e.to_string())?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        for (id, folder, enabled) in &staged {
+            let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
+                folder[3..].to_string()
+            } else {
+                folder.clone()
+            };
             s.mods.push(state::ModRow {
-                id: id.clone(), sep: false, name: stripped, enabled: *en.get(&folder.to_lowercase()).unwrap_or(&true),
+                id: id.clone(), sep: false, name: stripped, enabled: *enabled,
                 version: String::new(), nexus: String::new(), archive: String::new(),
                 section: String::new(), updated: chrono::Utc::now().timestamp(),
                 collapsed: false, targets: vec![format!("mods/{folder}")],
                 nexus_cat: String::new(), main_of: String::new(),
             });
-            s.priority_ids();
+            ids.push(id.clone());
         }
-        ids.push(id);
+        s.priority_ids();
+        m.save()?;
     }
-    m.save()?;
     Ok(ids)
 }
 
@@ -1336,10 +1365,15 @@ fn install_roots(
     let res: Result<String, String> = (|| {
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
         let plan = install::analyze(&tmp);
-        let g = shared.lock().map_err(|e| e.to_string())?;
-        let m = g.as_ref().ok_or("open a game folder first")?;
+        // Staging dir first; the lock is only taken to commit the row, so a
+        // big archive extraction never blocks other commands.
+        let staging: std::path::PathBuf = {
+            let g = shared.lock().map_err(|e| e.to_string())?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
+            m.home.staging.clone()
+        };
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-        let stage = m.home.staging.join(&id);
+        let stage = staging.join(&id);
         // remap each planned move through the dialog's root table
         let mut remapped: Vec<(String, String)> = vec![];
         for (src, rel) in &plan.moves {
@@ -1375,6 +1409,8 @@ fn install_roots(
         let folder = state::ensure_mod_prefix(&name);
         let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
         {
+            let g = shared.lock().map_err(|e| e.to_string())?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
             let mut s = m.state.lock().map_err(|e| e.to_string())?;
             s.mods.push(state::ModRow {
                 id: id.clone(), sep: false, name: name.clone(), enabled: true,
@@ -1383,8 +1419,8 @@ fn install_roots(
                 collapsed: false, targets: targets.clone(), nexus_cat: String::new(), main_of: String::new(),
             });
             s.priority_ids();
+            m.save()?;
         }
-        m.save()?;
         Ok(id)
     })();
     let _ = std::fs::remove_dir_all(&tmp);
