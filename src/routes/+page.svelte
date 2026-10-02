@@ -41,8 +41,6 @@
   let quotaTip: string = $state("");
   let nxm: string = $state("");
   let archPath: string = $state("");
-  let archNames: string[] = $state([]);
-  let archMoves: [string, string][] = $state([]);
   let dlCollapsed: Record<string, boolean> = $state({});
 
   const filtering = $derived(filter.trim().length > 0);
@@ -241,6 +239,7 @@
 
   async function refresh() {
     appState = await invoke<AppState>("list_mods");
+    queue = await invoke<QueueItem[]>("downloads_history").catch(() => queue);
     clashMap = await invoke<Record<string, string[]>>("clashes").catch(
       () => ({}),
     );
@@ -657,13 +656,33 @@
     }
   }
 
+  /** Display name for the Install window (original _list_name, simplified). */
+  function dlListName(qq: QueueItem): string {
+    const modName = (qq.mod_name || "").trim();
+    if ((qq.category || "").toUpperCase() === "MAIN" && modName) return modName;
+    const title = (qq.file_title || "").trim();
+    if (!title) return modName || qq.filename;
+    if (!modName) return title;
+    const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (key(modName) && key(title).includes(key(modName))) return title;
+    const base = modName.split(/\s+[-\u2013\u2014:|]\s+/)[0].trim();
+    if (base && key(base).length >= 4 && key(title).includes(key(base))) return title;
+    return `${base || modName} - ${title}`;
+  }
+
   /** Open the Install window for a finished row (original offer_install). */
   async function offerInstall(qq: QueueItem, destOverride?: string) {
     const dest = destOverride ?? (await downloadsDir()) + "/" + qq.filename;
     archPath = dest;
+    const qp = new URLSearchParams({
+      path: dest,
+      name: dlListName(qq),
+      version: qq.version ?? "",
+      nexus: (qq.mod_id ?? "").replace(/\D/g, ""),
+    });
     await invoke("open_tool_window", {
       kind: "install",
-      query: `path=${encodeURIComponent(dest)}`,
+      query: qp.toString(),
       path: dest,
     }).catch((e) => {
       error = String(e);
@@ -690,6 +709,15 @@
       });
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
+      const row = queue.find((qq) => qq.id === id);
+      if (row && (row.status === "active" || row.status === "paused")) {
+        return; // already fetching this file
+      }
+      if (row && row.status === "done") {
+        // already here: nothing to download again — offer install
+        if (!dlInstalled(row)) await offerInstall(row);
+        return;
+      }
       const destDir = await downloadsDir();
       // trigger the pump immediately (blocking), progress events come async
       invoke<string>("queue_pump", { id, destDir, apiKey: cfg.nexusKey })
@@ -705,22 +733,6 @@
         });
     } catch (e) {
       error = String(e);
-    }
-  }
-
-  async function pumpNext() {
-    const next = queue.find((qq) => qq.status === "queued");
-    if (!next) return;
-    try {
-      await invoke("queue_pump", {
-        id: next.id,
-        destDir: await downloadsDir(),
-        apiKey: (await loadConfigNative()).nexusKey,
-      });
-      queue = await invoke<QueueItem[]>("queue_list");
-    } catch (e) {
-      error = String(e);
-      queue = await invoke<QueueItem[]>("queue_list");
     }
   }
 
@@ -772,58 +784,6 @@
     if (qq.status === "done") {
       await offerInstall(qq);
     }
-  }
-
-  async function archList() {
-    error = "";
-    try {
-      if (!archPath) {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const sel = await open({
-          multiple: false,
-          filters: [
-            {
-              name: "Mod archive",
-              extensions: ["zip", "7z", "rar", "tar", "gz", "tgz"],
-            },
-          ],
-        });
-        if (typeof sel === "string") archPath = sel;
-      }
-      if (archPath)
-        archNames = await invoke<string[]>("list_archive", { path: archPath });
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  async function archPreview() {
-    error = "";
-    archMoves = [];
-    try {
-      if (!archPath) return;
-      const plan = await invoke<{ moves: [string, string][]; docs: string[] }>(
-        "preview_archive",
-        { path: archPath },
-      );
-      archMoves = plan.moves.slice(0, 200);
-      flash(`${plan.moves.length} targets, ${plan.docs.length} docs`);
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  async function archInstall() {
-    if (!archPath) return;
-    console.debug("[w3lmn] open_tool_window install (panel)", archPath);
-    await invoke("open_tool_window", {
-      kind: "install",
-      query: `path=${encodeURIComponent(archPath)}`,
-      path: archPath,
-    }).catch((e) => {
-      console.error("[w3lmn] open_tool_window install failed", e);
-      error = String(e);
-    });
   }
 
   onMount(() => {

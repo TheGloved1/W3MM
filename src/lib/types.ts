@@ -83,7 +83,9 @@ export interface QueueItem {
   mod_id: string;
   file_id: string;
   mod_name: string;
+  file_title: string;
   version: string;
   category: string;
   speed: number;
+  added: number;
 }

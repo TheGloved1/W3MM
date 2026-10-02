@@ -20,9 +20,11 @@ pub struct QueueItem {
     pub mod_id: String,
     pub file_id: String,
     pub mod_name: String,
+    pub file_title: String,
     pub version: String,
     pub category: String,
     pub speed: u64, // bytes/sec
+    pub added: i64, // unix timestamp
 }
 
 type Queue = Arc<Mutex<HashMap<String, QueueItem>>>;
@@ -32,25 +34,52 @@ fn queue() -> Queue {
     Q.get_or_init(|| Arc::new(Mutex::new(HashMap::new()))).clone()
 }
 
-pub fn enqueue(url: &str, filename: &str, api_key: &str) -> String {
+pub fn enqueue(url: &str, filename: &str, api_key: &str) -> Result<String, String> {
+    // Same file again (same Nexus mod + file): reuse the row like panel.add.
+    if url.to_lowercase().starts_with("nxm://") {
+        if let Some(link) = crate::nexus::parse_nxm(url) {
+            if link.game != "witcher3" {
+                return Err(format!("wrong game: {}", link.game));
+            }
+            if let Some(same) = queue().lock().unwrap().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned() {
+                if same.status == "active" || same.status == "queued" || same.status == "paused" {
+                    return Ok(same.id); // already fetching: caller just opens the panel
+                }
+                // finished/failed row reused: refresh one-time key, bump added
+                if let Some(it) = queue().lock().unwrap().get_mut(&same.id) {
+                    it.url = url.to_string();
+                    it.status = "queued".into();
+                    it.error = String::new();
+                    it.added = chrono::Utc::now().timestamp();
+                }
+                return Ok(same.id);
+            }
+        } else {
+            return Err("not an nxm:// link".into());
+        }
+    }
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
     let mut mod_id = String::new();
     let mut file_id = String::new();
     let mut version = String::new();
     let mut mod_name = String::new();
+    let mut file_title = String::new();
+    let mut category = String::new();
     let mut final_filename = filename.to_string();
     let mut total = 0u64;
     if url.to_lowercase().starts_with("nxm://") {
+        // parse checked above
         if let Some(link) = crate::nexus::parse_nxm(url) {
             mod_id = link.mod_id.clone();
             file_id = link.file_id.clone();
             // resolve metadata now so the row has a useful name and size
-            if let Ok((fname, size, mname, ver)) = nxm_meta(&link, api_key) {
-                final_filename = fname;
-                total = size;
-                mod_name = mname;
-                version = ver;
-            }
+            let (fname, ftitle, size, mname, ver, cat) = nxm_meta(&link, api_key)?;
+            final_filename = fname;
+            file_title = ftitle;
+            total = size;
+            mod_name = mname;
+            version = ver;
+            category = cat;
         }
     }
     queue().lock().unwrap().insert(
@@ -66,20 +95,30 @@ pub fn enqueue(url: &str, filename: &str, api_key: &str) -> String {
             mod_id,
             file_id,
             mod_name,
+            file_title,
             version,
-            category: String::new(),
+            category,
             speed: 0,
+            added: chrono::Utc::now().timestamp(),
         },
     );
-    id
+    Ok(id)
 }
 
-/// Best-effort (file_name, size_bytes, mod_name, version) for an nxm link.
-fn nxm_meta(link: &crate::nexus::NxmLink, api_key: &str) -> Result<(String, u64, String, String), String> {
+/// Best-effort (file_name, file_title, size_bytes, mod_name, version, category) for an nxm link.
+fn nxm_meta(link: &crate::nexus::NxmLink, api_key: &str) -> Result<(String, String, u64, String, String, String), String> {
     let f = crate::nexus::nexus_get(
         &format!("/games/witcher3/mods/{}/files/{}.json", link.mod_id, link.file_id),
         api_key,
-    )?;
+    )
+    .map_err(|e| {
+        let t = e.to_string();
+        if t.contains("404") {
+            format!("Nexus doesn't have that file (it may have been removed).")
+        } else {
+            t
+        }
+    })?;
     let m = crate::nexus::nexus_get(
         &format!("/games/witcher3/mods/{}.json", link.mod_id),
         api_key,
@@ -87,18 +126,30 @@ fn nxm_meta(link: &crate::nexus::NxmLink, api_key: &str) -> Result<(String, u64,
     let mut name = String::new();
     let mut version = String::new();
     let mut total = 0u64;
+    let mut file_title = String::new();
+    let mut category = String::new();
     if let Some(f) = f.as_object() {
         name = f
             .get("file_name")
             .and_then(|v| v.as_str())
             .unwrap_or("download.zip")
             .to_string();
-        version = f
-            .get("version")
-            .or_else(|| f.get("mod_version"))
+        file_title = f
+            .get("name")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        version = crate::nexus::clean_version(
+            f.get("version")
+                .or_else(|| f.get("mod_version"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        );
+        category = f
+            .get("category_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_uppercase();
         if let Some(size) = f.get("size_in_bytes").and_then(|v| v.as_u64()) {
             total = size;
         } else if let Some(kb) = f.get("size_kb").and_then(|v| v.as_u64()) {
@@ -113,13 +164,63 @@ fn nxm_meta(link: &crate::nexus::NxmLink, api_key: &str) -> Result<(String, u64,
         .and_then(|obj| obj.get("name").and_then(|v| v.as_str()))
         .unwrap_or("")
         .to_string();
-    Ok((name, total, mod_name, version))
+    Ok((name, file_title, total, mod_name, version, category))
 }
 
 pub fn items() -> Vec<QueueItem> {
     let mut v: Vec<QueueItem> = queue().lock().unwrap().values().cloned().collect();
-    v.sort_by(|a, b| a.id.cmp(&b.id));
+    v.sort_by(|a, b| b.added.cmp(&a.added));
     v
+}
+
+/// downloads.json next to the downloads folder (python DownloadsPanel history).
+pub fn save_history(path: &std::path::Path) {
+    let rows: Vec<QueueItem> = queue().lock().unwrap().values().cloned().collect();
+    let data = serde_json::to_string_pretty(&rows).unwrap_or_default();
+    if data.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, &data).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Bring back rows from last time. Finished rows whose file is gone are left
+/// out; anything mid-flight comes back as failed with its .part kept for Retry.
+pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    if text.is_empty() {
+        return;
+    }
+    let records: Vec<QueueItem> = serde_json::from_str(&text).unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let qq = queue();
+    let mut q = qq.lock().unwrap();
+    for mut r in records {
+        if r.mod_id.is_empty() && r.file_id.is_empty() && r.filename.is_empty() {
+            continue;
+        }
+        let key = (r.mod_id.clone(), r.file_id.clone());
+        if !seen.insert(key) {
+            continue; // duplicate: newest one stays
+        }
+        if r.status == "done" {
+            let p = if r.filename.is_empty() { None } else { Some(dest_dir.join(&r.filename)) };
+            if p.as_ref().map(|p| p.is_file()).unwrap_or(false) {
+                q.insert(r.id.clone(), r);
+            }
+            // else: file deleted outside the app — leave it out
+        } else {
+            r.status = "error".into();
+            if r.error.is_empty() {
+                r.error = "Stopped. Retry continues where it left off.".into();
+            }
+            r.speed = 0;
+            q.insert(r.id.clone(), r);
+        }
+    }
 }
 
 pub fn cancel(id: &str) {
@@ -159,19 +260,61 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
     };
     let url = if item.url.to_lowercase().starts_with("nxm://") {
         let link = crate::nexus::parse_nxm(&item.url).ok_or("invalid nxm")?;
-        let links = crate::nexus::download_links(&link.mod_id, &link.file_id, api_key, &link.key, &link.expires)?;
-        links.into_iter().next().ok_or("no download links")?
+        let links = crate::nexus::download_links(&link.mod_id, &link.file_id, api_key, &link.key, &link.expires)
+            .map_err(|e| {
+                let t = e.to_string();
+                if t.contains("API key") {
+                    "Nexus refused the download link. Links from the website expire after a while — click “Mod Manager Download” again.".to_string()
+                } else {
+                    t
+                }
+            })?;
+        links.into_iter().next().ok_or("Nexus didn't give a download address for this file.".to_string())?
     } else {
         item.url.clone()
     };
+    if let Some(p) = dest.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    // Already downloaded earlier: same size as Nexus said — nothing to fetch.
+    if item.total > 0 {
+        if let Ok(md) = std::fs::metadata(dest) {
+            if md.len() == item.total {
+                if let Some(it) = queue().lock().unwrap().get_mut(id) {
+                    it.status = "done".into();
+                    it.done = item.total;
+                }
+                return Ok(item.total);
+            }
+        }
+    }
+    // Resume: .part file from a stopped download continues where it left off.
+    let part = dest.with_extension("part");
+    let mut have = if part.is_file() { std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) } else { 0 };
     let client = reqwest::blocking::Client::builder().user_agent("W3LMN/1.0").build().map_err(|e| e.to_string())?;
     let mut req = client.get(&url);
     if !api_key.is_empty() {
         req = req.header("apikey", api_key);
     }
-    let mut resp = req.send().map_err(|e| e.to_string())?;
+    if have > 0 {
+        req = req.header("Range", format!("bytes={have}-"));
+    }
+    let mut resp = req.send().map_err(|e| format!("Couldn't reach the download server: {e}"))?;
+    if resp.status() == 416 && have > 0 {
+        // the partial file is already complete
+        std::fs::rename(&part, dest).map_err(|e| e.to_string())?;
+        let done = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(have);
+        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+            it.status = "done".into();
+            it.done = done;
+            if it.total == 0 {
+                it.total = done;
+            }
+        }
+        return Ok(done);
+    }
     if !resp.status().is_success() {
-        let e = format!("download {}", resp.status());
+        let e = format!("The download server returned HTTP {}.", resp.status());
         if let Some(it) = queue().lock().unwrap().get_mut(id) {
             it.status = "error".into();
             it.error = e.clone();
@@ -179,21 +322,29 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
         return Err(e);
     }
     let fallback_total = if item.total > 0 { item.total } else { 0 };
-    let total = resp.content_length().unwrap_or(fallback_total);
+    let total = resp.content_length().unwrap_or(0);
+    let total = if have > 0 && resp.status() == 206 { have + total } else { if total == 0 { fallback_total } else { total } };
     {
         if let Some(it) = queue().lock().unwrap().get_mut(id) {
             it.total = total;
         }
     }
-    let part = dest.with_extension("part");
-    if let Some(p) = part.parent() {
-        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    if have > 0 && resp.status() != 206 {
+        have = 0; // the server started over
     }
-    let mut f = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+    let mut f = if have > 0 {
+        std::fs::OpenOptions::new().append(true).open(&part).map_err(|e| e.to_string())?
+    } else {
+        std::fs::File::create(&part).map_err(|e| e.to_string())?
+    };
     let mut buf = [0u8; 1 << 16];
     let start = std::time::Instant::now();
-    let mut done = 0u64;
+    let mut done = have;
+    if let Some(it) = queue().lock().unwrap().get_mut(id) {
+        it.done = done;
+    }
     let mut win: std::collections::VecDeque<(std::time::Instant, u64)> = std::collections::VecDeque::new();
+    win.push_back((start, done));
     use std::io::Read;
     loop {
         {
@@ -229,8 +380,16 @@ pub fn pump(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(u64, 
                 }
                 emit(done, total, speed);
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(format!("The download stopped: {e}")),
         }
+    }
+    if total > 0 && done < total {
+        let e = "The download ended early — Retry picks up where it stopped.".to_string();
+        if let Some(it) = queue().lock().unwrap().get_mut(id) {
+            it.status = "error".into();
+            it.error = e.clone();
+        }
+        return Err(e);
     }
     if let Some(it) = queue().lock().unwrap().get_mut(id) {
         it.status = "done".into();

@@ -29,7 +29,12 @@
     stem = archPath.split('/').pop() ?? archPath;
     try {
       const [n, v, nx] = await invoke<[string, string, string]>('parse_archive_name', { filename: stem });
-      name = n; version = v; nexus = nx;
+      // Defaults from the download that fetched this file win over filename
+      // parsing (original install_archives defaults: page name, meta version,
+      // numeric mod id). Manual installs fall back to parsing.
+      name = page.url.searchParams.get('name') || n;
+      version = page.url.searchParams.get('version') || v;
+      nexus = page.url.searchParams.get('nexus') || nx;
       roots = await invoke<Root[]>('preview_roots', { path: archPath });
       if (!roots.length) roots = [{ prefix: '', kind: 'Mod', folder: '', files: 0 }];
       const plan = await invoke<{ moves: [string, string][] }>('preview_archive', { path: archPath });

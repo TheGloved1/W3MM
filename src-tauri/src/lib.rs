@@ -778,8 +778,11 @@ fn analysis_summary(shared: State<Shared>) -> Result<serde_json::Value, String> 
 }
 
 #[tauri::command]
-fn queue_enqueue(url: String, filename: String, api_key: String) -> String {
-    downloads::enqueue(&url, &filename, &api_key)
+fn queue_enqueue(shared: State<Shared>, url: String, filename: String, api_key: String) -> Result<String, String> {
+    let id = downloads::enqueue(&url, &filename, &api_key)?;
+    dl_save(&shared);
+    log_line("rust", &format!("enqueued download id={id} url={url}"));
+    Ok(id)
 }
 
 #[tauri::command]
@@ -787,20 +790,38 @@ fn queue_list() -> Vec<downloads::QueueItem> {
     downloads::items()
 }
 
+/// downloads.json path next to the downloads folder (None when no game open).
+fn dl_paths(shared: &State<Shared>) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let g = shared.lock().ok()?;
+    let m = g.as_ref()?;
+    let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+    let _ = std::fs::create_dir_all(&dir);
+    let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
+    Some((dir, hist))
+}
+
+fn dl_save(shared: &State<Shared>) {
+    if let Some((_, hist)) = dl_paths(shared) {
+        downloads::save_history(&hist);
+    }
+}
+
 #[tauri::command]
-fn queue_cancel(id: String) {
+fn queue_cancel(shared: State<Shared>, id: String) {
     downloads::cancel(&id);
+    dl_save(&shared);
 }
 
 /// Remove a row from the list, keeping the file (original Remove button).
 #[tauri::command]
-fn queue_remove(id: String) {
+fn queue_remove(shared: State<Shared>, id: String) {
     downloads::remove(&id);
+    dl_save(&shared);
 }
 
 /// Move a row's file to the trash, then drop the row (original trash icon).
 #[tauri::command]
-fn queue_trash(id: String, dest_dir: String) -> Result<bool, String> {
+fn queue_trash(shared: State<Shared>, id: String, dest_dir: String) -> Result<bool, String> {
     let item = downloads::items().into_iter().find(|i| i.id == id);
     if let Some(it) = item {
         if !it.filename.is_empty() && !dest_dir.is_empty() {
@@ -815,22 +836,33 @@ fn queue_trash(id: String, dest_dir: String) -> Result<bool, String> {
         }
     }
     downloads::remove(&id);
+    dl_save(&shared);
     Ok(true)
 }
 
 #[tauri::command]
-fn queue_pause(id: String, paused: bool) {
+fn queue_pause(shared: State<Shared>, id: String, paused: bool) {
     downloads::set_paused(&id, paused);
+    dl_save(&shared);
+}
+
+/// Load download history from last time (call after open_manager).
+#[tauri::command]
+fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
+    if let Some((dir, hist)) = dl_paths(&shared) {
+        downloads::load_history(&hist, &dir);
+    }
+    downloads::items()
 }
 
 /// Pump one queued download to disk, emitting `download-progress` events.
 #[tauri::command]
-fn queue_pump(app: tauri::AppHandle, id: String, dest_dir: String, api_key: String) -> Result<String, String> {
+fn queue_pump(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_dir: String, api_key: String) -> Result<String, String> {
     let item = downloads::items().into_iter().find(|i| i.id == id).ok_or("unknown download")?;
     let dest = std::path::Path::new(&dest_dir).join(&item.filename);
     let target = dest.clone();
     let aid = id.clone();
-    let n = downloads::pump(
+    let res = downloads::pump(
         &id,
         &dest,
         &api_key,
@@ -838,7 +870,9 @@ fn queue_pump(app: tauri::AppHandle, id: String, dest_dir: String, api_key: Stri
             use tauri::Emitter;
             let _ = app.emit("download-progress", serde_json::json!({"id": aid, "done": done, "total": total, "speed": speed}));
         },
-    )?;
+    );
+    dl_save(&shared);
+    let n = res?;
     use tauri::Emitter;
     let _ = app.emit("download-done", serde_json::json!({"id": id, "path": target.to_string_lossy(), "bytes": n}));
     log_line("rust", &format!("download done id={id} path={}", target.to_string_lossy()));
@@ -1341,6 +1375,7 @@ pub fn run() {
             queue_trash,
             queue_pause,
             queue_pump,
+            downloads_history,
             downloads_dir_path,
             settings_dir_path,
             open_tool_window,
