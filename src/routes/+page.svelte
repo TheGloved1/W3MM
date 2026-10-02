@@ -643,15 +643,17 @@
     (async () => {
       try {
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
-        const { getCurrent } = await import("@tauri-apps/plugin-deep-link");
+        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         const cur = await getCurrent().catch(() => []);
         if (cur?.length) {
           dlOpen = true;
           await dlNxm(cur[0]);
         }
-        unlisten = await listen<string>("nxm-url", async (e) => {
-          dlOpen = true;
-          await dlNxm(e.payload);
+        unlisten = await onOpenUrl(async (urls) => {
+          if (urls?.length) {
+            dlOpen = true;
+            await dlNxm(urls[0]);
+          }
         });
         unlistenP = await listen<{ id: string; done: number; total: number }>(
           "download-progress",

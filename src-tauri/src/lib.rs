@@ -1222,19 +1222,17 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_deep_link::init())
         // Single instance: second launches (e.g. nxm:// clicks) focus this
-        // window and forward argv URLs as events — replaces the hand-rolled
-        // Unix-socket handoff in the original (`send_to_running_app`).
+        // window and forward argv as deep-link events — replaces the
+        // hand-rolled Unix-socket handoff in the original.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            use tauri::{Emitter, Manager};
+            use tauri::Manager;
             let _ = app.get_webview_window("main").map(|w| {
                 let _ = w.set_focus();
-                for arg in argv.iter().filter(|a| a.starts_with("nxm://")) {
-                    let _ = w.emit("nxm-url", arg.clone());
-                }
             });
+            log_line("rust", &format!("single-instance argv: {argv:?}"));
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Forward OS deep-link opens (nxm://…) to the frontend as events.
             // The .desktop MimeType registration comes from the
@@ -1242,19 +1240,9 @@ pub fn run() {
             // hand-edited mimeapps.list code needed.
             #[cfg(desktop)]
             {
-                use tauri::Manager;
                 use tauri_plugin_deep_link::DeepLinkExt;
-                let handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
-                    use tauri::Emitter;
-                    for url in event.urls() {
-                        let s = url.to_string();
-                        if s.starts_with("nxm://") {
-                            if let Some(w) = handle.get_webview_window("main") {
-                                let _ = w.emit("nxm-url", s.clone());
-                            }
-                        }
-                    }
+                    log_line("rust", &format!("deep_link event urls={:?}", event.urls().iter().map(|u| u.to_string()).collect::<Vec<_>>()));
                 });
             }
             Ok(())
