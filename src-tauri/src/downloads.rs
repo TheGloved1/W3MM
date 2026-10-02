@@ -38,12 +38,17 @@ fn qlock() -> std::sync::MutexGuard<'static, HashMap<String, QueueItem>> {
 
 pub fn enqueue(url: &str) -> Result<String, String> {
     // Same file again (same Nexus mod + file): reuse the row like panel.add.
+    // NOTE: plain `let` (not `if let`) for the lookup — a guard borrowed by
+    // `if let` lives through the body, and re-locking inside deadlocks the
+    // thread forever (std Mutex is not reentrant). That froze the whole app
+    // on every repeat download of a known file.
     if url.to_lowercase().starts_with("nxm://") {
         if let Some(link) = crate::nexus::parse_nxm(url) {
             if link.game != "witcher3" {
                 return Err(format!("wrong game: {}", link.game));
             }
-            if let Some(same) = qlock().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned() {
+            let same = qlock().values().find(|i| i.mod_id == link.mod_id && i.file_id == link.file_id).cloned();
+            if let Some(same) = same {
                 if same.status == "active" || same.status == "starting" || same.status == "queued" || same.status == "paused" {
                     return Ok(same.id); // already fetching: caller just opens the panel
                 }
