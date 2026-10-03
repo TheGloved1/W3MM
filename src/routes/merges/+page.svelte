@@ -3,6 +3,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative } from '$lib/config';
+  import CodeViewer from '$lib/components/code-viewer.svelte';
+  import SecondaryButton from '$lib/components/secondary-button.svelte';
 
   type Shared = { file: string; with: string[] };
   type Inputs = { rel: string; kind: string; base: string; base_encoding: string; versions: { label: string; mod_id: string; text: string }[] };
@@ -122,8 +124,8 @@
   <div class="flex items-center gap-2">
     <div class="text-[15px] font-semibold">Script decisions</div>
     <span class="flex-1"></span>
-    <button onclick={keepAll} disabled={!conflicts.length} class="rounded-[7px] border border-border bg-popover px-3 py-1.5 text-[13px] hover:bg-accent disabled:opacity-50">Keep every suggested merge</button>
-    <button onclick={() => getCurrentWindow().close()} class="rounded-[7px] border border-border bg-popover px-3 py-1.5 text-[13px] hover:bg-accent">Close</button>
+    <SecondaryButton onclick={keepAll} disabled={!conflicts.length}>Keep every suggested merge</SecondaryButton>
+    <SecondaryButton onclick={() => getCurrentWindow().close()}>Close</SecondaryButton>
   </div>
 
   <div class="flex min-h-0 flex-1 gap-3">
@@ -156,12 +158,12 @@
         <div class="grid min-h-[220px] flex-1 grid-cols-3 gap-2">
           <div class="flex min-w-0 flex-col rounded-[7px] border border-border bg-well">
             <div class="border-b border-border px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">Vanilla</div>
-            <pre class="min-h-0 flex-1 overflow-auto p-2 leading-relaxed" style={codeStyle()}>{#each baseLines as l, i}<div class={conflictSet.has(i) ? 'bg-[#e3735f]/15' : ''}><span class="mr-2 inline-block w-8 select-none text-right text-muted-foreground/50">{i + 1}</span>{l || ' '}</div>{/each}</pre>
+            <CodeViewer lines={baseLines} codeFont={codeFont} codeSize={codeSize} highlight={(i)=>conflictSet.has(i)} />
           </div>
           {#each mi.versions.slice(0, 2) as v}
             <div class="flex min-w-0 flex-col rounded-[7px] border border-border bg-well">
               <div class="truncate border-b border-border px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">{v.label}</div>
-              <pre class="min-h-0 flex-1 overflow-auto p-2 leading-relaxed" style={codeStyle()}>{#each v.text.split('\n') as l, i}<div><span class="mr-2 inline-block w-8 select-none text-right text-muted-foreground/50">{i + 1}</span>{l || ' '}</div>{/each}</pre>
+              <CodeViewer lines={v.text.split('\n')} codeFont={codeFont} codeSize={codeSize} />
             </div>
           {/each}
         </div>
@@ -194,7 +196,7 @@
               <span class="flex-1 text-[11px] uppercase tracking-wide text-muted-foreground">Merged preview</span>
               <button onclick={save} class="rounded-[7px] bg-primary px-3 py-1 text-[13px] font-semibold text-primary-foreground hover:brightness-110">Save merge</button>
             </div>
-            <pre class="max-h-64 overflow-auto p-2 leading-relaxed" style={codeStyle()}>{#each out as l, i}<div><span class="mr-2 inline-block w-8 select-none text-right text-muted-foreground/50">{i + 1}</span>{l || ' '}</div>{/each}</pre>
+            <CodeViewer lines={out} codeFont={codeFont} codeSize={codeSize} class="max-h-64" />
           </div>
         {/if}
       {/if}
