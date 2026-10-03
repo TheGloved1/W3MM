@@ -5,6 +5,7 @@
   import { loadConfigNative } from '$lib/config';
   import CodeViewer from '$lib/components/code-viewer.svelte';
   import SecondaryButton from '$lib/components/secondary-button.svelte';
+  import Panel from '$lib/components/panel.svelte';
 
   type Shared = { file: string; with: string[] };
   type Inputs = { rel: string; kind: string; base: string; base_encoding: string; versions: { label: string; mod_id: string; text: string }[] };
@@ -156,15 +157,13 @@
 
       {#if mi}
         <div class="grid min-h-[220px] flex-1 grid-cols-3 gap-2">
-          <div class="flex min-w-0 flex-col rounded-[7px] border border-border bg-well">
-            <div class="border-b border-border px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">Vanilla</div>
+          <Panel title="Vanilla">
             <CodeViewer lines={baseLines} codeFont={codeFont} codeSize={codeSize} highlight={(i)=>conflictSet.has(i)} />
-          </div>
+          </Panel>
           {#each mi.versions.slice(0, 2) as v}
-            <div class="flex min-w-0 flex-col rounded-[7px] border border-border bg-well">
-              <div class="truncate border-b border-border px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">{v.label}</div>
+            <Panel title={v.label}>
               <CodeViewer lines={v.text.split('\n')} codeFont={codeFont} codeSize={codeSize} />
-            </div>
+            </Panel>
           {/each}
         </div>
 
