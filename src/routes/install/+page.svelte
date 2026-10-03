@@ -5,6 +5,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Check, ChevronDown, ChevronRight, X } from 'lucide-svelte';
   import FileTree from '$lib/components/file-tree.svelte';
+  import FormInput from '$lib/components/form-input.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -98,11 +99,11 @@
 
   <div class="grid grid-cols-[auto_minmax(0,1fr)_auto_110px_auto_110px] items-center gap-x-3 gap-y-2">
     <span class="text-sm">Name in list</span>
-    <input bind:value={name} class="rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary" />
+    <FormInput bind:value={name} />
     <span class="text-sm">Version</span>
-    <input bind:value={version} class="w-[110px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-[13px] outline-none focus:border-primary" />
+    <FormInput bind:value={version} width="110px" />
     <span class="text-sm">Nexus ID</span>
-    <input bind:value={nexus} class="w-[110px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-[13px] outline-none focus:border-primary" />
+    <FormInput bind:value={nexus} width="110px" />
     <span class="text-sm">Section</span>
     <select bind:value={section} class="rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary">
       <option value="">No section</option>

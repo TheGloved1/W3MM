@@ -4,6 +4,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative, saveConfigNative } from '$lib/config';
   import type { AppConfig } from '$lib/types';
+  import FormInput from '$lib/components/form-input.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -128,18 +129,18 @@
   {#if config}
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Game folder</span>
-      <input bind:value={config.gameDir} oninput={checkGame} class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <FormInput bind:value={config.gameDir} mono class="min-w-0 flex-1" oninput={checkGame} />
       <button onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
     </div>
     {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Prefix</span>
-      <input bind:value={config.prefix} placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <FormInput bind:value={config.prefix} mono placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1" />
       <button onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
     </div>
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Nexus API key</span>
-      <input bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+      <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
       <button onclick={() => (showKey = !showKey)} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">{showKey ? 'Hide' : 'Show'}</button>
       <button onclick={getKey} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">Get key…</button>
     </div>
@@ -148,7 +149,7 @@
       <select bind:value={config.codeFont} class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary">
         {#each codeFonts as f}<option value={f}>{f}</option>{/each}
       </select>
-      <input type="number" min="8" max="20" bind:value={config.codeSize} class="w-[86px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary" />
+      <FormInput bind:value={config.codeSize} type="number" width="86px" class="" />
     </div>
     <div class="flex gap-3">
       <span class="w-[110px] shrink-0"></span>
@@ -163,7 +164,7 @@
       {#if mergerOpen}
         <div class="flex items-center gap-3 py-1">
           <span class="w-[86px] shrink-0 text-sm">Path</span>
-          <input bind:value={config.mergerPath} placeholder="path to ScriptMerger.exe" class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-primary" />
+          <FormInput bind:value={config.mergerPath} mono placeholder="path to ScriptMerger.exe" class="min-w-0 flex-1" />
           <button onclick={pickMerger} class="rounded-[7px] border border-border bg-card px-3 py-[7px] text-sm hover:bg-accent">Browse…</button>
         </div>
         {#if mergerRep}
