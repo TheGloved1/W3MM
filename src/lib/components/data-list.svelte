@@ -24,6 +24,8 @@
     sortDir?: SortDir;
     onSort?: (id: string) => void;
     onSelect?: (item: T, e: MouseEvent | KeyboardEvent) => void;
+    /** Right-click on a row. */
+    onContextMenu?: (item: T, e: MouseEvent) => void;
     /** Double-click / Enter on a focused row. */
     onActivate?: (item: T) => void;
     onBackgroundClear?: () => void;
@@ -49,6 +51,7 @@
     sortDir = "asc",
     onSort,
     onSelect,
+    onContextMenu,
     onActivate,
     onBackgroundClear,
     isDraggable,
@@ -207,6 +210,11 @@
             }}
             ondragend={clearDrag}
             onclick={(e) => onSelect?.(item, e)}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onContextMenu?.(item, e);
+            }}
             onkeydown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();

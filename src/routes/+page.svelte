@@ -18,6 +18,7 @@
     ExternalLink,
     Flag,
     FolderOpen,
+    GitMerge,
     List,
     Pencil,
     RefreshCw,
@@ -52,6 +53,7 @@
   let collapsed: Record<string, boolean> = $state({});
   let selected: string | null = $state(null);
   let ctx: { id: string; x: number; y: number } | null = $state(null);
+  let sepCtx: { id: string; x: number; y: number } | null = $state(null);
   let hoverTip: { id: string; x: number; y: number } | null = $state(null);
 
   // downloads panel
@@ -417,6 +419,31 @@
     await refresh();
   }
 
+  async function addSectionAbove(sepId: string) {
+    sepCtx = null;
+    if (!appState) return;
+    const name = prompt("Section name", "New section");
+    if (!name) return;
+    const idx = appState.mods.findIndex((m) => m.id === sepId);
+    await invoke("add_separator", { index: idx === -1 ? 0 : idx, name });
+    await refresh();
+  }
+
+  async function removeSection(sepId: string) {
+    sepCtx = null;
+    const m = appState?.mods.find((r) => r.id === sepId);
+    if (!m || !confirm(`Remove section “${m.name}”? Its mods stay in the list.`)) return;
+    await invoke("remove_section_cmd", { sepId });
+    await refresh();
+  }
+
+  function onSepContext(id: string, ev: MouseEvent) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    ctx = null;
+    sepCtx = { id, x: ev.clientX, y: ev.clientY };
+  }
+
   function openEdit(id: string) {
     ctx = null;
     console.debug("[w3lmn] open_tool_window edit", id);
@@ -725,6 +752,7 @@
     ev.preventDefault();
     ev.stopPropagation();
     selected = id;
+    sepCtx = null;
     ctx = { id, x: ev.clientX, y: ev.clientY };
   }
 
@@ -1106,12 +1134,14 @@
     function onDocClick() {
       menuOpen = false;
       ctx = null;
+      sepCtx = null;
       hoverTip = null;
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         menuOpen = false;
         ctx = null;
+        sepCtx = null;
       }
     }
     document.addEventListener("click", onDocClick);
@@ -1279,6 +1309,10 @@
         sortDir="asc"
         onSelect={(m, e) => {
           selected = m.id;
+        }}
+        onContextMenu={(m, e) => {
+          if (m.sep) onSepContext(m.id, e);
+          else onRowContext(m.id, e);
         }}
         onBackgroundClear={() => {
           selected = null;
@@ -1492,6 +1526,11 @@
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-50"
         ><Copy class="size-4" /> Reinstall from archive</button
       >
+      <button
+        onclick={() => openResolver()}
+        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+        ><GitMerge class="size-4" /> Script decisions…</button
+      >
       <div class="my-1 border-t border-border"></div>
       <button
         onclick={() => removeMod(cid)}
@@ -1499,6 +1538,43 @@
         ><Trash2 class="size-4" /> Uninstall…</button
       >
     </div>
+  {/if}
+
+  {#if sepCtx}
+    {@const sid = sepCtx.id}
+    {@const sname = appState?.mods.find((r) => r.id === sid)?.name ?? ""}
+    <div
+      role="menu"
+      tabindex="-1"
+      class="fixed z-50 w-56 rounded-lg border border-border bg-popover py-1 shadow-2xl"
+      style="left:{Math.min(sepCtx.x, window.innerWidth - 240)}px;top:{Math.min(
+        sepCtx.y,
+        window.innerHeight - 160,
+      )}px"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <button
+        onclick={() => {
+          sepCtx = null;
+          toggleCollapse(sid);
+        }}
+        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+        >{collapsed[sid] ? "Unfold" : "Fold"}</button
+      >
+      <button
+        onclick={() => addSectionAbove(sid)}
+        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+        >New section above</button
+      >
+      <div class="my-1 border-t border-border"></div>
+      <button
+        onclick={() => removeSection(sid)}
+        class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+        ><Trash2 class="size-4" /> Remove section</button
+      >
+    </div>
+    <span class="hidden">{sname}</span>
   {/if}
 
   {#if dlOpen}
