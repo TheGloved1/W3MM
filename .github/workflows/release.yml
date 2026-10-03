@@ -197,11 +197,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Only the platforms in this run's matrix exist as bundles-* dirs
-          # (e.g. Linux-only runs have just bundles-linux-x86_64).
-          mapfile -t DIRS < <(ls -d bundles-*/ 2>/dev/null || true)
+          # Artifact layout depends on how many the matrix produced: several
+          # artifacts download into per-artifact bundles-*/ dirs, but a single
+          # artifact extracts straight into cwd (bare deb/ rpm/ ... dirs).
+          mapfile -t DIRS < <(ls -d bundles-*/ deb/ rpm/ appimage/ msi/ dmg/ 2>/dev/null || true)
           if [ "${#DIRS[@]}" -eq 0 ]; then
-            echo "No bundles-* artifact directories were downloaded:"
+            echo "No bundle directories were downloaded:"
             ls -la
             exit 1
           fi
