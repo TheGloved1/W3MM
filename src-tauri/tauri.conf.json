@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "W3LMN",
   "version": "26.9.0",
-  "identifier": "com.w3lmn.app",
+  "identifier": "dev.gloved.w3mm",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",

@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { Check, ChevronDown, ChevronRight, X } from 'lucide-svelte';
   import FileTree from '$lib/components/file-tree.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
@@ -111,14 +112,16 @@
   </div>
 
   <div class="rounded-[7px] border border-border bg-card px-3 py-2">
-    <div class="py-1 text-sm font-semibold">⌄ Archive contents</div>
+    <div class="flex items-center gap-1 py-1 text-sm font-semibold">
+      <ChevronDown class="size-4 text-muted-foreground" /> Archive contents
+    </div>
     <div class="grid grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)] gap-2 px-1 pb-1 text-[12px] text-muted-foreground">
       <span class="pl-7">From archive</span><span>Type</span><span>Folder name</span>
     </div>
     {#each roots as r}
       <div class="grid grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)] items-center gap-2 border-t border-border/50 px-1 py-1.5">
         <span class="flex min-w-0 items-center gap-2">
-          <span class="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-[#c9a45c] bg-[#c9a45c] text-[12px] font-bold text-[#1c2127]">✓</span>
+          <span class="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-[#c9a45c] bg-[#c9a45c] text-[#1c2127]"><Check class="size-3" /></span>
           <span class="truncate font-mono text-[12px]">{rootLabel(r)}</span>
         </span>
         <select bind:value={r.kind} class="rounded-[7px] border border-input bg-background px-2 py-1 text-[13px] outline-none focus:border-primary">
@@ -131,7 +134,7 @@
 
   <div class="flex flex-col">
     <button onclick={() => (addedOpen = !addedOpen)} class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-3 py-2 text-left text-sm hover:bg-accent/40 {addedOpen ? 'rounded-b-none border-b-0' : ''}">
-      <span class="text-muted-foreground">{addedOpen ? '⌄' : '›'}</span>
+      <span class="text-muted-foreground">{#if addedOpen}<ChevronDown class="size-4" />{:else}<ChevronRight class="size-4" />{/if}</span>
       <span class="flex-1">Added to the game folder</span>
       <span class="text-muted-foreground">{addedFiles.length} files</span>
     </button>
@@ -143,7 +146,7 @@
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <div class="flex items-center gap-2">
     <span class="flex-1"></span>
-    <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">✕ Cancel</button>
+    <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent"><X class="inline size-4" /> Cancel</button>
     <button onclick={install} disabled={busy || !roots.length} class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110 disabled:opacity-50">{busy ? 'Installing…' : 'Install'}</button>
   </div>
 </div>

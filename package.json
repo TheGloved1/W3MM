@@ -1,5 +1,5 @@
 {
-  "name": "w3lmn",
+  "name": "w3mm",
   "private": true,
   "version": "26.9.0",
   "type": "module",
@@ -24,6 +24,23 @@
     "release": "bun scripts/release.ts",
     "push-tags": "git push origin main --tags",
     "release:no-changelog": "bun scripts/release.ts --no-changelog"
+  },
+  "prettier": {
+    "printWidth": 125,
+    "semi": true,
+    "singleQuote": true,
+    "jsxSingleQuote": true,
+    "tabWidth": 2,
+    "bracketSpacing": true,
+    "experimentalTernaries": true,
+    "arrowParens": "always",
+    "objectWrap": "preserve",
+    "bracketSameLine": false,
+    "htmlWhitespaceSensitivity": "strict",
+    "plugins": [
+      "prettier-plugin-organize-imports",
+      "prettier-plugin-tailwindcss"
+    ]
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

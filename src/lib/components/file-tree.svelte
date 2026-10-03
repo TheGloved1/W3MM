@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { ChevronDown, ChevronRight } from "lucide-svelte";
+
   interface Props {
     paths: string[];
     maxHeight?: string;
@@ -15,7 +17,13 @@
   };
 
   const tree = $derived.by(() => {
-    const root: Node = { name: "", full: "", children: [], count: 0, file: false };
+    const root: Node = {
+      name: "",
+      full: "",
+      children: [],
+      count: 0,
+      file: false,
+    };
     for (const p of paths) {
       const parts = p.split("/").filter(Boolean);
       let cur = root;
@@ -24,7 +32,13 @@
         const full = parts.slice(0, i + 1).join("/");
         let child = cur.children.find((c) => c.name === name);
         if (!child) {
-          child = { name, full, children: [], count: 0, file: i === parts.length - 1 };
+          child = {
+            name,
+            full,
+            children: [],
+            count: 0,
+            file: i === parts.length - 1,
+          };
           cur.children.push(child);
         } else if (i === parts.length - 1) {
           child.file = true;
@@ -67,9 +81,11 @@
   });
 </script>
 
-<div class="overflow-hidden rounded-[7px] border border-border bg-card {className}">
+<div
+  class="overflow-hidden rounded-[7px] border border-border bg-card {className}"
+>
   <div
-    class="grid grid-cols-[minmax(0,1fr)_56px] border-b border-border px-2 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground"
+    class="grid grid-cols-[minmax(0,1fr)_56px] border-b border-border px-2 py-1.5 uppercase tracking-wide text-muted-foreground"
   >
     <span>Path</span>
     <span class="text-right">Files</span>
@@ -94,9 +110,15 @@
           style="padding-left:{row.depth * 15}px"
         >
           {#if row.node.children.length}
-            <span class="mr-1 inline-block w-4 text-center text-muted-foreground"
-              >{row.open ? "⌄" : "›"}</span
+            <span
+              class="mr-1 inline-block w-4 text-center text-muted-foreground"
             >
+              {#if row.open}
+                <ChevronDown class="h-3 w-3" />
+              {:else}
+                <ChevronRight class="h-3 w-3" />
+              {/if}
+            </span>
           {:else}
             <span class="mr-1 inline-block w-4"></span>
           {/if}

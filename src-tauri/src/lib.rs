@@ -535,7 +535,7 @@ pub struct UpdateHit {
 }
 
 #[tauri::command]
-fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit>, String> {
+fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String) -> Result<(), String> {
     if api_key.trim().is_empty() {
         return Err("Set a Nexus API key first".into());
     }
@@ -546,22 +546,34 @@ fn check_updates(shared: State<Shared>, api_key: String) -> Result<Vec<UpdateHit
         let v: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
         v
     };
-    let mut hits = vec![];
-    for m in mods {
-        let nid = if m.nexus.trim().is_empty() { crate::nexus::extract_nexus_id(&m.name) } else { m.nexus.clone() };
-        if nid.is_empty() {
-            continue;
+    // Network work happens on a worker thread; the command returns at once and
+    // the list refreshes from events (same shape as the download queue).
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let total = mods.len();
+        let mut hits = vec![];
+        for (i, m) in mods.iter().enumerate() {
+            let nid = if m.nexus.trim().is_empty() { crate::nexus::extract_nexus_id(&m.name) } else { m.nexus.clone() };
+            if nid.is_empty() {
+                let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
+                continue;
+            }
+            let v = match crate::nexus::nexus_get(&format!("/games/witcher3/mods/{nid}.json"), &api_key) {
+                Ok(v) => v,
+                Err(_) => {
+                    let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
+                    continue;
+                }
+            };
+            let remote = v.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
+                hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
+            }
+            let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
         }
-        let v = match crate::nexus::nexus_get(&format!("/games/witcher3/mods/{nid}.json"), &api_key) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let remote = v.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
-            hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
-        }
-    }
-    Ok(hits)
+        let _ = app.emit("updates-done", serde_json::json!({ "hits": hits }));
+    });
+    Ok(())
 }
 
 /// Read-only import preview from a legacy `_ModManager/state.json`
@@ -1105,11 +1117,11 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     {
         url = if query.is_empty() { format!("http://localhost:1420/{route}") } else { format!("http://localhost:1420/{route}?{query}") };
     }
+    log_line("rust", &format!("open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}"));
     #[cfg(not(dev))]
     let webview_url = tauri::WebviewUrl::App(url.into());
     #[cfg(dev)]
     let webview_url = tauri::WebviewUrl::External(url.parse().expect("valid dev url"));
-    log_line("rust", &format!("open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}"));
     let _win = tauri::WebviewWindowBuilder::new(&app, kind.clone(), webview_url)
         .title(title)
         .inner_size(w, h)

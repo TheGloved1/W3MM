@@ -6,6 +6,24 @@
   import { loadConfigNative } from "$lib/config";
   import DataList from "$lib/components/data-list.svelte";
   import * as Table from "$lib/components/ui/table/index.js";
+  import {
+    ArrowUp,
+    AtSign,
+    Check,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    Copy,
+    EqualNot,
+    ExternalLink,
+    Flag,
+    FolderOpen,
+    List,
+    Pencil,
+    RefreshCw,
+    Trash2,
+    TriangleAlert,
+  } from "lucide-svelte";
 
   let appState: AppState | null = $state(null);
   let clashMap: Record<string, string[]> = $state({});
@@ -521,22 +539,12 @@
     error = "";
     try {
       const cfg = await loadConfigNative();
-      hits = await invoke<typeof hits>("check_updates", {
-        apiKey: cfg.nexusKey,
-      });
-      flash(
-        hits.length
-          ? `${hits.length} update${hits.length === 1 ? "" : "s"} available`
-          : "All tracked mods are current",
-      );
-      const [qt] = await invoke<[string, string, number]>("quota").catch(
-        () => ["", "", 0] as [string, string, number],
-      );
-      quotaText = qt;
+      // Returns immediately; results arrive on the `updates-done` event.
+      await invoke("check_updates", { apiKey: cfg.nexusKey });
     } catch (e) {
       error = String(e);
+      busy = "";
     }
-    busy = "";
   }
 
   async function play() {
@@ -720,7 +728,7 @@
     ctx = { id, x: ev.clientX, y: ev.clientY };
   }
 
-  type Chip = { text: string; tip: string; cls: string };
+  type Chip = { text: string; tip: string; cls: string; icon?: any };
 
   function chipsFor(m: { id: string; name: string }): Chip[] {
     const chips: Chip[] = [];
@@ -731,31 +739,35 @@
     const sc = sharedScripts(m.id);
     if (sc.length)
       chips.push({
-        text: `⚑ ${sc.length}`,
+        text: `${sc.length}`,
+        icon: Flag,
         tip: sc.map((s) => `${s.file} — with ${s.with.join(", ")}`).join("\n"),
         cls: bad,
       });
     const xm = sharedXmls(m.id);
     if (xm.length)
       chips.push({
-        text: `☰ ${xm.length}`,
+        text: `${xm.length}`,
+        icon: List,
         tip: xm.map((s) => `${s.file} — with ${s.with.join(", ")}`).join("\n"),
         cls: bad,
       });
     const oc = otherClashes(m.id);
     if (oc.length)
-      chips.push({ text: `≠ ${oc.length}`, tip: oc.join("\n"), cls: warn });
+      chips.push({ text: `${oc.length}`, icon: EqualNot, tip: oc.join("\n"), cls: warn });
     const an = annotCount(m.name);
     if (an)
       chips.push({
-        text: `@ ${an}`,
+        text: `${an}`,
+        icon: AtSign,
         tip: "Same RedKit symbol added by two mods",
         cls: bad,
       });
     const lost = lostCount(m.id);
     if (lost)
       chips.push({
-        text: `⧉ ${lost}`,
+        text: `${lost}`,
+        icon: Copy,
         tip: `${lost} file${lost === 1 ? "" : "s"} overridden by higher mods`,
         cls: files,
       });
@@ -769,7 +781,8 @@
     const h = hits.find((hh) => hh.id === m.id);
     if (h)
       chips.push({
-        text: "↑",
+        text: "",
+        icon: ArrowUp,
         tip: `Update on Nexus: ${h.local} → ${h.remote}`,
         cls: nw,
       });
@@ -991,6 +1004,8 @@
     let unlistenD: (() => void) | undefined;
     let unlistenMeta: (() => void) | undefined;
     let unlistenM: (() => void) | undefined;
+    let unlistenU: (() => void) | undefined;
+    let unlistenUP: (() => void) | undefined;
     (async () => {
       try {
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
@@ -1063,6 +1078,29 @@
           await refresh();
           await deploy(true);
         });
+        unlistenUP = await listen<{ done: number; total: number }>(
+          "updates-progress",
+          (e) => {
+            if (e.payload.total > 0)
+              busy = `Checking Nexus… ${e.payload.done}/${e.payload.total}`;
+          },
+        );
+        unlistenU = await listen<{ hits: typeof hits }>(
+          "updates-done",
+          async (e) => {
+            hits = e.payload.hits;
+            busy = "";
+            flash(
+              hits.length
+                ? `${hits.length} update${hits.length === 1 ? "" : "s"} available`
+                : "All tracked mods are current",
+            );
+            const [qt] = await invoke<[string, string, number]>("quota").catch(
+              () => ["", "", 0] as [string, string, number],
+            );
+            quotaText = qt;
+          },
+        );
       } catch {}
     })();
     function onDocClick() {
@@ -1084,6 +1122,8 @@
       unlistenD?.();
       unlistenMeta?.();
       unlistenM?.();
+      unlistenU?.();
+      unlistenUP?.();
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);
     };
@@ -1257,7 +1297,9 @@
                 class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2"
                 onclick={() => toggleCollapse(m.id)}
               >
-                <span>{collapsed[m.id] ? "›" : "⌄"}</span>
+              <span class="flex h-4 w-4 items-center justify-center">
+                {#if collapsed[m.id]}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}
+              </span>
                 {m.name}
                 <span class="font-normal">({countMembers(m.id)})</span>
               </button>
@@ -1337,11 +1379,14 @@
             <Table.Cell>
               <div class="flex flex-wrap gap-1 py-1">
                 {#each chipsFor(m) as c}
+                  {@const Icon = c.icon}
                   <span
                     title={c.tip}
-                    class="rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
-                    >{c.text}</span
+                    class="inline-flex items-center gap-1 rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
                   >
+                    {#if Icon}<Icon class="size-3" />{/if}
+                    {#if c.text}<span>{c.text}</span>{/if}
+                  </span>
                 {/each}
               </div>
             </Table.Cell>
@@ -1366,10 +1411,12 @@
 
     <div class="flex items-center gap-2">
       <span
-        class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground"
+        class="flex min-w-0 flex-1 items-center gap-1 truncate font-mono text-[12px] text-muted-foreground"
         title={error || status || gameDir}
-        >{error ? `⚠ ${error}` : status || gameDir}</span
       >
+        {#if error}<TriangleAlert class="size-3.5 shrink-0" />{/if}
+        <span class="truncate">{error ? error : status || gameDir}</span>
+      </span>
       {#if quotaText}<span class="shrink-0 text-[12px] text-muted-foreground"
           >Nexus API: <span class="text-primary"
             >{quotaText.replace("Nexus API:", "").trim()}</span
@@ -1400,7 +1447,7 @@
                 qq.status === "starting" ||
                 qq.status === "queued",
             ).length}</span
-          >{/if}<span>{dlOpen ? "‹" : "›"}</span></button
+          >{/if}<span class="flex items-center">{#if dlOpen}<ChevronLeft class="size-4" />{:else}<ChevronRight class="size-4" />{/if}</span></button
       >
     </div>
   </div>
@@ -1422,34 +1469,34 @@
       <button
         onclick={() => openEdit(cid)}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-        ><span>✎</span> Edit…</button
+        ><Pencil class="size-4" /> Edit…</button
       >
       <button
         onclick={() => openNexusPage(cid)}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-        ><span>↗</span> Open Nexus page</button
+        ><ExternalLink class="size-4" /> Open Nexus page</button
       >
       <button
         onclick={() => openModFolder(cid)}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-        ><span>📁</span> Open folder</button
+        ><FolderOpen class="size-4" /> Open folder</button
       >
       <button
         onclick={() => checkOne(cid)}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-        ><span>⟳</span> Check for update</button
+        ><RefreshCw class="size-4" /> Check for update</button
       >
       <button
         onclick={() => reinstall(cid)}
         disabled={!cm.archive}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-50"
-        ><span>⧉</span> Reinstall from archive</button
+        ><Copy class="size-4" /> Reinstall from archive</button
       >
       <div class="my-1 border-t border-border"></div>
       <button
         onclick={() => removeMod(cid)}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-        ><span>🗑</span> Uninstall…</button
+        ><Trash2 class="size-4" /> Uninstall…</button
       >
     </div>
   {/if}
@@ -1496,7 +1543,7 @@
               }}
               title={collapsed ? "Expand" : "Collapse"}
               class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[13px] text-[#8c96a1] hover:text-[#dbb977]"
-              >{collapsed ? "›" : "⌄"}</button
+              >{#if collapsed}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}</button
             >
             <button
               onclick={() => {
@@ -1509,16 +1556,16 @@
             {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlSameFile(r))}
               <span
                 title="Installed: this exact version"
-                class="mt-0.5 shrink-0 text-[14px] font-semibold text-[#7fbf8a]"
-                >✓</span
+                class="mt-0.5 shrink-0 text-[#7fbf8a]"
+                ><Check class="size-4" /></span
               >
             {/if}
             {#if single && !collapsed && !running && single.status === "done"}
               <button
                 onclick={() => dlTrash(single)}
                 title="Move the downloaded file to the Trash"
-                class="mt-0.5 shrink-0 rounded p-1 text-[14px] text-[#8c96a1] hover:bg-[#e3735f]/15 hover:text-[#e3735f]"
-                >🗑</button
+                class="mt-0.5 shrink-0 rounded p-1 text-[#8c96a1] hover:bg-[#e3735f]/15 hover:text-[#e3735f]"
+                ><Trash2 class="size-4" /></button
               >
             {/if}
           </div>
