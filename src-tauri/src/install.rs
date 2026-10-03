@@ -100,6 +100,7 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
 pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Result<(Vec<String>, Vec<String>), String> {
     std::fs::create_dir_all(stage).map_err(|e| e.to_string())?;
     let mut targets = vec![];
+    crate::log_line("rust", &format!("build_staging: stage={} mod_folder={} moves={}", stage.display(), mod_folder, plan.moves.len()));
     for (src, rel) in &plan.moves {
         let first = rel.split('/').next().unwrap_or("").to_lowercase();
         let target_rel = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
@@ -108,10 +109,21 @@ pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Resu
             format!("mods/{mod_folder}/{rel}")
         };
         let dst = stage.join(&target_rel);
+        crate::log_line("rust", &format!("build_staging: copy src='{}' rel='{}' target_rel='{}' dst='{}'", src, rel, target_rel, dst.display()));
         if let Some(p) = dst.parent() {
-            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+            crate::log_line("rust", &format!("build_staging: ensure parent '{}'", p.display()));
+            std::fs::create_dir_all(p).map_err(|e| {
+                crate::log_line("rust", &format!("build_staging: create_dir_all failed for '{}': {}", p.display(), e));
+                e.to_string()
+            })?;
         }
-        std::fs::copy(src, &dst).map_err(|e| e.to_string())?;
+        if dst.exists() {
+            crate::log_line("rust", &format!("build_staging: dst exists '{}' is_dir={}", dst.display(), dst.is_dir()));
+        }
+        std::fs::copy(src, &dst).map_err(|e| {
+            crate::log_line("rust", &format!("build_staging: copy failed src='{}' dst='{}' error='{}'", src, dst.display(), e));
+            e.to_string()
+        })?;
         targets.push(target_rel);
     }
     targets.sort();

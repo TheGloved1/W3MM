@@ -1513,7 +1513,11 @@ fn install_roots(
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
         log_line("rust", &format!("install_roots: extracting {path}"));
-        archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
+        archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| {
+            log_line("rust", &format!("install_roots: extract_archive failed: {}", e));
+            e.to_string()
+        })?;
+        log_line("rust", &format!("install_roots: extraction complete tmp={}", tmp.display()));
         let plan = install::analyze(&tmp);
         log_line("rust", &format!("install_roots: plan has {} moves", plan.moves.len()));
         // Staging dir first; the lock is only taken to commit the row, so a
@@ -1558,6 +1562,10 @@ fn install_roots(
         }
         let sub = install::InstallPlan { moves: remapped, docs: plan.docs.clone() };
         let folder = state::ensure_mod_prefix(&name);
+        crate::log_line("rust", &format!("install_roots: building staging for '{}' with {} moves into '{}'", name, sub.moves.len(), stage.display()));
+        for (src, rel) in &sub.moves {
+            crate::log_line("rust", &format!("install_roots: planned move src='{}' -> rel='{}'", src, rel));
+        }
         let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
         {
             let g = lock_shared(&shared, "install_roots")?;
