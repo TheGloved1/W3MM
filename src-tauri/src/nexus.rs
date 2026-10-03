@@ -143,6 +143,121 @@ pub struct NxmLink {
     pub expires: String,
 }
 
+/// A newer file found on the mod's Nexus page (for one-click updates).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTarget {
+    pub file_id: String,
+    pub version: String,
+    pub file_name: String,
+    pub file_title: String,
+    pub size: u64,
+    pub mod_name: String,
+    pub category: String,
+}
+
+fn file_version_of(f: &serde_json::Map<String, serde_json::Value>) -> String {
+    clean_version(
+        f.get("version")
+            .or_else(|| f.get("mod_version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    )
+}
+
+fn file_size_of(f: &serde_json::Map<String, serde_json::Value>) -> u64 {
+    if let Some(size) = f.get("size_in_bytes").and_then(|v| v.as_u64()) {
+        return size;
+    }
+    if let Some(kb) = f.get("size_kb").and_then(|v| v.as_u64()) {
+        return kb * 1024;
+    }
+    if let Some(sz) = f.get("size").and_then(|v| v.as_u64()) {
+        return sz * 1024;
+    }
+    0
+}
+
+fn file_stamp_of(f: &serde_json::Map<String, serde_json::Value>) -> u64 {
+    for k in ["uploaded_timestamp", "updated_timestamp", "uploaded_time", "updated_time"] {
+        if let Some(t) = f.get(k).and_then(|v| v.as_u64()) {
+            if t > 1_000_000_000 && t < 10_000_000_000 {
+                return t; // seconds
+            }
+            if t > 1_000_000_000_000 {
+                return t / 1000; // millis
+            }
+        }
+    }
+    0
+}
+
+/// Newest MAIN file on a mod page that is newer than `installed`
+/// (None when current). List shape varies, so both `[...]` and
+/// `{"files": [...]}` responses are accepted.
+pub fn resolve_update(mod_id: &str, installed: &str, api_key: &str) -> Result<Option<UpdateTarget>, String> {
+    let v = nexus_get(&format!("/games/witcher3/mods/{mod_id}/files.json"), api_key)?;
+    let arr: Vec<&serde_json::Value> = match &v {
+        serde_json::Value::Array(a) => a.iter().collect(),
+        serde_json::Value::Object(o) => o
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().collect())
+            .unwrap_or_default(),
+        _ => vec![],
+    };
+    let mut mains = vec![];
+    let mut others = vec![];
+    for f in arr {
+        let Some(obj) = f.as_object() else { continue };
+        let fid = obj
+            .get("file_id")
+            .and_then(|v| v.as_u64().map(|n| n.to_string()))
+            .or_else(|| obj.get("id").and_then(|v| v.as_u64().map(|n| n.to_string())))
+            .unwrap_or_default();
+        if fid.is_empty() || fid == "0" {
+            continue;
+        }
+        let cat = obj.get("category_name").and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
+        let primary = obj.get("is_primary").and_then(|v| v.as_bool()).unwrap_or(false);
+        let entry = (fid, obj);
+        if primary || cat == "MAIN" {
+            mains.push(entry);
+        } else {
+            others.push(entry);
+        }
+    }
+    // Main files first; fall back to anything when the page has no MAIN mark.
+    let pool = if mains.is_empty() { others } else { mains };
+    let mut best: Option<(&String, &serde_json::Map<String, serde_json::Value>)> = None;
+    let mut best_key: (Vec<u64>, u64) = (vec![], 0);
+    for (fid, obj) in &pool {
+        let key = (version_tuple(&file_version_of(obj)), file_stamp_of(obj));
+        if best.is_none() || key > best_key {
+            best_key = key;
+            best = Some((fid, obj));
+        }
+    }
+    let Some((fid, obj)) = best else { return Ok(None) };
+    let version = file_version_of(obj);
+    if !version_is_newer(&version, installed) {
+        return Ok(None);
+    }
+    let mod_name = nexus_get(&format!("/games/witcher3/mods/{mod_id}.json"), api_key)
+        .ok()
+        .and_then(|m| m.as_object().cloned())
+        .and_then(|o| o.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .unwrap_or_default();
+    Ok(Some(UpdateTarget {
+        file_id: fid.clone(),
+        version,
+        file_name: obj.get("file_name").and_then(|v| v.as_str()).unwrap_or("download.zip").to_string(),
+        file_title: obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        size: file_size_of(obj),
+        mod_name,
+        category: obj.get("category_name").and_then(|v| v.as_str()).unwrap_or("").to_uppercase(),
+    }))
+}
+
 /// `nxm://` link parse (python `parse_nxm`).
 pub fn parse_nxm(url: &str) -> Option<NxmLink> {
     let t = url.trim();

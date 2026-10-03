@@ -181,8 +181,11 @@
   archive name). Only this suppresses the auto Install window and earns the
   tick — version verdicts alone must not, or genuinely different files (e.g.
   unknown versions) would never offer install. */
-  function dlSameFile(qq: QueueItem): boolean {
-    if (!appState || qq.status !== "done" || !qq.filename) return false;
+  function hitFor(id: string) {
+    return hits.find((hh) => hh.id === id);
+  }
+
+  function dlSameFile(qq: QueueItem): boolean {    if (!appState || qq.status !== "done" || !qq.filename) return false;
     const fname = qq.filename.toLowerCase();
     return appState.mods.some(
       (m) =>
@@ -558,6 +561,39 @@
       error = String(e);
     }
     busy = "";
+  }
+
+  async function updateMod(id: string) {
+    ctx = null;
+    error = "";
+    try {
+      const cfg = await loadConfigNative();
+      if (!cfg.nexusKey) {
+        error = "Set Nexus API key in Settings first";
+        return;
+      }
+      flash("Resolving update…");
+      const res = await invoke<{ row_id: string; version: string }>("update_mod", { id, apiKey: cfg.nexusKey });
+      if (!res.row_id) {
+        flash("Already on the newest version.");
+        return;
+      }
+      dlOpen = true;
+      queue = await invoke<QueueItem[]>("queue_list");
+      await invoke("queue_start", { id: res.row_id, destDir: await downloadsDir(), apiKey: cfg.nexusKey });
+      queue = await invoke<QueueItem[]>("queue_list");
+    } catch (e) {
+      console.error(`[w3mm] update failed: ${String(e)}`);
+      error = String(e);
+    }
+  }
+
+  async function updateAll() {
+    menuOpen = false;
+    if (!hits.length) return;
+    for (const h of [...hits]) {
+      await updateMod(h.id);
+    }
   }
 
   async function checkUpdates() {
@@ -1288,6 +1324,11 @@
             .map((h) => `${h.name} → ${h.remote}`)
             .join(" · ")}{hits.length > 3 ? " …" : ""}</span
         >
+        <button
+          onclick={updateAll}
+          class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110"
+          >Update all</button
+        >
       </div>
     {/if}
 
@@ -1520,6 +1561,13 @@
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
         ><RefreshCw class="size-4" /> Check for update</button
       >
+      {#if hitFor(cid)}
+        <button
+          onclick={() => updateMod(cid)}
+          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[#b5d95a] hover:bg-accent"
+          ><ArrowUp class="size-4" /> Update to {hitFor(cid)?.remote}</button
+        >
+      {/if}
       <button
         onclick={() => reinstall(cid)}
         disabled={!cm.archive}

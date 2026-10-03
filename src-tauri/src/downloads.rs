@@ -95,6 +95,47 @@ pub fn enqueue(url: &str) -> Result<String, String> {
     Ok(id)
 }
 
+/// Enqueue an already-resolved Nexus file (one-click updates): metadata is
+/// known up front, so no network happens here. The row streams through the
+/// normal worker path via its `nexus://` URL.
+pub fn enqueue_resolved(mod_id: &str, target: &crate::nexus::UpdateTarget) -> String {
+    // Same file already queued/finished: reuse the row instead of doubling it.
+    let same = qlock()
+        .values()
+        .find(|i| i.mod_id == mod_id && i.file_id == target.file_id)
+        .cloned();
+    if let Some(same) = same {
+        if let Some(it) = qlock().get_mut(&same.id) {
+            it.status = "queued".into();
+            it.error = String::new();
+            it.added = chrono::Utc::now().timestamp();
+        }
+        return same.id;
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+    qlock().insert(
+        id.clone(),
+        QueueItem {
+            id: id.clone(),
+            url: format!("nexus://witcher3/mods/{mod_id}/files/{}", target.file_id),
+            filename: target.file_name.clone(),
+            total: target.size,
+            done: 0,
+            status: "queued".into(),
+            error: String::new(),
+            mod_id: mod_id.to_string(),
+            file_id: target.file_id.clone(),
+            mod_name: target.mod_name.clone(),
+            file_title: target.file_title.clone(),
+            version: target.version.clone(),
+            category: target.category.clone(),
+            speed: 0,
+            added: chrono::Utc::now().timestamp(),
+        },
+    );
+    id
+}
+
 /// Claim a row for a worker thread. False when already running.
 pub fn try_begin(id: &str) -> bool {
     if let Some(it) = qlock().get_mut(id) {
@@ -304,6 +345,20 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
                     t
                 }
             })?;
+        links.into_iter().next().ok_or("Nexus didn't give a download address for this file.".to_string())?
+    } else if let Some(rest) = item.url.strip_prefix("nexus://") {
+        // One-click update rows: mod/file ids straight from the API, no
+        // one-time browser key. Free accounts may be refused here — the row
+        // then shows the reason and keeps Retry.
+        let mut parts = rest.split('/');
+        let game = parts.next().unwrap_or("");
+        let mod_id = parts.nth(1).unwrap_or("");
+        let file_id = parts.nth(1).unwrap_or("");
+        if game != "witcher3" || mod_id.is_empty() || file_id.is_empty() {
+            return Err("invalid nexus link".into());
+        }
+        let links = crate::nexus::download_links(mod_id, file_id, api_key, "", "")
+            .map_err(|e| format!("Nexus refused a direct download link ({e}). Premium accounts can retry; free accounts use “Mod Manager Download” on the mod page instead."))?;
         links.into_iter().next().ok_or("Nexus didn't give a download address for this file.".to_string())?
     } else {
         item.url.clone()

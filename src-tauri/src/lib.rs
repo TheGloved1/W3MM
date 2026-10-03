@@ -962,6 +962,39 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
     downloads::items()
 }
 
+/// Resolve one installed mod to its newer Nexus file and queue it.
+/// Returns `{ row_id, version }` ready for `queue_start`, or `{ row_id: "",
+/// version }` when already current. The finished download then flows through
+/// the normal offer-install path (labeled Update via version verdict).
+#[tauri::command]
+fn update_mod(shared: State<Shared>, id: String, api_key: String) -> Result<serde_json::Value, String> {
+    let (nexus, version): (String, String) = {
+        let g = lock_shared(&shared, "update_mod")?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        let row = s.get(&id).cloned().ok_or("unknown mod")?;
+        let nid = if row.nexus.trim().is_empty() {
+            crate::nexus::extract_nexus_id(&row.name)
+        } else {
+            row.nexus.clone()
+        };
+        if nid.is_empty() {
+            return Err("no Nexus ID on this mod — set one in Edit…".into());
+        }
+        (nid, row.version.clone())
+    };
+    log_line("rust", &format!("update_mod: resolving {nexus} (installed {version})"));
+    match crate::nexus::resolve_update(&nexus, &version, &api_key)? {
+        None => Ok(serde_json::json!({ "row_id": "", "version": version })),
+        Some(t) => {
+            let row_id = downloads::enqueue_resolved(&nexus, &t);
+            dl_save(&shared);
+            log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
+            Ok(serde_json::json!({ "row_id": row_id, "version": t.version }))
+        }
+    }
+}
+
 /// Start (or resume) a queued download on a worker thread and return
 /// immediately — the UI never blocks on network (original NexusDownload
 /// QThread; progress/completion arrive as events).
@@ -977,17 +1010,25 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
     std::thread::spawn(move || {
         use tauri::Emitter;
         let aid = id.clone();
-        log_line("rust", &format!("worker {aid}: fetching meta"));
-        // 1. metadata (original info.emit); row shows "Asking Nexus…" meanwhile
-        if let Err(e) = downloads::fetch_meta(&id, &api_key) {
-            downloads::fail(&id, &e);
-            let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
-            let _ = app.emit("download-done", serde_json::json!({"id": aid, "path": "", "bytes": 0, "error": e}));
-            if let Some(h) = hist {
-                downloads::save_history(&h);
+        // 1. metadata (original info.emit); row shows "Asking Nexus…" meanwhile.
+        // Rows enqueued pre-resolved (one-click updates) already carry it.
+        let needs_meta = downloads::items()
+            .into_iter()
+            .find(|i| i.id == id)
+            .map(|i| i.filename.is_empty())
+            .unwrap_or(false);
+        if needs_meta {
+            log_line("rust", &format!("worker {aid}: fetching meta"));
+            if let Err(e) = downloads::fetch_meta(&id, &api_key) {
+                downloads::fail(&id, &e);
+                let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
+                let _ = app.emit("download-done", serde_json::json!({"id": aid, "path": "", "bytes": 0, "error": e}));
+                if let Some(h) = hist {
+                    downloads::save_history(&h);
+                }
+                log_line("rust", &format!("download meta failed id={aid}: {e}"));
+                return;
             }
-            log_line("rust", &format!("download meta failed id={aid}: {e}"));
-            return;
         }
         let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
         let filename = downloads::items().into_iter().find(|i| i.id == id).map(|i| i.filename).unwrap_or_default();
@@ -1609,6 +1650,7 @@ pub fn run() {
             queue_trash,
             queue_pause,
             queue_start,
+            update_mod,
             downloads_history,
             downloads_dir_path,
             settings_dir_path,
