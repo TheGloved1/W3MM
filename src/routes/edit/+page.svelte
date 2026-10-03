@@ -7,6 +7,7 @@
   import FileTree from "$lib/components/file-tree.svelte";
   import FormInput from "$lib/components/form-input.svelte";
   import FormSelect from "$lib/components/form-select.svelte";
+  import ExpandableSection from "$lib/components/expandable-section.svelte";
 
   type Row = {
     id: string;
@@ -162,27 +163,9 @@
     >
   </div>
 
-  <div class="flex flex-col">
-    <button
-      onclick={() => (filesOpen = !filesOpen)}
-      class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-3 py-2 text-left text-sm hover:bg-accent/40 {filesOpen
-        ? 'rounded-b-none border-b-0'
-        : ''}"
-    >
-      <span class="text-muted-foreground">{#if filesOpen}<ChevronDown class="size-4" />{:else}<ChevronRight class="size-4" />{/if}</span>
-      <span class="flex-1">Installed files</span>
-      {#if !filesOpen}
-        <span class="text-muted-foreground">{files.length} files</span>
-      {/if}
-    </button>
-    {#if filesOpen}
-      <FileTree
-        paths={files}
-        maxHeight="12rem"
-        class="rounded-t-none border-t-0"
-      />
-    {/if}
-  </div>
+  <ExpandableSection open={filesOpen} label="Installed files" count={files.length} onToggle={() => filesOpen = !filesOpen}>
+    <FileTree paths={files} maxHeight="12rem" class="rounded-t-none border-t-0" />
+  </ExpandableSection>
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <div class="flex items-center gap-2">
