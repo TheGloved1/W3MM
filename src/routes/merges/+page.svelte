@@ -7,6 +7,7 @@
   import SecondaryButton from '$lib/components/secondary-button.svelte';
   import Panel from '$lib/components/panel.svelte';
   import PrimaryButton from '$lib/components/primary-button.svelte';
+  import Badge from '$lib/components/badge.svelte';
 
   type Shared = { file: string; with: string[] };
   type Inputs = { rel: string; kind: string; base: string; base_encoding: string; versions: { label: string; mod_id: string; text: string }[] };
@@ -150,7 +151,7 @@
       {#if cur}
         <div class="flex items-center gap-2">
           <span class="truncate font-mono text-[13px]">{cur.rel}</span>
-          <span class="rounded-full bg-[#c9a45c]/15 px-2 py-[1px] text-[11px] font-semibold text-[#c9a45c]">{cur.kind === 'xml' ? 'XML' : 'Conflict'}</span>
+          <Badge>{cur.kind === 'xml' ? 'XML' : 'Conflict'}</Badge>
           <span class="truncate text-[12px] text-muted-foreground">with {cur.with.join(', ')}</span>
         </div>
       {/if}
