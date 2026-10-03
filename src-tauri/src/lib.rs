@@ -991,15 +991,42 @@ fn update_mod(shared: State<Shared>, id: String, api_key: String) -> Result<serd
     };
     log_line("rust", &format!("update_mod: resolving {nexus} (installed {version})"));
     match crate::nexus::resolve_update(&nexus, &version, &api_key)? {
-        None => Ok(serde_json::json!({ "row_id": "", "version": version })),
+        None => Ok(serde_json::json!({ "row_id": "", "version": version, "file_id": "" })),
         Some(t) => {
             let row_id = downloads::enqueue_resolved(&nexus, &t);
             dl_save(&shared);
             log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
-            Ok(serde_json::json!({ "row_id": row_id, "version": t.version }))
+            Ok(serde_json::json!({ "row_id": row_id, "version": t.version, "file_id": t.file_id }))
         }
     }
 }
+
+/// Resolve a mod's latest newer file without enqueuing; used for free-account
+/// browser links.
+#[tauri::command]
+fn resolve_mod_update(shared: State<Shared>, id: String, api_key: String) -> Result<serde_json::Value, String> {
+    let (nexus, version): (String, String) = {
+        let g = lock_shared(&shared, "resolve_mod_update")?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        let row = s.get(&id).cloned().ok_or("unknown mod")?;
+        let nid = if row.nexus.trim().is_empty() {
+            crate::nexus::extract_nexus_id(&row.name)
+        } else {
+            row.nexus.clone()
+        };
+        if nid.is_empty() {
+            return Err("no Nexus ID on this mod — set one in Edit…".into());
+        }
+        (nid, row.version.clone())
+    };
+    log_line("rust", &format!("resolve_mod_update: resolving {nexus} (installed {version})"));
+    match crate::nexus::resolve_update(&nexus, &version, &api_key)? {
+        None => Ok(serde_json::json!({ "file_id": "", "version": version })),
+        Some(t) => Ok(serde_json::json!({ "file_id": t.file_id, "version": t.version })),
+    }
+}
+
 
 /// Start (or resume) a queued download on a worker thread and return
 /// immediately — the UI never blocks on network (original NexusDownload
@@ -1658,6 +1685,7 @@ pub fn run() {
             queue_pause,
             queue_start,
             update_mod,
+            resolve_mod_update,
             downloads_history,
             downloads_dir_path,
             settings_dir_path,

@@ -574,28 +574,36 @@
       }
       const isPrem = premium ?? (await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
       if (!isPrem) {
-        // Free accounts can't pull direct links: open the mod's Files page so
-        // a Slow Download is one click away, then install the file manually.
+        // Free accounts: resolve file_id first so we can open the exact file.
+        const res = await invoke<{ file_id: string; version: string }>("resolve_mod_update", { id, apiKey: cfg.nexusKey });
+        if (!res.file_id) {
+          flash("Already on the newest version.");
+          return;
+        }
         const nid = modById(id)?.nexus?.trim();
         if (!nid) {
           error = "No Nexus ID on this mod — set one in Edit…";
           return;
         }
         const { open } = await import("@tauri-apps/plugin-shell");
-        await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files`);
+        await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${res.file_id}&nmm=1`);
         flash("Pick Slow Download on the Nexus page, then Install mods → select the file.");
         return;
       }
       flash("Resolving update…");
-      const res = await invoke<{ row_id: string; version: string }>("update_mod", { id, apiKey: cfg.nexusKey });
+      const res = await invoke<{ row_id: string; version: string; file_id: string }>("update_mod", { id, apiKey: cfg.nexusKey });
       if (!res.row_id) {
         flash("Already on the newest version.");
         return;
       }
+      //optimistically drop from the banner
+      hits = hits.filter(h => h.id !== id);
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
       await invoke("queue_start", { id: res.row_id, destDir: await downloadsDir(), apiKey: cfg.nexusKey });
       queue = await invoke<QueueItem[]>("queue_list");
+      // refresh the hits banner so the updated mod drops out of the list
+      checkUpdates();
     } catch (e) {
       console.error(`[w3mm] update failed: ${String(e)}`);
       error = String(e);
