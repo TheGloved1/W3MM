@@ -1,6 +1,15 @@
 #!/usr/bin/env bun
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile as execFileCb } from 'node:child_process';
+
+function execFileAsync(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFileCb(file, args, { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout as string);
+    });
+  });
+}
 
 const POLL_DEFAULT_S = 10;
 const ACTIVE = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
@@ -214,17 +223,22 @@ function render(run: RunInfo, jobs: JobInfo[], tick: number): string {
   return lines.join('\n');
 }
 
-function fetchRun(repo: string, id: number): RunInfo {
-  const out = sh([
-    'run', 'view', String(id), '-R', repo, '--json',
-    'databaseId,number,displayTitle,headBranch,headSha,event,status,conclusion,createdAt,updatedAt,url,workflowName',
-  ]);
-  return JSON.parse(out) as RunInfo;
+async function ghJson(cmd: string[], signal?: AbortSignal): Promise<any> {
+  void signal;
+  const stdout = await execFileAsync('gh', cmd);
+  return JSON.parse(stdout);
 }
 
-function fetchJobs(repo: string, id: number): JobInfo[] {
-  const out = sh(['run', 'view', String(id), '-R', repo, '--json', 'jobs']);
-  const jobs = (JSON.parse(out) as { jobs: JobInfo[] }).jobs ?? [];
+async function fetchRunAsync(repo: string, id: number): Promise<RunInfo> {
+  return (await ghJson([
+    'run', 'view', String(id), '-R', repo, '--json',
+    'databaseId,number,displayTitle,headBranch,headSha,event,status,conclusion,createdAt,updatedAt,url,workflowName',
+  ])) as RunInfo;
+}
+
+async function fetchJobsAsync(repo: string, id: number): Promise<JobInfo[]> {
+  const out = (await ghJson(['run', 'view', String(id), '-R', repo, '--json', 'jobs'])) as { jobs: JobInfo[] };
+  const jobs = out.jobs ?? [];
   jobs.sort((a, b) => (ts(a.startedAt) || ts(a.databaseId)) - (ts(b.startedAt) || ts(b.databaseId)));
   return jobs;
 }
@@ -269,40 +283,74 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  let tick = 0;
-  for (;;) {
-    let run: RunInfo;
-    try {
-      run = fetchRun(repo, runId);
-    } catch {
-      showCursor();
-      process.exit(2);
-    }
-    const jobs = fetchJobs(repo, runId);
-    const frame = render(run, jobs, tick++);
-    if (interactive) {
-      process.stdout.write('\x1b[2J\x1b[H' + frame + '\n');
-    } else {
-      console.log(frame);
-    }
-    if (run.status === 'completed' || opts.once) {
-      showCursor();
-      if (opts.logs && run.status === 'completed' && run.conclusion !== 'success') {
-        console.log('\n--- failed logs ---');
-        try {
-          const logs = execFileSync('gh', ['run', 'view', String(runId), '-R', repo, '--log-failed'], {
-            encoding: 'utf-8',
-            maxBuffer: 64 * 1024 * 1024,
-          });
-          console.log(logs.split('\n').slice(-120).join('\n'));
-        } catch (e: any) {
-          console.error(`could not fetch logs: ${e?.message ?? e}`);
-        }
+  const paint = (text: string) => {
+    if (interactive) process.stdout.write('\x1b[2J\x1b[H' + text + '\n');
+    else console.log(text);
+  };
+
+  const finishRun = (run: RunInfo): never => {
+    showCursor();
+    if (opts.logs && run.status === 'completed' && run.conclusion !== 'success') {
+      console.log('\n--- failed logs ---');
+      try {
+        const logs = execFileSync('gh', ['run', 'view', String(runId), '-R', repo, '--log-failed'], {
+          encoding: 'utf-8',
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        console.log(logs.split('\n').slice(-120).join('\n'));
+      } catch (e: any) {
+        console.error(`could not fetch logs: ${e?.message ?? e}`);
       }
-      process.exit(run.status === 'completed' && run.conclusion !== 'success' ? 1 : 0);
     }
-    await new Promise((r) => setTimeout(r, opts.interval * 1000));
+    process.exit(run.status === 'completed' && run.conclusion !== 'success' ? 1 : 0);
+  };
+
+  // --once: single blocking snapshot.
+  if (opts.once) {
+    const run = fetchRun(repo, runId);
+    const jobs = fetchJobs(repo, runId);
+    paint(render(run, jobs, 0));
+    finishRun(run);
   }
+
+  // Watch mode: poll the API in the background while a fast local timer
+  // keeps the spinner and elapsed clocks animating, so the UI never looks frozen.
+  let cache: { run: RunInfo; jobs: JobInfo[] } | null = null;
+  let lastError = '';
+  let tick = 0;
+  let polling = false;
+
+  paint(`${C.dim}connecting to run ${runId}…${C.reset}`);
+
+  const drawTimer = setInterval(() => {
+    if (!cache) {
+      paint(`${C.dim}connecting to run ${runId}… ${lastError}${C.reset}`);
+      return;
+    }
+    paint(render(cache.run, cache.jobs, tick++));
+  }, 150);
+
+  const poll = async () => {
+    if (polling) return;
+    polling = true;
+    try {
+      const [run, jobs] = await Promise.all([fetchRunAsync(repo, runId), fetchJobsAsync(repo, runId)]);
+      cache = { run, jobs };
+      lastError = '';
+      if (run.status === 'completed') {
+        paint(render(run, jobs, tick++));
+        clearInterval(drawTimer);
+        finishRun(run);
+      }
+    } catch (e: any) {
+      lastError = `${C.red}(retrying: ${String(e?.message ?? e).split('\n')[0]})${C.reset}`;
+    } finally {
+      polling = false;
+    }
+  };
+  await poll();
+  setInterval(poll, opts.interval * 1000);
+  await new Promise(() => {});
 }
 
 main();
