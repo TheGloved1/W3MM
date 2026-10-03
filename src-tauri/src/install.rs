@@ -74,6 +74,7 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
                 continue;
             }
             let rel = e.path().strip_prefix(&root).unwrap_or(e.path()).to_string_lossy().to_string();
+            let rel = rel.trim_end_matches('/').trim_end_matches('\\').to_string();
             let low = rel.to_lowercase();
             // Top-level grouping: mods|dlc|bin|content/...
             let first = rel.split(['/', '\\']).next().unwrap_or("").to_lowercase();
@@ -102,11 +103,12 @@ pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Resu
     let mut targets = vec![];
     crate::log_line("rust", &format!("build_staging: stage={} mod_folder={} moves={}", stage.display(), mod_folder, plan.moves.len()));
     for (src, rel) in &plan.moves {
-        let first = rel.split('/').next().unwrap_or("").to_lowercase();
+        let rel_trim = rel.trim_end_matches('/').trim_end_matches('\\');
+        let first = rel_trim.split('/').next().unwrap_or("").to_lowercase();
         let target_rel = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
-            rel.clone()
+            rel_trim.to_string()
         } else {
-            format!("mods/{mod_folder}/{rel}")
+            format!("mods/{mod_folder}/{}", rel_trim)
         };
         let dst = stage.join(&target_rel);
         crate::log_line("rust", &format!("build_staging: copy src='{}' rel='{}' target_rel='{}' dst='{}'", src, rel, target_rel, dst.display()));
