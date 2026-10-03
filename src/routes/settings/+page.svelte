@@ -6,6 +6,7 @@
   import type { AppConfig } from '$lib/types';
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
+  import PrimaryButton from '$lib/components/primary-button.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -187,6 +188,6 @@
     <button onclick={() => detect()} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Detect Steam install</button>
     <span class="flex-1"></span>
     <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Cancel</button>
-    <button onclick={save} class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110">Save</button>
+    <PrimaryButton onclick={save} class="px-[18px] py-2 text-sm">Save</PrimaryButton>
   </div>
 </div>

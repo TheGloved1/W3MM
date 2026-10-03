@@ -7,6 +7,7 @@
   import FileTree from '$lib/components/file-tree.svelte';
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
+  import PrimaryButton from '$lib/components/primary-button.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -146,6 +147,6 @@
   <div class="flex items-center gap-2">
     <span class="flex-1"></span>
     <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent"><X class="inline size-4" /> Cancel</button>
-    <button onclick={install} disabled={busy || !roots.length} class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110 disabled:opacity-50">{busy ? 'Installing…' : 'Install'}</button>
+    <PrimaryButton onclick={install} disabled={busy || !roots.length} class="px-[18px] py-2 text-sm">{busy ? 'Installing…' : 'Install'}</PrimaryButton>
   </div>
 </div>

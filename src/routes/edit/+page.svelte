@@ -8,6 +8,7 @@
   import FormInput from "$lib/components/form-input.svelte";
   import FormSelect from "$lib/components/form-select.svelte";
   import ExpandableSection from "$lib/components/expandable-section.svelte";
+  import PrimaryButton from "$lib/components/primary-button.svelte";
 
   type Row = {
     id: string;
@@ -175,10 +176,6 @@
       class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent"
       ><X class="size-4" /> Cancel</button
     >
-    <button
-      onclick={save}
-      class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110"
-      >Save</button
-    >
+    <PrimaryButton onclick={save} class="px-[18px] py-2 text-sm">Save</PrimaryButton>
   </div>
 </div>

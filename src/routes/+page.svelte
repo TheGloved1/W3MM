@@ -5,6 +5,7 @@
   import type { AppState, MadeFor, QueueItem } from "$lib/types";
   import { loadConfigNative } from "$lib/config";
   import DataList from "$lib/components/data-list.svelte";
+  import PrimaryButton from "$lib/components/primary-button.svelte";
   import * as Table from "$lib/components/ui/table/index.js";
   import {
     ArrowUp,
@@ -1247,10 +1248,7 @@
         class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent"
         >Play</button
       >
-      <button
-        onclick={pickArchives}
-        class="rounded-[7px] bg-primary px-[18px] py-2 text-sm font-semibold text-primary-foreground hover:brightness-110"
-        >Install mods</button
+      <PrimaryButton onclick={pickArchives} class="px-[18px] py-2 text-sm">Install mods</PrimaryButton>
       >
       <div class="relative">
         <button

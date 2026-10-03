@@ -6,6 +6,7 @@
   import CodeViewer from '$lib/components/code-viewer.svelte';
   import SecondaryButton from '$lib/components/secondary-button.svelte';
   import Panel from '$lib/components/panel.svelte';
+  import PrimaryButton from '$lib/components/primary-button.svelte';
 
   type Shared = { file: string; with: string[] };
   type Inputs = { rel: string; kind: string; base: string; base_encoding: string; versions: { label: string; mod_id: string; text: string }[] };
@@ -193,7 +194,7 @@
           <div class="rounded-[7px] border border-border bg-well">
             <div class="flex items-center border-b border-border px-2 py-1">
               <span class="flex-1 text-[11px] uppercase tracking-wide text-muted-foreground">Merged preview</span>
-              <button onclick={save} class="rounded-[7px] bg-primary px-3 py-1 text-[13px] font-semibold text-primary-foreground hover:brightness-110">Save merge</button>
+              <PrimaryButton onclick={save}>Save merge</PrimaryButton>
             </div>
             <CodeViewer lines={out} codeFont={codeFont} codeSize={codeSize} class="max-h-64" />
           </div>
