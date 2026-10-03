@@ -197,17 +197,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mapfile -t FILES < <(find bundles-windows-x86_64 bundles-linux-x86_64 bundles-darwin-aarch64 -type f \( \
+          # Only the platforms in this run's matrix exist as bundles-* dirs
+          # (e.g. Linux-only runs have just bundles-linux-x86_64).
+          mapfile -t DIRS < <(ls -d bundles-*/ 2>/dev/null || true)
+          if [ "${#DIRS[@]}" -eq 0 ]; then
+            echo "No bundles-* artifact directories were downloaded:"
+            ls -la
+            exit 1
+          fi
+          mapfile -t FILES < <(find "${DIRS[@]}" -type f \( \
             -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o \
             -name '*.rpm' -o -name '*.dmg' \) | sort)
           # UPDATER: also upload the combined manifest (and count it below):
           # FILES+=(updater.json)
           echo "Uploading ${#FILES[@]} files:"
           printf '  %s\n' "${FILES[@]}"
-          # 6 bundles expected (msi, exe, deb, AppImage, rpm, dmg).
-          # UPDATER: expect 7 once updater.json is included.
-          if [ "${#FILES[@]}" -ne 6 ]; then
-            echo "Expected 6 files (6 bundles), found ${#FILES[@]}"
+          # At least one bundle must exist; the exact set depends on which
+          # platforms this run's matrix built.
+          # UPDATER: also expect updater.json once included.
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "Expected at least 1 bundle file, found 0"
             exit 1
           fi
           # One file at a time with retries: GitHub asset uploads are
