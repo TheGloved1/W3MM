@@ -302,7 +302,27 @@ async function main(): Promise<void> {
     else console.log(text);
   };
 
-  const finishRun = (run: RunInfo): never => {
+  async function showReleaseAssets(run: RunInfo): Promise<void> {
+    try {
+      const m = run.displayTitle.match(/v?(\d{2}\.\d{1,2}\.\d+)/);
+      if (!m) return;
+      const tag = `v${m[1]}`;
+      const rel = await ghJson(['release', 'view', tag, '-R', repo, '--json', 'tagName,url,assets']);
+      if (!rel || !rel.assets?.length) {
+        console.log(`\n${C.dim}no release assets found for ${tag}${C.reset}`);
+        return;
+      }
+      console.log(`\n${C.bold}Release assets for ${rel.tagName}${C.reset}`);
+      console.log(`${C.dim}${rel.url}${C.reset}\n`);
+      for (const a of rel.assets) {
+        console.log(`${C.green}•${C.reset} ${a.name}  ${C.dim}${a.url}${C.reset}`);
+      }
+    } catch {
+      // ignore if release not yet created
+    }
+  }
+
+  const finishRun = async (run: RunInfo): Promise<never> => {
     showCursor();
     if (opts.logs && run.status === 'completed' && run.conclusion !== 'success') {
       console.log('\n--- failed logs ---');
@@ -316,15 +336,18 @@ async function main(): Promise<void> {
         console.error(`could not fetch logs: ${e?.message ?? e}`);
       }
     }
+    if (run.conclusion === 'success') {
+      await showReleaseAssets(run);
+    }
     process.exit(run.status === 'completed' && run.conclusion !== 'success' ? 1 : 0);
   };
 
   // --once: single blocking snapshot.
   if (opts.once) {
-    const run = fetchRun(repo, runId);
-    const jobs = fetchJobs(repo, runId);
+    const run = await fetchRunAsync(repo, runId);
+    const jobs = await fetchJobsAsync(repo, runId);
     paint(render(run, jobs, 0));
-    finishRun(run);
+    await finishRun(run);
   }
 
   // Watch mode: poll the API in the background while a fast local timer
@@ -354,7 +377,7 @@ async function main(): Promise<void> {
       if (run.status === 'completed') {
         paint(render(run, jobs, tick++));
         clearInterval(drawTimer);
-        finishRun(run);
+        await finishRun(run);
       }
     } catch (e: any) {
       lastError = `${C.red}(retrying: ${String(e?.message ?? e).split('\n')[0]})${C.reset}`;
