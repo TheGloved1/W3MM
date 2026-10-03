@@ -14,6 +14,11 @@ A mod manager for The Witcher 3 on Linux (Steam/Proton). Install, update, reorde
 
 ## Run it
 
+Grab the latest release from the [releases page](https://github.com/TheGloved1/W3MM/releases) (`.deb`, `.AppImage`, or `.rpm`), install it, and point it at your Witcher 3 folder — it auto-detects Steam installs. Paste a Nexus API key into Settings to enable downloads and update checks.
+
+<details>
+<summary>Running from source</summary>
+
 Requires [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/), and the Tauri system libs:
 
 ```bash
@@ -21,8 +26,7 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 bun install
 bun tauri dev
 ```
-
-Point it at your Witcher 3 folder (it auto-detects Steam installs), paste a Nexus API key into Settings, and install mods. Switching from the old Python manager? Your `_ModManager` data is never touched.
+</details>
 
 ## License
 
