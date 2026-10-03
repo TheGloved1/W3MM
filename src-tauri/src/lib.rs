@@ -1124,8 +1124,16 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         url = if query.is_empty() { format!("http://localhost:1420/{route}") } else { format!("http://localhost:1420/{route}?{query}") };
     }
     log_line("rust", &format!("open_tool_window: building window label={kind:?} title={title:?} route={route:?} url={url:?}"));
+    // Release: load the ROUTE path, not the file. Tauri serves settings.html
+    // for it via its asset fallback chain, and SvelteKit then sees the same
+    // pathname as in dev (/settings). Loading settings.html directly boots
+    // SvelteKit with pathname /settings.html, which matches no route, so the
+    // client renders its 404 page in release builds only.
     #[cfg(not(dev))]
-    let webview_url = tauri::WebviewUrl::App(url.into());
+    let webview_url = {
+        let route_url = if query.is_empty() { route.to_string() } else { format!("{route}?{query}") };
+        tauri::WebviewUrl::App(route_url.into())
+    };
     #[cfg(dev)]
     let webview_url = tauri::WebviewUrl::External(url.parse().expect("valid dev url"));
     let _win = tauri::WebviewWindowBuilder::new(&app, kind.clone(), webview_url)
