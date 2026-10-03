@@ -6,6 +6,7 @@
   import { ChevronDown, ChevronRight, X } from "lucide-svelte";
   import FileTree from "$lib/components/file-tree.svelte";
   import FormInput from "$lib/components/form-input.svelte";
+  import FormSelect from "$lib/components/form-select.svelte";
 
   type Row = {
     id: string;
@@ -145,13 +146,7 @@
     <span class="text-sm">Nexus ID</span>
     <FormInput bind:value={nexus} mono width="110px" />
     <span class="text-sm">Section</span>
-    <select
-      bind:value={section}
-      class="rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary"
-    >
-      <option value="">No section</option>
-      {#each sections as s}<option value={s.id}>{s.name}</option>{/each}
-    </select>
+    <FormSelect bind:value={section} options={[{value:'',label:'No section'}, ...sections.map(s=>({value:s.id,label:s.name}))]} />
     <span></span>
     <button
       onclick={newSection}

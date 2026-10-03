@@ -5,6 +5,7 @@
   import { loadConfigNative, saveConfigNative } from '$lib/config';
   import type { AppConfig } from '$lib/types';
   import FormInput from '$lib/components/form-input.svelte';
+  import FormSelect from '$lib/components/form-select.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -146,9 +147,7 @@
     </div>
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm" title="The font code is shown in, in Script decisions.">Code font</span>
-      <select bind:value={config.codeFont} class="min-w-0 flex-1 rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none focus:border-primary">
-        {#each codeFonts as f}<option value={f}>{f}</option>{/each}
-      </select>
+      <FormSelect bind:value={config.codeFont} options={codeFonts.map(f=>({value:f,label:f}))} class="min-w-0 flex-1" />
       <FormInput bind:value={config.codeSize} type="number" width="86px" class="" />
     </div>
     <div class="flex gap-3">
