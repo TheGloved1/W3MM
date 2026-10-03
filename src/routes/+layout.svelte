@@ -51,7 +51,7 @@
 </script>
 
 <svelte:head>
-  <title>W3 Mod Manager</title>
+  <title>W3MM</title>
 </svelte:head>
 
 <div class="h-screen bg-background text-foreground overflow-hidden">

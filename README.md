@@ -1,8 +1,8 @@
-# W3LMN
+# W3MM
 
 Witcher 3 Legacy Mod Nexus manager for Linux (Proton/Wine).
 
-Tauri 2 + Rust + Svelte 5 port of `w3modmanager.py` (full-parity track: script merger + XML merger + Nexus + keybinds). Clean break: home is `<game>/_W3LMN/` (state/staging/backup), never touches `_ModManager`. Linux-only bundles (deb/appimage/rpm). Extraction: pure-Rust `zip`/`sevenz-rust`/`tar`/`flate2` plus RAR via the vendored unrar library (statically linked, no system tools needed; RAR 1.5–5.x including multipart).
+Tauri 2 + Rust + Svelte 5 port of `w3modmanager.py` (full-parity track: script merger + XML merger + Nexus + keybinds). Clean break: home is `<game>/_W3MM/` (state/staging/backup), never touches `_ModManager`. Linux-only bundles (deb/appimage/rpm). Extraction: pure-Rust `zip`/`sevenz-rust`/`tar`/`flate2` plus RAR via the vendored unrar library (statically linked, no system tools needed; RAR 1.5–5.x including multipart).
 
 Ships with: collapsible sidebar layout, shared `PageHeader` / `DataList` /
 `SortHeader` components, shadcn-style UI components, 8 themes + 6 fonts with

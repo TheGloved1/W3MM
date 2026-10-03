@@ -1,14 +1,14 @@
 [package]
 # TODO: rename to your app (also update [lib] name + tauri.conf.json productName/identifier)
-name = "w3lmn"
+name = "w3mm"
 version = "26.9.0"
 description = "Witcher 3 Legacy Mod Nexus manager for Linux (Proton/Wine)"
-authors = ["W3LMN Contributors"]
+authors = ["W3MM Contributors"]
 license = "MIT"
 edition = "2021"
 
 [lib]
-name = "w3lmn_lib"
+name = "w3mm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

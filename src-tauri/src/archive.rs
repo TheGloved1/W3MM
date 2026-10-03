@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn rar_fixture_extracts() {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/comment.rar");
-        let dir = std::env::temp_dir().join(format!("w3lmn-rar-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("w3mm-rar-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         extract_archive(&p, &dir).expect("extract rar");
         let count = walkdir::WalkDir::new(&dir).into_iter().flatten().filter(|e| e.file_type().is_file()).count();

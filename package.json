@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<OWNER>/W3LMN.git"
+    "url": "https://github.com/<OWNER>/W3MM.git"
   },
-  "homepage": "https://github.com/<OWNER>/W3LMN",
-  "bugs": "https://github.com/<OWNER>/W3LMN/issues",
-  "author": "W3LMN Contributors",
+  "homepage": "https://github.com/<OWNER>/W3MM",
+  "bugs": "https://github.com/<OWNER>/W3MM/issues",
+  "author": "W3MM Contributors",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

@@ -11,7 +11,7 @@ on:
 
 env:
   # TODO: set to your Tauri productName (must match tauri.conf.json).
-  APP_NAME: W3LMN
+  APP_NAME: W3MM
 
 jobs:
   build:

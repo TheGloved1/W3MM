@@ -18,15 +18,15 @@
   const codeFonts = ['JetBrains Mono', 'Fira Code', 'Hack', 'DejaVu Sans Mono', 'monospace'];
 
   onMount(async () => {
-    console.debug("[w3lmn] settings window mounted");
+    console.debug("[w3mm] settings window mounted");
     try {
       config = await loadConfigNative();
-      console.debug("[w3lmn] settings config loaded", config);
+      console.debug("[w3mm] settings config loaded", config);
       if (!config.gameDir) detect(true);
       else checkGame();
       checkMerger();
     } catch (e) {
-      console.error("[w3lmn] settings init failed", e);
+      console.error("[w3mm] settings init failed", e);
       warn = String(e);
     }
   });

@@ -62,7 +62,7 @@ pub fn version_is_newer(remote: &str, local: &str) -> bool {
 
 pub fn nexus_get(path: &str, api_key: &str) -> Result<serde_json::Value, String> {
     let client = reqwest::blocking::Client::builder()
-        .user_agent("W3LMN/1.0")
+        .user_agent("W3MM/1.0")
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -71,7 +71,7 @@ pub fn nexus_get(path: &str, api_key: &str) -> Result<serde_json::Value, String>
     let resp = client
         .get(&url)
         .header("apikey", api_key)
-        .header("Application-Name", "W3LMN")
+        .header("Application-Name", "W3MM")
         .header("Application-Version", env!("CARGO_PKG_VERSION"))
         .send()
         .map_err(|e| e.to_string())?;
@@ -207,7 +207,7 @@ pub fn download_links(mod_id: &str, file_id: &str, api_key: &str, key: &str, exp
 /// Blocking file download with basic resume; returns bytes written.
 pub fn download_url(url: &str, dest: &std::path::Path, api_key: &str) -> Result<u64, String> {
     let client = reqwest::blocking::Client::builder()
-        .user_agent("W3LMN/1.0")
+        .user_agent("W3MM/1.0")
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;

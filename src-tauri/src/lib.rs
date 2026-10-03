@@ -1,4 +1,4 @@
-//! W3LMN backend: Tauri commands over the ported ModManager core.
+//! W3MM backend: Tauri commands over the ported ModManager core.
 //!
 //! Mapping to `w3modmanager.py`:
 //! - list/set/priority -> `state.rs` (ModManager rows/priority)
@@ -31,7 +31,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tauri::State;
 
-/// XDG state dir log file (e.g. ~/.local/state/w3lmn/w3lmn.log).
+/// XDG state dir log file (e.g. ~/.local/state/w3mm/w3mm.log).
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 fn log_path() -> &'static PathBuf {
@@ -45,9 +45,9 @@ fn log_path() -> &'static PathBuf {
                 p
             });
         let mut dir = base;
-        dir.push("w3lmn");
+        dir.push("w3mm");
         let _ = std::fs::create_dir_all(&dir);
-        dir.push("w3lmn.log");
+        dir.push("w3mm.log");
         dir
     })
 }
@@ -286,7 +286,7 @@ fn preview_archive(path: String) -> Result<install::InstallPlan, String> {
     use std::path::Path;
     let archive = Path::new(&path);
     // Extract to a temp dir, analyze, return plan (caller confirms before staging).
-    let tmp = std::env::temp_dir().join(format!("w3lmn-preview-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("w3mm-preview-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     archive::extract_archive(archive, &tmp).map_err(|e| e.to_string())?;
@@ -358,7 +358,7 @@ fn download_nxm(url: String, api_key: String, dest_dir: String) -> Result<String
 
 #[tauri::command]
 fn install_archive(shared: State<Shared>, path: String, name: String, version: String, nexus_id: String) -> Result<String, String> {
-    let tmp = std::env::temp_dir().join(format!("w3lmn-install-{}", uuid::Uuid::new_v4().simple()));
+    let tmp = std::env::temp_dir().join(format!("w3mm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
@@ -1014,7 +1014,7 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
     Ok(true)
 }
 
-/// Absolute downloads-dir path (<game>/_W3LMN/downloads).
+/// Absolute downloads-dir path (<game>/_W3MM/downloads).
 #[tauri::command]
 fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
     let g = lock_shared(&shared, "downloads_dir_path")?;
@@ -1316,7 +1316,7 @@ pub struct PlanRoot {
 fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
     use std::path::Path;
     let archive = Path::new(&path);
-    let tmp = std::env::temp_dir().join(format!("w3lmn-roots-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("w3mm-roots-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let plan = (|| {
@@ -1368,7 +1368,7 @@ pub struct InstallPreview {
 fn install_preview(path: String) -> Result<InstallPreview, String> {
     use std::path::Path;
     let archive = Path::new(&path);
-    let tmp = std::env::temp_dir().join(format!("w3lmn-preview-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("w3mm-preview-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let plan = (|| {
@@ -1419,7 +1419,7 @@ fn install_roots(
     section: String,
     roots: Vec<PlanRoot>,
 ) -> Result<String, String> {
-    let tmp = std::env::temp_dir().join(format!("w3lmn-install-{}", uuid::Uuid::new_v4().simple()));
+    let tmp = std::env::temp_dir().join(format!("w3mm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
@@ -1519,7 +1519,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            log_line("rust", &format!("W3LMN v{} starting, worker-thread downloads", env!("CARGO_PKG_VERSION")));
+            log_line("rust", &format!("W3MM v{} starting, worker-thread downloads", env!("CARGO_PKG_VERSION")));
             // Forward OS deep-link opens (nxm://…) to the frontend as events.
             // The .desktop MimeType registration comes from the
             // `security.deepLinkProtocols` entry in tauri.conf.json — no

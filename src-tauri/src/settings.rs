@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const MANAGED_MARK: &str = "; W3LMN managed below — edits above this line are kept";
+const MANAGED_MARK: &str = "; W3MM managed below — edits above this line are kept";
 
 /// Merge keybind lines into input.settings: keep user content, replace the
 /// managed block at the end per section.
@@ -79,7 +79,7 @@ mod tests {
     use super::*;
     #[test]
     fn keeps_user_content() {
-        let dir = std::env::temp_dir().join("w3lmn-settings-test");
+        let dir = std::env::temp_dir().join("w3mm-settings-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("input.settings");

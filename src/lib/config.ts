@@ -1,7 +1,7 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 import type { AppConfig } from './types';
 
-// W3LMN settings persisted via the Tauri store plugin (settings.json).
+// W3MM settings persisted via the Tauri store plugin (settings.json).
 const store = new LazyStore('settings.json');
 
 const DEFAULTS: AppConfig = {

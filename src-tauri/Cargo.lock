@@ -5279,7 +5279,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "w3lmn"
+name = "w3mm"
 version = "26.9.0"
 dependencies = [
  "chrono",

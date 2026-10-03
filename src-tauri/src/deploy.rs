@@ -238,7 +238,7 @@ mod tests {
     use std::io::Write;
 
     fn setup_tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("w3lmn-deploy-test-{}-{tag}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         let staging = base.join("staging").join("mod1");

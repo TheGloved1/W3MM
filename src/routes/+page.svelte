@@ -319,7 +319,7 @@
   }
 
   async function refresh() {
-    console.debug(`[w3lmn] refresh: start`);
+    console.debug(`[w3mm] refresh: start`);
     appState = await invoke<AppState>("list_mods");
     queue = await invoke<QueueItem[]>("downloads_history").catch(() => queue);
     clashMap = await invoke<Record<string, string[]>>("clashes").catch(
@@ -347,7 +347,7 @@
     );
     void qtip;
     quotaText = qt;
-    console.debug(`[w3lmn] refresh: done`);
+    console.debug(`[w3mm] refresh: done`);
   }
 
   function flash(msg: string) {
@@ -366,7 +366,7 @@
       busy = "Deploying…";
       error = "";
     }
-    console.debug(`[w3lmn] deploy: invoking`);
+    console.debug(`[w3mm] deploy: invoking`);
     try {
       const running = await invoke<boolean>("game_running");
       if (running) {
@@ -375,7 +375,7 @@
         return;
       }
       const files = await invoke<string[]>("deploy");
-      console.debug(`[w3lmn] deploy: done ${files.length} files`);
+      console.debug(`[w3mm] deploy: done ${files.length} files`);
       busy = "";
       flash(`Deployed ${files.length} file${files.length === 1 ? "" : "s"}`);
       await refresh();
@@ -384,7 +384,7 @@
           "@tauri-apps/plugin-notification"
         );
         sendNotification({
-          title: "W3 Mod Manager",
+          title: "W3MM",
           body: `Deployed ${files.length} files`,
         });
       } catch {}
@@ -446,33 +446,33 @@
 
   function openEdit(id: string) {
     ctx = null;
-    console.debug("[w3lmn] open_tool_window edit", id);
+    console.debug("[w3mm] open_tool_window edit", id);
     invoke("open_tool_window", {
       kind: "edit",
       query: `id=${encodeURIComponent(id)}`,
       path: id,
     }).catch((e) => {
-      console.error("[w3lmn] open_tool_window edit failed", e);
+      console.error("[w3mm] open_tool_window edit failed", e);
       error = String(e);
     });
   }
 
   function openResolver() {
     menuOpen = false;
-    console.debug("[w3lmn] open_tool_window resolver");
+    console.debug("[w3mm] open_tool_window resolver");
     invoke("open_tool_window", { kind: "resolver", query: "", path: "" }).catch(
       (e) => {
-        console.error("[w3lmn] open_tool_window resolver failed", e);
+        console.error("[w3mm] open_tool_window resolver failed", e);
         error = String(e);
       },
     );
   }
   function openSettings() {
     menuOpen = false;
-    console.debug("[w3lmn] open_tool_window settings");
+    console.debug("[w3mm] open_tool_window settings");
     invoke("open_tool_window", { kind: "settings", query: "", path: "" }).catch(
       (e) => {
-        console.error("[w3lmn] open_tool_window settings failed", e);
+        console.error("[w3mm] open_tool_window settings failed", e);
         error = String(e);
       },
     );
@@ -490,7 +490,7 @@
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(`https://www.nexusmods.com/witcher3/mods/${nid}`);
     } catch (e) {
-      console.error(`[w3lmn] open nexus page failed: ${String(e)}`);
+      console.error(`[w3mm] open nexus page failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -502,7 +502,7 @@
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(dir);
     } catch (e) {
-      console.error(`[w3lmn] open mod folder failed: ${String(e)}`);
+      console.error(`[w3mm] open mod folder failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -535,13 +535,13 @@
       flash("No archive recorded — pick the file again.");
       return;
     }
-    console.debug("[w3lmn] open_tool_window install (reinstall)", m.archive);
+    console.debug("[w3mm] open_tool_window install (reinstall)", m.archive);
     await invoke("open_tool_window", {
       kind: "install",
       query: `path=${encodeURIComponent(m.archive)}`,
       path: m.archive,
     }).catch((e) => {
-      console.error("[w3lmn] open_tool_window install failed", e);
+      console.error("[w3mm] open_tool_window install failed", e);
       error = String(e);
     });
   }
@@ -597,10 +597,10 @@
           : kind === "settings"
             ? await invoke<string>("settings_dir_path")
             : `${await invoke<string>("settings_dir_path")}/${kind}`;
-      console.debug(`[w3lmn] opening ${kind}: ${target}`);
+      console.debug(`[w3mm] opening ${kind}: ${target}`);
       await open(target);
     } catch (e) {
-      console.error(`[w3lmn] open ${kind} failed: ${String(e)}`);
+      console.error(`[w3mm] open ${kind} failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -733,18 +733,18 @@
           ? [sel as string]
           : [];
       for (const p of paths) {
-        console.debug("[w3lmn] open_tool_window install (picked)", p);
+        console.debug("[w3mm] open_tool_window install (picked)", p);
         await invoke("open_tool_window", {
           kind: "install",
           query: `path=${encodeURIComponent(p)}`,
           path: p,
         }).catch((e) => {
-          console.error("[w3lmn] open_tool_window install failed", e);
+          console.error("[w3mm] open_tool_window install failed", e);
           error = String(e);
         });
       }
     } catch (e) {
-      console.error("[w3lmn] pickArchives failed", e);
+      console.error("[w3mm] pickArchives failed", e);
     }
   }
 
@@ -874,10 +874,10 @@
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
       const d = await downloadsDir();
-      console.debug(`[w3lmn] opening downloads folder: ${d}`);
+      console.debug(`[w3mm] opening downloads folder: ${d}`);
       await open(d);
     } catch (e) {
-      console.error(`[w3lmn] open downloads folder failed: ${String(e)}`);
+      console.error(`[w3mm] open downloads folder failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -920,13 +920,13 @@
     const url = preset ?? nxm;
     if (!url) return;
     nxm = url;
-    console.debug(`[w3lmn] nxm received: ${url}`);
+    console.debug(`[w3mm] nxm received: ${url}`);
     error = "";
     try {
-      console.debug(`[w3lmn] dlNxm: loading config`);
+      console.debug(`[w3mm] dlNxm: loading config`);
       const cfg = await loadConfigNative();
       console.debug(
-        `[w3lmn] dlNxm: config ok, nexusKey=${cfg.nexusKey ? "set" : "MISSING"}`,
+        `[w3mm] dlNxm: config ok, nexusKey=${cfg.nexusKey ? "set" : "MISSING"}`,
       );
       if (!cfg.nexusKey) {
         error = "Set Nexus API key in Settings first";
@@ -934,9 +934,9 @@
       }
       // enqueue is instant (no network); the worker thread resolves metadata
       // and streams the file — progress/completion arrive as events.
-      console.debug(`[w3lmn] dlNxm: invoking queue_enqueue`);
+      console.debug(`[w3mm] dlNxm: invoking queue_enqueue`);
       const id = await invoke<string>("queue_enqueue", { url });
-      console.debug(`[w3lmn] dlNxm: enqueued id=${id}`);
+      console.debug(`[w3mm] dlNxm: enqueued id=${id}`);
       dlOpen = true;
       queue = await invoke<QueueItem[]>("queue_list");
       const row = queue.find((qq) => qq.id === id);
@@ -953,16 +953,16 @@
         if (!dlSameFile(row)) await offerInstall(row);
         return;
       }
-      console.debug(`[w3lmn] dlNxm: invoking queue_start id=${id}`);
+      console.debug(`[w3mm] dlNxm: invoking queue_start id=${id}`);
       await invoke("queue_start", {
         id,
         destDir: await downloadsDir(),
         apiKey: cfg.nexusKey,
       });
-      console.debug(`[w3lmn] dlNxm: queue_start acked id=${id}`);
+      console.debug(`[w3mm] dlNxm: queue_start acked id=${id}`);
       queue = await invoke<QueueItem[]>("queue_list");
     } catch (e) {
-      console.error(`[w3lmn] dlNxm FAILED: ${String(e)}`);
+      console.error(`[w3mm] dlNxm FAILED: ${String(e)}`);
       error = String(e);
     }
   }
@@ -1041,13 +1041,13 @@
           "@tauri-apps/plugin-deep-link"
         );
         const cur = await getCurrent().catch(() => []);
-        console.debug(`[w3lmn] deep-link getCurrent: ${JSON.stringify(cur)}`);
+        console.debug(`[w3mm] deep-link getCurrent: ${JSON.stringify(cur)}`);
         if (cur?.length) {
           dlOpen = true;
           await dlNxm(cur[0]);
         }
         unlisten = await onOpenUrl(async (urls) => {
-          console.debug(`[w3lmn] deep-link onOpenUrl: ${JSON.stringify(urls)}`);
+          console.debug(`[w3mm] deep-link onOpenUrl: ${JSON.stringify(urls)}`);
           if (urls?.length) {
             dlOpen = true;
             await dlNxm(urls[0]);
@@ -1082,7 +1082,7 @@
             }
             flash(`Downloaded → ${e.payload.path.split("/").pop()}`);
             await notify(
-              "W3 Mod Manager",
+              "W3MM",
               e.payload.path.split("/").pop() ?? "download done",
             );
             // original offer_install: open Install unless it's the exact file installed

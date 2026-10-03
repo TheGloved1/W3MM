@@ -2,12 +2,12 @@
 //!
 //! Python original (`w3modmanager.py`): `CONFIG_NAME`, `MANAGER_DIRNAME`,
 //! `_runtime_dir`, `load_config/save_config`, `home_for`.
-//! Here the home is `<game>/_W3LMN/` so users can switch back and forth
+//! Here the home is `<game>/_W3MM/` so users can switch back and forth
 //! without the two apps touching each other's staging/backups/state.
 
 use std::path::{Path, PathBuf};
 
-pub const MANAGER_DIRNAME: &str = "_W3LMN";
+pub const MANAGER_DIRNAME: &str = "_W3MM";
 pub const STATE_FILE: &str = "state.json";
 pub const STAGING_DIR: &str = "staging";
 pub const BACKUP_DIR: &str = "backup";
