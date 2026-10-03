@@ -148,3 +148,14 @@ body {
   background: var(--color-nms-bg);
   color: var(--color-nms-text);
 }
+
+/* Hide native number-input spinner arrows (priority column is a plain field). */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
