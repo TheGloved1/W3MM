@@ -116,7 +116,7 @@
         <Table.Row class="border-b border-border hover:bg-transparent">
           {#each columns as col}
             <Table.Head
-              class="relative border border-border text-[11px] tracking-wide text-muted-foreground {col.align ===
+              class="relative border-b border-border text-[11px] tracking-wide text-muted-foreground {col.align ===
               'right'
                 ? 'text-right'
                 : ''}"
@@ -174,6 +174,7 @@
           {@const isOver = dragOverKey !== null && dragOverKey === keyOf(item)}
           <Table.Row
             tabindex={0}
+            draggable={draggable}
             ondragstart={(e) => {
               if (!draggable) return;
               dragFromKey = keyOf(item);
