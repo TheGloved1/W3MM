@@ -9,6 +9,7 @@
   import FormSelect from '$lib/components/form-select.svelte';
   import PrimaryButton from '$lib/components/primary-button.svelte';
   import ExpandableSection from '$lib/components/expandable-section.svelte';
+  import ModForm from '$lib/components/mod-form.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -100,17 +101,8 @@
     </div>
   {/if}
 
-  <div class="grid grid-cols-[auto_minmax(0,1fr)_auto_110px_auto_110px] items-center gap-x-3 gap-y-2">
-    <span class="text-sm">Name in list</span>
-    <FormInput bind:value={name} />
-    <span class="text-sm">Version</span>
-    <FormInput bind:value={version} width="110px" />
-    <span class="text-sm">Nexus ID</span>
-    <FormInput bind:value={nexus} width="110px" />
-    <span class="text-sm">Section</span>
-    <FormSelect bind:value={section} options={[{value:'',label:'No section'}, ...sections.map(s=>({value:s.id,label:s.name}))]} />
-    <span></span><span></span><span></span><span></span>
-  </div>
+
+  <ModForm bind:name bind:version bind:nexus bind:section sections={sections} showSectionActions={false} />
 
   <div class="rounded-[7px] border border-border bg-card px-3 py-2">
     <div class="flex items-center gap-1 py-1 text-sm font-semibold">

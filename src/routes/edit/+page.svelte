@@ -10,6 +10,7 @@
   import ExpandableSection from "$lib/components/expandable-section.svelte";
   import PrimaryButton from "$lib/components/primary-button.svelte";
   import PopoverButton from "$lib/components/popover-button.svelte";
+  import ModForm from "$lib/components/mod-form.svelte";
 
   type Row = {
     id: string;
@@ -139,22 +140,7 @@
     {archive} &nbsp;·&nbsp; installed {fmtWhen(updated)}
   </div>
 
-  <div
-    class="grid grid-cols-[auto_minmax(0,1fr)_auto_110px_auto_110px] items-center gap-x-3 gap-y-2"
-  >
-    <span class="text-sm">Name in list</span>
-    <FormInput bind:value={name} />
-    <span class="text-sm">Version</span>
-    <FormInput bind:value={version} mono width="110px" />
-    <span class="text-sm">Nexus ID</span>
-    <FormInput bind:value={nexus} mono width="110px" />
-    <span class="text-sm">Section</span>
-    <FormSelect bind:value={section} options={[{value:'',label:'No section'}, ...sections.map(s=>({value:s.id,label:s.name}))]} />
-    <span></span>
-    <PopoverButton onclick={newSection}>New section…</PopoverButton>
-    <span></span>
-    <PopoverButton onclick={removeSection} disabled={!section}>Remove section</PopoverButton>
-  </div>
+  <ModForm bind:name bind:version bind:nexus bind:section sections={sections} onNewSection={newSection} onRemoveSection={removeSection} />
 
   <ExpandableSection open={filesOpen} label="Installed files" count={files.length} onToggle={() => filesOpen = !filesOpen}>
     <FileTree paths={files} maxHeight="12rem" class="rounded-t-none border-t-0" />
