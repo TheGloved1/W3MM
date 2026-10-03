@@ -330,6 +330,12 @@ fn nexus_status(api_key: String) -> Result<serde_json::Value, String> {
     nexus::nexus_get("/v1/users/validate.json", &api_key)
 }
 
+/// Whether an API key belongs to a premium account (direct downloads work).
+#[tauri::command]
+fn nexus_premium(api_key: String) -> bool {
+    nexus::is_premium(&api_key)
+}
+
 #[tauri::command]
 fn parse_archive_name(filename: String) -> (String, String, String) {
     nexus::parse_archive_name(&filename)
@@ -1625,6 +1631,7 @@ pub fn run() {
             scan_keybinds,
             scan_snippets,
             nexus_status,
+            nexus_premium,
             parse_archive_name,
             parse_nxm,
             download_nxm,

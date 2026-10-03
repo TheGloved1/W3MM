@@ -258,6 +258,19 @@ pub fn resolve_update(mod_id: &str, installed: &str, api_key: &str) -> Result<Op
     }))
 }
 
+/// Premium membership from `users/validate.json` (direct API downloads only
+/// work for premium keys; free keys must go through the site).
+pub fn is_premium(api_key: &str) -> bool {
+    nexus_get("/users/validate.json", api_key)
+        .ok()
+        .and_then(|v| v.as_object().cloned())
+        .map(|o| {
+            o.get("is_premium").and_then(|v| v.as_bool()).unwrap_or(false)
+                || o.get("is_premium_member").and_then(|v| v.as_bool()).unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
 /// `nxm://` link parse (python `parse_nxm`).
 pub fn parse_nxm(url: &str) -> Option<NxmLink> {
     let t = url.trim();

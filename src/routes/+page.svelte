@@ -563,13 +563,27 @@
     busy = "";
   }
 
-  async function updateMod(id: string) {
+  async function updateMod(id: string, premium?: boolean) {
     ctx = null;
     error = "";
     try {
       const cfg = await loadConfigNative();
       if (!cfg.nexusKey) {
         error = "Set Nexus API key in Settings first";
+        return;
+      }
+      const isPrem = premium ?? (await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
+      if (!isPrem) {
+        // Free accounts can't pull direct links: open the mod's Files page so
+        // a Slow Download is one click away, then install the file manually.
+        const nid = modById(id)?.nexus?.trim();
+        if (!nid) {
+          error = "No Nexus ID on this mod — set one in Edit…";
+          return;
+        }
+        const { open } = await import("@tauri-apps/plugin-shell");
+        await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files`);
+        flash("Pick Slow Download on the Nexus page, then Install mods → select the file.");
         return;
       }
       flash("Resolving update…");
@@ -591,8 +605,10 @@
   async function updateAll() {
     menuOpen = false;
     if (!hits.length) return;
+    const cfg = await loadConfigNative().catch(() => null);
+    const premium = cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true;
     for (const h of [...hits]) {
-      await updateMod(h.id);
+      await updateMod(h.id, premium);
     }
   }
 
