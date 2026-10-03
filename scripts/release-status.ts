@@ -229,8 +229,22 @@ async function ghJson(cmd: string[], signal?: AbortSignal): Promise<any> {
   return JSON.parse(stdout);
 }
 
-async function fetchRunAsync(repo: string, id: number): Promise<RunInfo> {
-  return (await ghJson([
+function fetchRun(repo: string, id: number): RunInfo {
+  const out = sh([
+    'run', 'view', String(id), '-R', repo, '--json',
+    'databaseId,number,displayTitle,headBranch,headSha,event,status,conclusion,createdAt,updatedAt,url,workflowName',
+  ]);
+  return JSON.parse(out) as RunInfo;
+}
+
+function fetchJobs(repo: string, id: number): JobInfo[] {
+  const out = sh(['run', 'view', String(id), '-R', repo, '--json', 'jobs']);
+  const jobs = (JSON.parse(out) as { jobs: JobInfo[] }).jobs ?? [];
+  jobs.sort((a, b) => (ts(a.startedAt) || ts(a.databaseId)) - (ts(b.startedAt) || ts(b.databaseId)));
+  return jobs;
+}
+
+async function fetchRunAsync(repo: string, id: number): Promise<RunInfo> {  return (await ghJson([
     'run', 'view', String(id), '-R', repo, '--json',
     'databaseId,number,displayTitle,headBranch,headSha,event,status,conclusion,createdAt,updatedAt,url,workflowName',
   ])) as RunInfo;
