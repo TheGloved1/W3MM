@@ -1,7 +1,7 @@
 {
   "name": "w3mm",
   "private": true,
-  "version": "26.10.0",
+  "version": "26.10.1",
   "type": "module",
   "packageManager": "bun@1.4.2",
   "license": "MIT",
