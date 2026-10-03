@@ -6,6 +6,7 @@
   import { loadConfigNative } from "$lib/config";
   import DataList from "$lib/components/data-list.svelte";
   import PrimaryButton from "$lib/components/primary-button.svelte";
+  import PopoverButton from "$lib/components/popover-button.svelte";
   import * as Table from "$lib/components/ui/table/index.js";
   import {
     ArrowUp,
@@ -1243,11 +1244,7 @@
           : "Filter mods"}
         class="w-[230px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary"
       />
-      <button
-        onclick={play}
-        class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent"
-        >Play</button
-      >
+      <PopoverButton onclick={play}>Play</PopoverButton>
       <PrimaryButton onclick={pickArchives} class="px-[18px] py-2 text-sm">Install mods</PrimaryButton>
       >
       <div class="relative">

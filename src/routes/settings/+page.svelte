@@ -7,6 +7,7 @@
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
   import PrimaryButton from '$lib/components/primary-button.svelte';
+  import PopoverButton from '$lib/components/popover-button.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -132,13 +133,13 @@
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Game folder</span>
       <FormInput bind:value={config.gameDir} mono class="min-w-0 flex-1" oninput={checkGame} />
-      <button onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
+      <PopoverButton onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')}>Browse…</PopoverButton>
     </div>
     {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Prefix</span>
       <FormInput bind:value={config.prefix} mono placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1" />
-      <button onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')} class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent">Browse…</button>
+      <PopoverButton onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</PopoverButton>
     </div>
     <div class="flex items-center gap-3">
       <span class="w-[110px] shrink-0 text-sm">Nexus API key</span>

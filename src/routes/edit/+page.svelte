@@ -9,6 +9,7 @@
   import FormSelect from "$lib/components/form-select.svelte";
   import ExpandableSection from "$lib/components/expandable-section.svelte";
   import PrimaryButton from "$lib/components/primary-button.svelte";
+  import PopoverButton from "$lib/components/popover-button.svelte";
 
   type Row = {
     id: string;
@@ -150,18 +151,9 @@
     <span class="text-sm">Section</span>
     <FormSelect bind:value={section} options={[{value:'',label:'No section'}, ...sections.map(s=>({value:s.id,label:s.name}))]} />
     <span></span>
-    <button
-      onclick={newSection}
-      class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent"
-      >New section…</button
-    >
+    <PopoverButton onclick={newSection}>New section…</PopoverButton>
     <span></span>
-    <button
-      onclick={removeSection}
-      disabled={!section}
-      class="rounded-[7px] border border-border bg-popover px-4 py-[7px] text-sm hover:bg-accent disabled:opacity-50"
-      >Remove section</button
-    >
+    <PopoverButton onclick={removeSection} disabled={!section}>Remove section</PopoverButton>
   </div>
 
   <ExpandableSection open={filesOpen} label="Installed files" count={files.length} onToggle={() => filesOpen = !filesOpen}>
