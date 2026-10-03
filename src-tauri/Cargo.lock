@@ -5280,7 +5280,7 @@ dependencies = [
 
 [[package]]
 name = "w3mm"
-version = "26.10.1"
+version = "26.10.2"
 dependencies = [
  "chrono",
  "crc32fast",
