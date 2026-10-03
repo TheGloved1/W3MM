@@ -7,10 +7,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<OWNER>/W3MM.git"
+    "url": "https://github.com/TheGloved1/W3MM.git"
   },
-  "homepage": "https://github.com/<OWNER>/W3MM",
-  "bugs": "https://github.com/<OWNER>/W3MM/issues",
+  "homepage": "https://github.com/TheGloved1/W3MM",
+  "bugs": "https://github.com/TheGloved1/W3MM/issues",
   "author": "W3MM Contributors",
   "scripts": {
     "dev": "vite dev",
