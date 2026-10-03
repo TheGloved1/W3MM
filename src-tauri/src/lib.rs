@@ -1062,8 +1062,8 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
                 log_line("rust", &format!("download meta failed id={aid}: {e}"));
                 return;
             }
+            let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
         }
-        let _ = app.emit("download-meta", serde_json::json!({"id": aid}));
         let filename = downloads::items().into_iter().find(|i| i.id == id).map(|i| i.filename).unwrap_or_default();
         log_line("rust", &format!("worker {aid}: meta ok file={filename}"));
         let dest = std::path::Path::new(&dest_dir).join(&filename);
