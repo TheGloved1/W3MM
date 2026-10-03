@@ -8,6 +8,7 @@
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
   import PrimaryButton from '$lib/components/primary-button.svelte';
+  import ExpandableSection from '$lib/components/expandable-section.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -132,16 +133,9 @@
     {/each}
   </div>
 
-  <div class="flex flex-col">
-    <button onclick={() => (addedOpen = !addedOpen)} class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-3 py-2 text-left text-sm hover:bg-accent/40 {addedOpen ? 'rounded-b-none border-b-0' : ''}">
-      <span class="text-muted-foreground">{#if addedOpen}<ChevronDown class="size-4" />{:else}<ChevronRight class="size-4" />{/if}</span>
-      <span class="flex-1">Added to the game folder</span>
-      <span class="text-muted-foreground">{addedFiles.length} files</span>
-    </button>
-    {#if addedOpen}
-      <FileTree paths={addedFiles} maxHeight="16rem" class="rounded-t-none border-t-0" />
-    {/if}
-  </div>
+  <ExpandableSection open={addedOpen} label="Added to the game folder" count={addedFiles.length} onToggle={() => addedOpen = !addedOpen}>
+    <FileTree paths={addedFiles} maxHeight="16rem" class="rounded-t-none border-t-0" />
+  </ExpandableSection>
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <div class="flex items-center gap-2">
