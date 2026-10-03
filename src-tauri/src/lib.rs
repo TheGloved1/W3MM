@@ -376,14 +376,18 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
         {
             let g = lock_shared(&shared, "install_archive")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
-            let mut s = m.state.lock().map_err(|e| e.to_string())?;
-            s.mods.push(state::ModRow {
-                id: id.clone(), sep: false, name: name.clone(), enabled: true,
-                version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
-                section: String::new(), updated: chrono::Utc::now().timestamp(),
-                collapsed: false, targets, nexus_cat: String::new(), main_of: String::new(),
-            });
-            s.priority_ids();
+            // NOTE: the state guard must drop before save(): save() locks the
+            // same non-reentrant mutex and would deadlock this thread forever.
+            {
+                let mut s = m.state.lock().map_err(|e| e.to_string())?;
+                s.mods.push(state::ModRow {
+                    id: id.clone(), sep: false, name: name.clone(), enabled: true,
+                    version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
+                    section: String::new(), updated: chrono::Utc::now().timestamp(),
+                    collapsed: false, targets, nexus_cat: String::new(), main_of: String::new(),
+                });
+                s.priority_ids();
+            }
             m.save()?;
         }
         Ok(id)
@@ -441,15 +445,16 @@ fn merge_check(lines: Vec<String>) -> Vec<String> {
 /// Python `annotation_clashes` core (symbol ownership, no arrival-order blame).
 #[tauri::command]
 fn annotation_clashes(shared: State<Shared>) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
-    let g = lock_shared(&shared, "annotation_clashes")?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
-    let rows: Vec<state::ModRow> = {
+    // Snapshot under lock; script reads/parses run lock-free.
+    let (staging, rows): (std::path::PathBuf, Vec<state::ModRow>) = {
+        let g = lock_shared(&shared, "annotation_clashes")?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
-        s.mods_only().into_iter().cloned().collect()
+        (m.home.staging.clone(), s.mods_only().into_iter().cloned().collect())
     };
     let mut owners: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for r in rows.iter().filter(|r| r.enabled) {
-        let stage = m.home.staging.join(&r.id);
+        let stage = staging.join(&r.id);
         for t in &r.targets {
             if !t.to_lowercase().ends_with(".ws") {
                 continue;
@@ -601,18 +606,19 @@ fn kind_of(rel: &str) -> Option<&'static str> {
 /// (python `made_for`/`compare_made_for`, fingerprints in `version.rs`).
 #[tauri::command]
 fn made_for(shared: State<Shared>, id: String) -> Result<version::MadeFor, String> {
-    let g = lock_shared(&shared, "made_for")?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
-    let game = m.home.game.clone();
-    let prefix = m.home.prefix.clone();
-    let row = {
-        let s = m.state.lock().map_err(|e| e.to_string())?;
-        s.get(&id).cloned().ok_or("unknown mod")?
+    // Snapshot under lock; bundle/file scans run lock-free (they can take
+    // seconds on big bundles and must not stall other commands).
+    let (game, stage, targets): (std::path::PathBuf, std::path::PathBuf, Vec<String>) = {
+        let g = lock_shared(&shared, "made_for")?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
+        let row = {
+            let s = m.state.lock().map_err(|e| e.to_string())?;
+            s.get(&id).cloned().ok_or("unknown mod")?
+        };
+        (m.home.game.clone(), m.home.staging.join(&id), row.targets.clone())
     };
-    let _ = prefix;
     let mut files: Vec<(String, String, Vec<String>)> = vec![];
-    let stage = m.home.staging.join(&id);
-    for rel in &row.targets {
+    for rel in &targets {
         let Some(kind) = kind_of(rel) else { continue };
         let data = std::fs::read(stage.join(rel)).unwrap_or_default();
         if data.is_empty() {
@@ -1202,13 +1208,14 @@ pub struct MergeVersion {
 /// else first bundle hit) + every enabled staged copy, top priority first.
 #[tauri::command]
 fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, String> {
-    let g = lock_shared(&shared, "merge_inputs")?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
     let kind = if rel.to_lowercase().ends_with(".xml") { "xml" } else { "script" }.to_string();
-    let (rows, order) = {
+    // Snapshot under lock; bundle scans run lock-free (see made_for).
+    let (game, staging, rows, order): (std::path::PathBuf, std::path::PathBuf, Vec<state::ModRow>, Vec<String>) = {
+        let g = lock_shared(&shared, "merge_inputs")?;
+        let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
         let order = s.priority_ids();
-        (s.mods_only().into_iter().cloned().collect::<Vec<_>>(), order)
+        (m.home.game.clone(), m.home.staging.clone(), s.mods_only().into_iter().cloned().collect::<Vec<_>>(), order)
     };
     let mut idx = std::collections::HashMap::new();
     for (i, id) in order.iter().enumerate() {
@@ -1220,9 +1227,9 @@ fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, Strin
         .collect();
     holders.sort_by_key(|r| idx.get(&r.id).copied().unwrap_or(usize::MAX));
     // base: loose file, else bundle
-    let mut base_bytes: Option<Vec<u8>> = std::fs::read(m.home.game.join(&rel)).ok();
+    let mut base_bytes: Option<Vec<u8>> = std::fs::read(game.join(&rel)).ok();
     if base_bytes.is_none() {
-        let content = m.home.game.join("content");
+        let content = game.join("content");
         if let Ok(rd) = std::fs::read_dir(&content) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -1252,7 +1259,7 @@ fn merge_inputs(shared: State<Shared>, rel: String) -> Result<MergeInputs, Strin
         .unwrap_or((vec![], "utf8".into()));
     let mut versions = vec![];
     for r in holders {
-        let data = std::fs::read(m.home.staging.join(&r.id).join(&rel)).unwrap_or_default();
+        let data = std::fs::read(staging.join(&r.id).join(&rel)).unwrap_or_default();
         let (lines, _) = script_merge::decode_script(&data);
         versions.push(MergeVersion { label: r.name.clone(), mod_id: r.id.clone(), text: lines.join("\n") });
     }
@@ -1473,14 +1480,18 @@ fn install_roots(
         {
             let g = lock_shared(&shared, "install_roots")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
-            let mut s = m.state.lock().map_err(|e| e.to_string())?;
-            s.mods.push(state::ModRow {
-                id: id.clone(), sep: false, name: name.clone(), enabled: true,
-                version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
-                section: section.clone(), updated: chrono::Utc::now().timestamp(),
-                collapsed: false, targets: targets.clone(), nexus_cat: String::new(), main_of: String::new(),
-            });
-            s.priority_ids();
+            // NOTE: the state guard must drop before save(): save() locks the
+            // same non-reentrant mutex and would deadlock this thread forever.
+            {
+                let mut s = m.state.lock().map_err(|e| e.to_string())?;
+                s.mods.push(state::ModRow {
+                    id: id.clone(), sep: false, name: name.clone(), enabled: true,
+                    version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
+                    section: section.clone(), updated: chrono::Utc::now().timestamp(),
+                    collapsed: false, targets: targets.clone(), nexus_cat: String::new(), main_of: String::new(),
+                });
+                s.priority_ids();
+            }
             m.save()?;
         }
         log_line("rust", &format!("install_roots: committed {name} ({})", targets.len()));
