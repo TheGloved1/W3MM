@@ -11,6 +11,8 @@
   import ExpandableSection from '$lib/components/expandable-section.svelte';
   import ModForm from '$lib/components/mod-form.svelte';
   import ArchiveRootsList from '$lib/components/archive-roots-list.svelte';
+  import FormActions from '$lib/components/form-actions.svelte';
+  import FilesSection from '$lib/components/files-section.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -107,9 +109,7 @@
 
   <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} />
 
-  <ExpandableSection open={addedOpen} label="Added to the game folder" count={addedFiles.length} onToggle={() => addedOpen = !addedOpen}>
-    <FileTree paths={addedFiles} maxHeight="16rem" class="rounded-t-none border-t-0" />
-  </ExpandableSection>
+  <FilesSection open={addedOpen} label="Added to the game folder" paths={addedFiles} maxHeight="16rem" onToggle={(o)=> addedOpen = o} />
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel={busy ? 'Installing…' : 'Install'} onPrimary={install} primaryDisabled={busy || !roots.length} primaryClass="px-[18px] py-2 text-sm">

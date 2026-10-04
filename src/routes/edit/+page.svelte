@@ -12,6 +12,7 @@
   import PopoverButton from "$lib/components/popover-button.svelte";
   import ModForm from "$lib/components/mod-form.svelte";
   import FormActions from "$lib/components/form-actions.svelte";
+  import FilesSection from "$lib/components/files-section.svelte";
 
   type Row = {
     id: string;
@@ -143,9 +144,7 @@
 
   <ModForm bind:name bind:version bind:nexus bind:section sections={sections} onNewSection={newSection} onRemoveSection={removeSection} />
 
-  <ExpandableSection open={filesOpen} label="Installed files" count={files.length} onToggle={() => filesOpen = !filesOpen}>
-    <FileTree paths={files} maxHeight="12rem" class="rounded-t-none border-t-0" />
-  </ExpandableSection>
+  <FilesSection open={filesOpen} label="Installed files" paths={files} maxHeight="12rem" onToggle={(o)=> filesOpen = o} />
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm">
