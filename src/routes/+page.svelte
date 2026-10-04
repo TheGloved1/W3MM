@@ -1251,7 +1251,6 @@
       />
       <Button variant="secondary" size="md" onclick={play}>Play</Button>
       <Button variant="primary" size="md" onclick={pickArchives} class="px-[18px]">Install mods</Button>
-      >
       <div class="relative">
         <button
           onclick={(e) => {
