@@ -9,6 +9,7 @@
   import PrimaryButton from '$lib/components/primary-button.svelte';
   import PopoverButton from '$lib/components/popover-button.svelte';
   import FormActions from '$lib/components/form-actions.svelte';
+  import LabeledField from '$lib/components/labeled-field.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -131,28 +132,24 @@
   <p class="text-sm text-muted-foreground">Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied.</p>
 
   {#if config}
-    <div class="flex items-center gap-3">
-      <span class="w-[110px] shrink-0 text-sm">Game folder</span>
+    <LabeledField label="Game folder">
       <FormInput bind:value={config.gameDir} mono class="min-w-0 flex-1" oninput={checkGame} />
       <PopoverButton onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')}>Browse…</PopoverButton>
-    </div>
+    </LabeledField>
     {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
-    <div class="flex items-center gap-3">
-      <span class="w-[110px] shrink-0 text-sm">Prefix</span>
+    <LabeledField label="Prefix">
       <FormInput bind:value={config.prefix} mono placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1" />
       <PopoverButton onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</PopoverButton>
-    </div>
-    <div class="flex items-center gap-3">
-      <span class="w-[110px] shrink-0 text-sm">Nexus API key</span>
+    </LabeledField>
+    <LabeledField label="Nexus API key">
       <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
-      <button onclick={() => (showKey = !showKey)} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">{showKey ? 'Hide' : 'Show'}</button>
-      <button onclick={getKey} class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent">Get key…</button>
-    </div>
-    <div class="flex items-center gap-3">
-      <span class="w-[110px] shrink-0 text-sm" title="The font code is shown in, in Script decisions.">Code font</span>
+      <PopoverButton onclick={() => (showKey = !showKey)} class="px-3 py-[7px]">{showKey ? 'Hide' : 'Show'}</PopoverButton>
+      <PopoverButton onclick={getKey} class="px-3 py-[7px]">Get key…</PopoverButton>
+    </LabeledField>
+    <LabeledField label="Code font">
       <FormSelect bind:value={config.codeFont} options={codeFonts.map(f=>({value:f,label:f}))} class="min-w-0 flex-1" />
       <FormInput bind:value={config.codeSize} type="number" width="86px" class="" />
-    </div>
+    </LabeledField>
     <div class="flex gap-3">
       <span class="w-[110px] shrink-0"></span>
       <div class="flex-1 rounded-[7px] border border-border bg-well px-3 py-2" style="font-family:{config.codeFont};font-size:{config.codeSize}pt"><span class="text-[#b48ead]">if</span><span>( IsItemSingletonItem( l_items[0] ) )</span> <span class="text-[#7fbf8a]">// 00 1lI</span></div>
