@@ -10,6 +10,7 @@
   import PrimaryButton from '$lib/components/primary-button.svelte';
   import ExpandableSection from '$lib/components/expandable-section.svelte';
   import ModForm from '$lib/components/mod-form.svelte';
+  import ArchiveRootsList from '$lib/components/archive-roots-list.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -104,35 +105,14 @@
 
   <ModForm bind:name bind:version bind:nexus bind:section sections={sections} showSectionActions={false} />
 
-  <div class="rounded-[7px] border border-border bg-card px-3 py-2">
-    <div class="flex items-center gap-1 py-1 text-sm font-semibold">
-      <ChevronDown class="size-4 text-muted-foreground" /> Archive contents
-    </div>
-    <div class="grid grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)] gap-2 px-1 pb-1 text-[12px] text-muted-foreground">
-      <span class="pl-7">From archive</span><span>Type</span><span>Folder name</span>
-    </div>
-    {#each roots as r}
-      <div class="grid grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)] items-center gap-2 border-t border-border/50 px-1 py-1.5">
-        <span class="flex min-w-0 items-center gap-2">
-          <span class="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-[#c9a45c] bg-[#c9a45c] text-[#1c2127]"><Check class="size-3" /></span>
-          <span class="truncate font-mono text-[12px]">{rootLabel(r)}</span>
-        </span>
-        <select bind:value={r.kind} class="rounded-[7px] border border-input bg-background px-2 py-1 text-[13px] outline-none focus:border-primary">
-          {#each kinds as k}<option value={k}>{k}</option>{/each}
-        </select>
-        <input bind:value={r.folder} class="rounded-[7px] border border-input bg-background px-2 py-1 font-mono text-[12px] outline-none focus:border-primary" />
-      </div>
-    {/each}
-  </div>
+  <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} />
 
   <ExpandableSection open={addedOpen} label="Added to the game folder" count={addedFiles.length} onToggle={() => addedOpen = !addedOpen}>
     <FileTree paths={addedFiles} maxHeight="16rem" class="rounded-t-none border-t-0" />
   </ExpandableSection>
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
-  <div class="flex items-center gap-2">
-    <span class="flex-1"></span>
-    <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent"><X class="inline size-4" /> Cancel</button>
-    <PrimaryButton onclick={install} disabled={busy || !roots.length} class="px-[18px] py-2 text-sm">{busy ? 'Installing…' : 'Install'}</PrimaryButton>
-  </div>
+  <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel={busy ? 'Installing…' : 'Install'} onPrimary={install} primaryDisabled={busy || !roots.length} primaryClass="px-[18px] py-2 text-sm">
+    {#snippet cancelIcon()}<X class="inline size-4" />{/snippet}
+  </FormActions>
 </div>

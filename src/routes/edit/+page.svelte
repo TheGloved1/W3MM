@@ -11,6 +11,7 @@
   import PrimaryButton from "$lib/components/primary-button.svelte";
   import PopoverButton from "$lib/components/popover-button.svelte";
   import ModForm from "$lib/components/mod-form.svelte";
+  import FormActions from "$lib/components/form-actions.svelte";
 
   type Row = {
     id: string;
@@ -147,13 +148,7 @@
   </ExpandableSection>
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
-  <div class="flex items-center gap-2">
-    <span class="flex-1"></span>
-    <button
-      onclick={cancel}
-      class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent"
-      ><X class="size-4" /> Cancel</button
-    >
-    <PrimaryButton onclick={save} class="px-[18px] py-2 text-sm">Save</PrimaryButton>
-  </div>
+  <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm">
+    {#snippet cancelIcon()}<X class="size-4" />{/snippet}
+  </FormActions>
 </div>

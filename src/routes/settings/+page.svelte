@@ -8,6 +8,7 @@
   import FormSelect from '$lib/components/form-select.svelte';
   import PrimaryButton from '$lib/components/primary-button.svelte';
   import PopoverButton from '$lib/components/popover-button.svelte';
+  import FormActions from '$lib/components/form-actions.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -186,9 +187,8 @@
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
   <div class="flex-1"></div>
   <div class="flex items-center gap-2">
-    <button onclick={() => detect()} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Detect Steam install</button>
+    <PopoverButton onclick={() => detect()} class="px-4 py-2">Detect Steam install</PopoverButton>
     <span class="flex-1"></span>
-    <button onclick={cancel} class="rounded-[7px] border border-border bg-popover px-4 py-2 text-sm hover:bg-accent">Cancel</button>
-    <PrimaryButton onclick={save} class="px-[18px] py-2 text-sm">Save</PrimaryButton>
+    <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm" spacer={false} />
   </div>
 </div>
