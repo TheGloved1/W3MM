@@ -22,7 +22,7 @@ fn link_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 pub fn mod_files(staging_mod: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for sub in ["mods", "dlc", "bin"] {
+    for sub in ["mods", "dlc", "bin", "content"] {
         let base = staging_mod.join(sub);
         if !base.is_dir() {
             continue;

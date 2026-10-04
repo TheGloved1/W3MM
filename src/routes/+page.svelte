@@ -541,9 +541,15 @@
       return;
     }
     console.debug("[w3mm] open_tool_window install (reinstall)", m.archive);
+    const qp = new URLSearchParams({
+      path: m.archive,
+      name: m.name ?? "",
+      version: m.version ?? "",
+      nexus: (m.nexus ?? "").replace(/\D/g, ""),
+    });
     await invoke("open_tool_window", {
       kind: "install",
-      query: `path=${encodeURIComponent(m.archive)}`,
+      query: qp.toString(),
       path: m.archive,
     }).catch((e) => {
       console.error("[w3mm] open_tool_window install failed", e);

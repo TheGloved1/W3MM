@@ -24,6 +24,7 @@
     nexus: string;
     archive: string;
     updated: number;
+    targets?: string[];
   };
 
   let id: string = $state("");
@@ -64,6 +65,7 @@
       .map((r) => ({ id: r.id, name: r.name }));
     section = sectionOf(st.mods, id);
     files = await invoke<string[]>("staged_files", { id }).catch(() => []);
+    if (!files.length && m.targets?.length) files = [...m.targets];
   }
 
   function sectionOf(rows: Row[], mid: string): string {
