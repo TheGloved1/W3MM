@@ -14,6 +14,7 @@
   import FormActions from "$lib/components/form-actions.svelte";
   import FilesSection from "$lib/components/files-section.svelte";
   import PageHeader from "$lib/components/page-header.svelte";
+  import WarningBanner from "$lib/components/warning-banner.svelte";
 
   type Row = {
     id: string;
@@ -144,7 +145,7 @@
 
   <FilesSection open={filesOpen} label="Installed files" paths={files} maxHeight="12rem" onToggle={(o)=> filesOpen = o} />
 
-  {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
+  <WarningBanner message={warn} />
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm">
     {#snippet cancelIcon()}<X class="size-4" />{/snippet}
   </FormActions>

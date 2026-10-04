@@ -12,6 +12,7 @@
   import LabeledField from '$lib/components/labeled-field.svelte';
   import MergerSection from '$lib/components/merger-section.svelte';
   import PageHeader from '$lib/components/page-header.svelte';
+  import WarningBanner from '$lib/components/warning-banner.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -167,7 +168,7 @@
     />
   {/if}
 
-  {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
+  <WarningBanner message={warn} />
   <div class="flex-1"></div>
   <div class="flex items-center gap-2">
     <PopoverButton onclick={() => detect()} class="px-4 py-2">Detect Steam install</PopoverButton>

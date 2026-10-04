@@ -14,6 +14,7 @@
   import FormActions from '$lib/components/form-actions.svelte';
   import FilesSection from '$lib/components/files-section.svelte';
   import PageHeader from '$lib/components/page-header.svelte';
+  import WarningBanner from '$lib/components/warning-banner.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -111,7 +112,7 @@
 
   <FilesSection open={addedOpen} label="Added to the game folder" paths={addedFiles} maxHeight="16rem" onToggle={(o)=> addedOpen = o} />
 
-  {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
+  <WarningBanner message={warn} />
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel={busy ? 'Installing…' : 'Install'} onPrimary={install} primaryDisabled={busy || !roots.length} primaryClass="px-[18px] py-2 text-sm">
     {#snippet cancelIcon()}<X class="inline size-4" />{/snippet}
   </FormActions>
