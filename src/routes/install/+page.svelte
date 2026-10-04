@@ -15,6 +15,7 @@
   import FilesSection from '$lib/components/files-section.svelte';
   import PageHeader from '$lib/components/page-header.svelte';
   import WarningBanner from '$lib/components/warning-banner.svelte';
+  import CollisionNotice from '$lib/components/collision-notice.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -96,13 +97,7 @@
   <PageHeader title="Install mod" subtitle={stem} />
 
   {#if collisions.length}
-    <div class="rounded-[7px] border border-[#c9a45c]/40 bg-[#c9a45c]/10 px-3 py-2 text-[13px]">
-      <div class="font-semibold text-[#dbb977]">Replaces {collisions.length} installed mod{collisions.length === 1 ? '' : 's'} (same files).</div>
-      <label class="mt-1 flex cursor-pointer items-center gap-2">
-        <input type="checkbox" bind:checked={replace} class="h-4 w-4 accent-[#c9a45c]" />
-        <span>Uninstall {collisions.length === 1 ? 'it' : 'them'} and install this instead</span>
-      </label>
-    </div>
+    <CollisionNotice count={collisions.length} bind:replace />
   {/if}
 
 
