@@ -13,6 +13,7 @@
   import ArchiveRootsList from '$lib/components/archive-roots-list.svelte';
   import FormActions from '$lib/components/form-actions.svelte';
   import FilesSection from '$lib/components/files-section.svelte';
+  import PageHeader from '$lib/components/page-header.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -91,8 +92,7 @@
 </script>
 
 <div class="mx-auto flex h-full max-w-[780px] flex-col gap-3 overflow-y-auto px-[22px] py-5">
-  <div class="text-[14pt] font-semibold">Install mod</div>
-  <div class="truncate text-[13px] text-muted-foreground">{stem}</div>
+  <PageHeader title="Install mod" subtitle={stem} />
 
   {#if collisions.length}
     <div class="rounded-[7px] border border-[#c9a45c]/40 bg-[#c9a45c]/10 px-3 py-2 text-[13px]">

@@ -13,6 +13,7 @@
   import ModForm from "$lib/components/mod-form.svelte";
   import FormActions from "$lib/components/form-actions.svelte";
   import FilesSection from "$lib/components/files-section.svelte";
+  import PageHeader from "$lib/components/page-header.svelte";
 
   type Row = {
     id: string;
@@ -137,10 +138,7 @@
 <div
   class="mx-auto flex h-full max-w-[820px] flex-col gap-3 overflow-y-auto px-[22px] py-5"
 >
-  <div class="text-[14pt] font-semibold">Edit mod</div>
-  <div class="truncate text-[13px] text-muted-foreground">
-    {archive} &nbsp;·&nbsp; installed {fmtWhen(updated)}
-  </div>
+  <PageHeader title="Edit mod" subtitle="{archive} &nbsp;·&nbsp; installed {fmtWhen(updated)}" />
 
   <ModForm bind:name bind:version bind:nexus bind:section sections={sections} onNewSection={newSection} onRemoveSection={removeSection} />
 

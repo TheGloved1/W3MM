@@ -11,6 +11,7 @@
   import FormActions from '$lib/components/form-actions.svelte';
   import LabeledField from '$lib/components/labeled-field.svelte';
   import MergerSection from '$lib/components/merger-section.svelte';
+  import PageHeader from '$lib/components/page-header.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -129,8 +130,7 @@
 </script>
 
 <div class="mx-auto flex h-full max-w-[680px] flex-col gap-3 overflow-y-auto px-[22px] py-5">
-  <div class="text-[14pt] font-semibold">Settings</div>
-  <p class="text-sm text-muted-foreground">Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied.</p>
+  <PageHeader title="Settings" description="Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied." />
 
   {#if config}
     <LabeledField label="Game folder">
