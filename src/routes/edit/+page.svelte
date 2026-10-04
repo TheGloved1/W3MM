@@ -147,6 +147,6 @@
 
   <WarningBanner message={warn} />
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm">
-    {#snippet cancelIcon()}<X class="size-4" />{/snippet}
+    {#snippet cancelIcon()}<X class="inline size-4" />{/snippet}
   </FormActions>
 </div>
