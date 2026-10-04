@@ -10,6 +10,7 @@
   import PopoverButton from '$lib/components/popover-button.svelte';
   import FormActions from '$lib/components/form-actions.svelte';
   import LabeledField from '$lib/components/labeled-field.svelte';
+  import MergerSection from '$lib/components/merger-section.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -155,30 +156,15 @@
       <div class="flex-1 rounded-[7px] border border-border bg-well px-3 py-2" style="font-family:{config.codeFont};font-size:{config.codeSize}pt"><span class="text-[#b48ead]">if</span><span>( IsItemSingletonItem( l_items[0] ) )</span> <span class="text-[#7fbf8a]">// 00 1lI</span></div>
     </div>
 
-    <div class="rounded-lg border border-border bg-popover px-[14px] py-2">
-      <div class="flex items-center gap-2">
-        <button onclick={() => (mergerOpen = !mergerOpen)} class="flex-1 py-1 text-left text-sm font-semibold hover:text-primary">{mergerOpen ? '▾' : '▸'} Legacy Script Merger</button>
-        <span class="text-[12px] text-muted-foreground">{mergerOpen ? mergerState : (config.mergerPath ? mergerState : 'Not set')}</span>
-      </div>
-      {#if mergerOpen}
-        <div class="flex items-center gap-3 py-1">
-          <span class="w-[86px] shrink-0 text-sm">Path</span>
-          <FormInput bind:value={config.mergerPath} mono placeholder="path to ScriptMerger.exe" class="min-w-0 flex-1" />
-          <button onclick={pickMerger} class="rounded-[7px] border border-border bg-card px-3 py-[7px] text-sm hover:bg-accent">Browse…</button>
-        </div>
-        {#if mergerRep}
-          {#each mergerRep.wrong as [k, was, want]}
-            <div class="my-1 rounded bg-[#c9a45c]/10 p-1.5 font-mono text-[11px]">{k}: {was} → {want}</div>
-          {/each}
-          {#each mergerRep.unfixable as [k, v]}
-            <div class="my-1 rounded bg-[#e3735f]/10 p-1.5 font-mono text-[11px]">{k}: {v} (no fix known)</div>
-          {/each}
-          {#if mergerRep.wrong.length}
-            <button onclick={applyMergerFixes} class="mb-1 rounded-[7px] border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent">Apply fixes</button>
-          {/if}
-        {/if}
-      {/if}
-    </div>
+    <MergerSection
+      bind:mergerPath={config.mergerPath}
+      mergerState={mergerState}
+      mergerRep={mergerRep}
+      open={mergerOpen}
+      onToggle={() => mergerOpen = !mergerOpen}
+      onPickMerger={pickMerger}
+      onApplyFixes={applyMergerFixes}
+    />
   {/if}
 
   {#if warn}<p class="font-semibold text-[#dbb977]">{warn}</p>{/if}
