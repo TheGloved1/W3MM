@@ -1,6 +1,6 @@
 <script lang="ts">
   import FormInput from './form-input.svelte';
-  import PopoverButton from './popover-button.svelte';
+  import Button from './button.svelte';
 
   interface MergerRep {
     config: string;
@@ -38,7 +38,7 @@
     <div class="flex items-center gap-3 py-1">
       <span class="w-[86px] shrink-0 text-sm">Path</span>
       <FormInput bind:value={mergerPath} mono placeholder="path to ScriptMerger.exe" class="min-w-0 flex-1" />
-      <PopoverButton onclick={onPickMerger} class="px-3 py-2">Browse…</PopoverButton>
+      <Button variant="secondary" size="md" onclick={onPickMerger}>Browse…</Button>
     </div>
     {#if mergerRep}
       {#each mergerRep.wrong as [k, was, want]}
@@ -48,7 +48,7 @@
         <div class="my-1 rounded bg-[#e3735f]/10 p-1.5 font-mono text-[11px]">{k}: {v} (no fix known)</div>
       {/each}
       {#if mergerRep.wrong.length}
-        <PopoverButton onclick={onApplyFixes} class="mb-1 px-3 py-1.5">Apply fixes</PopoverButton>
+        <Button variant="secondary" size="sm" onclick={onApplyFixes} class="mb-1">Apply fixes</Button>
       {/if}
     {/if}
   {/if}

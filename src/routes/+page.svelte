@@ -5,8 +5,7 @@
   import type { AppState, MadeFor, QueueItem } from "$lib/types";
   import { loadConfigNative } from "$lib/config";
   import DataList from "$lib/components/data-list.svelte";
-  import PrimaryButton from "$lib/components/primary-button.svelte";
-  import PopoverButton from "$lib/components/popover-button.svelte";
+  import Button from "$lib/components/button.svelte";
   import * as Table from "$lib/components/ui/table/index.js";
   import {
     ArrowUp,
@@ -1250,8 +1249,8 @@
           : "Filter mods"}
         class="w-[230px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary"
       />
-      <PopoverButton onclick={play}>Play</PopoverButton>
-      <PrimaryButton onclick={pickArchives} class="px-[18px] py-2 text-sm">Install mods</PrimaryButton>
+      <Button variant="secondary" size="md" onclick={play}>Play</Button>
+      <Button variant="primary" size="md" onclick={pickArchives} class="px-[18px]">Install mods</Button>
       >
       <div class="relative">
         <button

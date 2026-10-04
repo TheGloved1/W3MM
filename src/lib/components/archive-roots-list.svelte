@@ -7,6 +7,7 @@
     prefix: string;
     kind: string;
     folder: string;
+    files: number;
   }
 
   interface Props {

@@ -6,8 +6,7 @@
   import type { AppConfig } from '$lib/types';
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
-  import PrimaryButton from '$lib/components/primary-button.svelte';
-  import PopoverButton from '$lib/components/popover-button.svelte';
+  import Button from '$lib/components/button.svelte';
   import FormActions from '$lib/components/form-actions.svelte';
   import LabeledField from '$lib/components/labeled-field.svelte';
   import MergerSection from '$lib/components/merger-section.svelte';
@@ -136,17 +135,17 @@
   {#if config}
     <LabeledField label="Game folder">
       <FormInput bind:value={config.gameDir} mono class="min-w-0 flex-1" oninput={checkGame} />
-      <PopoverButton onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')}>Browse…</PopoverButton>
+      <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')}>Browse…</Button>
     </LabeledField>
     {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
     <LabeledField label="Prefix">
       <FormInput bind:value={config.prefix} mono placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1" />
-      <PopoverButton onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</PopoverButton>
+      <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</Button>
     </LabeledField>
     <LabeledField label="Nexus API key">
       <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
-      <PopoverButton onclick={() => (showKey = !showKey)} class="px-3 py-2">{showKey ? 'Hide' : 'Show'}</PopoverButton>
-      <PopoverButton onclick={getKey} class="px-3 py-2">Get key…</PopoverButton>
+      <Button variant="secondary" size="md" onclick={() => (showKey = !showKey)}>{showKey ? 'Hide' : 'Show'}</Button>
+      <Button variant="secondary" size="md" onclick={getKey}>Get key…</Button>
     </LabeledField>
     <LabeledField label="Code font">
       <FormSelect bind:value={config.codeFont} options={codeFonts.map(f=>({value:f,label:f}))} class="min-w-0 flex-1" />
@@ -171,7 +170,7 @@
   <WarningBanner message={warn} />
   <div class="flex-1"></div>
   <div class="flex items-center gap-2">
-    <PopoverButton onclick={() => detect()} class="px-4 py-2">Detect Steam install</PopoverButton>
+    <Button variant="secondary" size="md" onclick={() => detect()}>Detect Steam install</Button>
     <span class="flex-1"></span>
     <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm" spacer={false} />
   </div>

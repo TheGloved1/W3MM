@@ -1,7 +1,7 @@
 <script lang="ts">
   import FormInput from './form-input.svelte';
   import FormSelect from './form-select.svelte';
-  import PopoverButton from './popover-button.svelte';
+  import Button from './button.svelte';
 
   interface Section {
     id: string;
@@ -36,7 +36,7 @@
   ]);
 </script>
 
-<div class="grid grid-cols-[auto_minmax(0,1fr)_auto_110px_auto_110px] items-center gap-x-3 gap-y-2">
+<div class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto] items-center gap-x-3 gap-y-2">
   <span class="text-sm">Name in list</span>
   <FormInput bind:value={name} />
   <span class="text-sm">Version</span>
@@ -47,9 +47,9 @@
   <FormSelect bind:value={section} options={sectionOptions} />
   {#if showSectionActions}
     <span></span>
-    <PopoverButton onclick={onNewSection}>New section…</PopoverButton>
+    <Button variant="secondary" size="md" onclick={onNewSection} class="justify-self-start">New section…</Button>
     <span></span>
-    <PopoverButton onclick={onRemoveSection} disabled={!section}>Remove section</PopoverButton>
+    <Button variant="secondary" size="md" onclick={onRemoveSection} disabled={!section} class="justify-self-start">Remove section</Button>
   {:else}
     <span></span><span></span><span></span><span></span>
   {/if}

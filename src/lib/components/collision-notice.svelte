@@ -2,7 +2,7 @@
   interface Props {
     count: number;
     replace: boolean;
-    onReplace: (v: boolean) => void;
+    onReplace?: (v: boolean) => void;
   }
   let { count, replace = $bindable(false), onReplace }: Props = $props();
 

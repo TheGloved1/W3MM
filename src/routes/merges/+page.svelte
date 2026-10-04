@@ -4,9 +4,8 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative } from '$lib/config';
   import CodeViewer from '$lib/components/code-viewer.svelte';
-  import SecondaryButton from '$lib/components/secondary-button.svelte';
+  import Button from '$lib/components/button.svelte';
   import Panel from '$lib/components/panel.svelte';
-  import PrimaryButton from '$lib/components/primary-button.svelte';
   import Badge from '$lib/components/badge.svelte';
 
   type Shared = { file: string; with: string[] };
@@ -127,8 +126,8 @@
   <div class="flex items-center gap-2">
     <div class="text-[15px] font-semibold">Script decisions</div>
     <span class="flex-1"></span>
-    <SecondaryButton onclick={keepAll} disabled={!conflicts.length}>Keep every suggested merge</SecondaryButton>
-    <SecondaryButton onclick={() => getCurrentWindow().close()}>Close</SecondaryButton>
+    <Button variant="secondary" size="sm" onclick={keepAll} disabled={!conflicts.length}>Keep every suggested merge</Button>
+    <Button variant="secondary" size="sm" onclick={() => getCurrentWindow().close()}>Close</Button>
   </div>
 
   <div class="flex min-h-0 flex-1 gap-3">
@@ -195,7 +194,7 @@
           <div class="rounded-[7px] border border-border bg-well">
             <div class="flex items-center border-b border-border px-2 py-1">
               <span class="flex-1 text-[11px] uppercase tracking-wide text-muted-foreground">Merged preview</span>
-              <PrimaryButton onclick={save}>Save merge</PrimaryButton>
+              <Button variant="primary" size="sm" onclick={save}>Save merge</Button>
             </div>
             <CodeViewer lines={out} codeFont={codeFont} codeSize={codeSize} class="max-h-64" />
           </div>

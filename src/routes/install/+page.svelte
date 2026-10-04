@@ -7,7 +7,6 @@
   import FileTree from '$lib/components/file-tree.svelte';
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
-  import PrimaryButton from '$lib/components/primary-button.svelte';
   import ExpandableSection from '$lib/components/expandable-section.svelte';
   import ModForm from '$lib/components/mod-form.svelte';
   import ArchiveRootsList from '$lib/components/archive-roots-list.svelte';

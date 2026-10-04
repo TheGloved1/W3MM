@@ -8,8 +8,6 @@
   import FormInput from "$lib/components/form-input.svelte";
   import FormSelect from "$lib/components/form-select.svelte";
   import ExpandableSection from "$lib/components/expandable-section.svelte";
-  import PrimaryButton from "$lib/components/primary-button.svelte";
-  import PopoverButton from "$lib/components/popover-button.svelte";
   import ModForm from "$lib/components/mod-form.svelte";
   import FormActions from "$lib/components/form-actions.svelte";
   import FilesSection from "$lib/components/files-section.svelte";

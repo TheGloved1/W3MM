@@ -1,6 +1,5 @@
 <script lang="ts">
-  import PopoverButton from './popover-button.svelte';
-  import PrimaryButton from './primary-button.svelte';
+  import Button from './button.svelte';
 
   interface Props {
     cancelLabel?: string;
@@ -27,12 +26,12 @@
 <div class="flex items-center gap-2">
   {#if spacer}<span class="flex-1"></span>{/if}
   {#if onCancel}
-    <PopoverButton onclick={onCancel} class="px-4 py-2">
+    <Button variant="secondary" size="md" onclick={onCancel}>
       {#if cancelIcon}{@render cancelIcon()}{/if}
       {cancelLabel}
-    </PopoverButton>
+    </Button>
   {/if}
-  <PrimaryButton onclick={onPrimary} disabled={primaryDisabled} class={primaryClass}>
+  <Button variant="primary" size="md" onclick={onPrimary} disabled={primaryDisabled} class={primaryClass}>
     {primaryLabel}
-  </PrimaryButton>
+  </Button>
 </div>
