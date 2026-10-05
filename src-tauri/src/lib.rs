@@ -685,9 +685,35 @@ fn xdg_output(args: &[&str]) -> Option<String> {
     }
 }
 
-/// Which .desktop file xdg-open would use for this target, seen through the
-/// same scrubbed environment the child gets. `None` = no handler (or lookup
-/// failed) — the interesting case for "nothing opened".
+/// The Exec line of a .desktop handler as seen through the scrubbed data
+/// dirs: shows exactly which binary xdg-open would launch.
+#[cfg(target_os = "linux")]
+fn handler_exec(handler: &str) -> Option<String> {
+    let appdir = std::env::var("APPDIR").ok();
+    let mut dirs = vec![];
+    if let Some(dd) = std::env::var_os("XDG_DATA_DIRS") {
+        for d in std::env::split_paths(&dd) {
+            if !is_sandbox_path(&d.to_string_lossy(), appdir.as_deref()) {
+                dirs.push(d);
+            }
+        }
+    } else {
+        dirs.push(std::path::PathBuf::from("/usr/local/share"));
+        dirs.push(std::path::PathBuf::from("/usr/share"));
+    }
+    for d in dirs {
+        let f = d.join("applications").join(handler);
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            for line in text.lines() {
+                if let Some(exec) = line.strip_prefix("Exec=") {
+                    return Some(format!("{} ({})", exec, f.display()));
+                }
+            }
+            return Some(format!("<no Exec> ({})", f.display()));
+        }
+    }
+    None
+}
 #[cfg(target_os = "linux")]
 fn default_handler(target: &str) -> Option<String> {
     let p = std::path::Path::new(target);
@@ -758,18 +784,20 @@ fn scrub_value(val: &std::ffi::OsStr, appdir: Option<&str>) -> Option<std::ffi::
 /// cleaned, so a launched file manager or terminal never loads the bundle's
 /// libs, themes, or Python. Vars without mount entries pass through
 /// byte-identical, so the session (display server, D-Bus, desktop hints) is
-/// untouched.
+/// untouched. Returns the names that were changed, for diagnostics.
 #[cfg(target_os = "linux")]
-fn scrub_env(cmd: &mut std::process::Command) {
+fn scrub_env(cmd: &mut std::process::Command) -> Vec<String> {
     let appdir = std::env::var("APPDIR").ok();
     // Snapshot first: `cmd.env_*` only affects the child.
     let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let mut changed = vec![];
     for (k, v) in &vars {
         let polluted = std::env::split_paths(v)
             .any(|p| is_sandbox_path(&p.to_string_lossy(), appdir.as_deref()));
         if !polluted {
             continue;
         }
+        changed.push(k.to_string_lossy().to_string());
         match scrub_value(v, appdir.as_deref()) {
             Some(clean) => {
                 cmd.env(k, clean);
@@ -779,6 +807,7 @@ fn scrub_env(cmd: &mut std::process::Command) {
             }
         }
     }
+    changed
 }
 
 /// Open a folder or URL without blocking: the child is spawned detached with
@@ -807,7 +836,16 @@ fn open_path(target: String) -> Result<(), String> {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
-        scrub_env(&mut cmd);
+        let scrubbed = scrub_env(&mut cmd);
+        let handler = default_handler(&target);
+        log_line(
+            "rust",
+            &format!(
+                "open_path: scrubbed={:?} exec={:?}",
+                scrubbed,
+                handler.as_deref().and_then(handler_exec),
+            ),
+        );
         let mut child = cmd.spawn().map_err(|e| format!("open failed: {e}"))?;
         // xdg-open's diagnostics would otherwise vanish: reap stderr on a
         // thread (fire-and-forget, never blocks this command).
