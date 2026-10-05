@@ -256,7 +256,7 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
     for (const [scope, msgs] of deduped) {
       if (scope !== null && msgs.length > 1) {
         if (lines.length) lines.push('');
-        lines.push(`#### ${capitalize(scope)}`);
+        lines.push(`#### - ${capitalize(scope)}`);
         for (const msg of msgs) {
           lines.push(`- ${msg}`);
         }
