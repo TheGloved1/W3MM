@@ -103,6 +103,33 @@ fn last_limits() -> &'static std::sync::Mutex<std::collections::HashMap<String, 
     L.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+/// Remote mod versions seen this session (mod_id -> (version, unix ts)) so
+/// repeat checks skip mods already known to be current. Fresh update
+/// resolves (`resolve_update`) always hit the network — they need file ids.
+fn version_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, (String, i64)>> {
+    static V: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (String, i64)>>> =
+        std::sync::OnceLock::new();
+    V.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+const VERSION_TTL_SECS: i64 = 3600;
+
+/// Fresh-enough cached remote version, if any.
+pub fn cached_remote(mod_id: &str) -> Option<String> {
+    let cache = version_cache().lock().ok()?;
+    let (v, ts) = cache.get(mod_id)?;
+    if chrono::Utc::now().timestamp() - ts > VERSION_TTL_SECS {
+        return None;
+    }
+    Some(v.clone())
+}
+
+pub fn store_remote(mod_id: &str, version: &str) {
+    if let Ok(mut cache) = version_cache().lock() {
+        cache.insert(mod_id.to_string(), (version.to_string(), chrono::Utc::now().timestamp()));
+    }
+}
+
 /// Calls we're willing to make right now (python `allowance`).
 pub fn allowance() -> i64 {
     let lim = last_limits().lock().map(|l| l.clone()).unwrap_or_default();

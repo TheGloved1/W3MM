@@ -577,6 +577,14 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
                 let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
                 continue;
             }
+            // Recently seen versions skip the network entirely.
+            if let Some(remote) = crate::nexus::cached_remote(&nid) {
+                if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
+                    hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
+                }
+                let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
+                continue;
+            }
             let v = match crate::nexus::nexus_get(&format!("/games/witcher3/mods/{nid}.json"), &api_key) {
                 Ok(v) => v,
                 Err(_) => {
@@ -585,6 +593,9 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
                 }
             };
             let remote = v.get("version").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if !remote.is_empty() {
+                crate::nexus::store_remote(&nid, &remote);
+            }
             if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
                 hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
             }

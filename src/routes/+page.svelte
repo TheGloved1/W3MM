@@ -26,6 +26,7 @@
     RefreshCw,
     Trash2,
     TriangleAlert,
+    X,
   } from "lucide-svelte";
 
   let appState: AppState | null = $state(null);
@@ -50,6 +51,9 @@
   let checkingIds: Set<string> = $state(new Set());
   let updatingIds: Set<string> = $state(new Set());
   let premiumCache: boolean | null = $state(null);
+  let updatesOpen: boolean = $state(false);
+  let dismissedHits: Set<string> = $state(new Set());
+  const visibleHits = $derived(hits.filter((h) => !dismissedHits.has(h.id)));
   let gameDir: string = $state("");
   let prefix: string = $state("");
   let nexusKey: string = $state("");
@@ -374,6 +378,8 @@
   function pruneHits() {
     if (!hits.length || !appState) return;
     const before = hits.length;
+    const live = new Set(appState.mods.filter((x) => !x.sep).map((x) => x.id));
+    dismissedHits = new Set([...dismissedHits].filter((id) => live.has(id)));
     hits = hits.filter((h) => {
       const m = appState!.mods.find((x) => x.id === h.id && !x.sep);
       if (!m) return false;
@@ -648,7 +654,7 @@
   }
 
   async function updateSelected(premium?: boolean) {
-    const targets = hits.filter((h) => selectedIds.has(h.id));
+    const targets = visibleHits.filter((h) => selectedIds.has(h.id));
     if (!targets.length) return;
     const cfg = await loadConfigNative().catch(() => null);
     const isPrem =
@@ -805,14 +811,14 @@
 
   async function updateAll() {
     menuOpen = false;
-    if (!hits.length) return;
+    if (!visibleHits.length) return;
     const cfg = await loadConfigNative().catch(() => null);
     const premium =
       premiumCache ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
     premiumCache = premium;
-    const total = hits.length;
+    const total = visibleHits.length;
     let i = 0;
-    for (const h of [...hits]) {
+    for (const h of [...visibleHits]) {
       i++;
       flash(`Updating ${i}/${total}: ${h.name}…`);
       await updateMod(h.id, premium);
@@ -1404,6 +1410,8 @@
                 );
               }
             } else {
+              // Fresh full check: previously dismissed updates show again.
+              dismissedHits = new Set();
               hits = e.payload.hits;
               busy = "";
               flash(
@@ -1567,31 +1575,63 @@
         >
       </div>
     {/if}
-    {#if hits.length}
+    {#if visibleHits.length}
       <div
         class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm"
       >
-        <span class="flex-1 text-[#b5d95a]"
-          >{hits.length} update{hits.length === 1 ? "" : "s"} on Nexus: {hits
-            .slice(0, 3)
-            .map((h) => `${h.name} → ${h.remote}`)
-            .join(" · ")}{hits.length > 3 ? " …" : ""}</span
+        <button
+          onclick={() => (updatesOpen = !updatesOpen)}
+          title={updatesOpen ? "Hide update list" : "Show update list"}
+          class="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[#b5d95a]"
         >
+          <span class="flex-1 truncate"
+            >{visibleHits.length} update{visibleHits.length === 1 ? "" : "s"} on Nexus: {visibleHits
+              .slice(0, 3)
+              .map((h) => `${h.name} → ${h.remote}`)
+              .join(" · ")}{visibleHits.length > 3 ? " …" : ""}</span
+          >
+          {#if updatesOpen}<ChevronDown class="size-4 shrink-0" />{:else}<ChevronRight class="size-4 shrink-0" />{/if}
+        </button>
         <button
           onclick={updateAll}
           disabled={updatingIds.size > 0}
           class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110 disabled:opacity-50"
           >{updatingIds.size > 0 ? `Updating… (${updatingIds.size})` : "Update all"}</button
         >
-        {#if hits.some((h) => selectedIds.has(h.id))}
+        {#if visibleHits.some((h) => selectedIds.has(h.id))}
           <button
             onclick={() => updateSelected()}
             disabled={updatingIds.size > 0}
             class="shrink-0 rounded-[7px] border border-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#b5d95a] hover:bg-[#b5d95a]/10 disabled:opacity-50"
-            >Update selected ({hits.filter((h) => selectedIds.has(h.id)).length})</button
+            >Update selected ({visibleHits.filter((h) => selectedIds.has(h.id)).length})</button
           >
         {/if}
+        <button
+          onclick={() => {
+            dismissedHits = new Set([...dismissedHits, ...visibleHits.map((h) => h.id)]);
+            updatesOpen = false;
+          }}
+          title="Dismiss until the next check finds something new"
+          class="shrink-0 rounded-[6px] p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          ><X class="size-4" /></button
+        >
       </div>
+      {#if updatesOpen}
+        <div class="flex max-h-56 flex-col gap-0.5 overflow-auto rounded-[7px] border border-border bg-card px-2 py-1.5">
+          {#each visibleHits as h}
+            <div class="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-sm hover:bg-accent/40">
+              <span class="min-w-0 flex-1 truncate">{h.name}</span>
+              <span class="shrink-0 font-mono text-[12px] text-muted-foreground">{h.local} → <span class="text-[#b5d95a]">{h.remote}</span></span>
+              <button
+                onclick={() => updateMod(h.id)}
+                disabled={updatingIds.has(h.id)}
+                class="shrink-0 rounded-[6px] bg-[#b5d95a] px-2.5 py-0.5 text-[13px] font-semibold text-[#1c2127] hover:brightness-110 disabled:opacity-50"
+                >{updatingIds.has(h.id) ? "Updating…" : "Update"}</button
+              >
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
 
     <div
