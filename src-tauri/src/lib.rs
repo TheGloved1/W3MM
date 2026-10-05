@@ -651,10 +651,13 @@ fn log_launch_env() {
         log_line(
             "rust",
             &format!(
-                "launch: appimage={} appdir={:?} desktop={:?} display={:?}/{:?} path={:?} data_dirs={:?} ld_library_path={}",
+                "launch: appimage={} appdir={:?} desktop={:?} session_type={:?} gdk_backend={:?} gtk_theme={:?} display={:?}/{:?} path={:?} data_dirs={:?} ld_library_path={}",
                 if in_appimage { "yes" } else { "no" },
                 std::env::var("APPDIR").ok(),
                 std::env::var("XDG_CURRENT_DESKTOP").ok(),
+                std::env::var("XDG_SESSION_TYPE").ok(),
+                std::env::var("GDK_BACKEND").ok(),
+                std::env::var("GTK_THEME").ok(),
                 std::env::var("DISPLAY").ok(),
                 std::env::var("WAYLAND_DISPLAY").ok(),
                 std::env::var("PATH").ok(),
