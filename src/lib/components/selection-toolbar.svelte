@@ -9,6 +9,9 @@
     onClear: () => void;
     onCheckUpdates?: () => void;
     checkingUpdates?: boolean;
+    /** Sits flush against a panel above it: drops the top corners and the top
+     *  border so the two read as one stacked control rather than two boxes. */
+    attached?: boolean;
   }
   let {
     count,
@@ -18,11 +21,16 @@
     onClear,
     onCheckUpdates,
     checkingUpdates = false,
+    attached = false,
   }: Props = $props();
 </script>
 
 {#if count > 0}
-  <div class="flex shrink-0 items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-1.5 text-sm">
+  <div
+    class="flex shrink-0 items-center gap-2 rounded-b-[7px] border border-border bg-card px-[14px] py-1.5 text-sm {attached
+      ? 'rounded-t-none border-t-0'
+      : 'rounded-t-[7px]'}"
+  >
     <span class="font-medium">{count} selected</span>
     <div class="h-4 w-px bg-border"></div>
     <Button variant="secondary" size="sm" onclick={onEnable}>Enable</Button>

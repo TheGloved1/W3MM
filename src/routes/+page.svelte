@@ -1750,80 +1750,87 @@
       </div>
     {/snippet}
 
-    <div
-      class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[7px] border border-border bg-card"
-    >
-      <DataList
-        columns={[
-          {
-            id: "priority",
-            label: "Priority",
-            width: 76,
-            cell: cellPriority,
-          },
-          { id: "name", label: "Mod", width: 340, cell: cellName },
-          { id: "version", label: "Version", width: 100, cell: cellVersion },
-          {
-            id: "installed",
-            label: "Installed",
-            width: 110,
-            cell: cellInstalled,
-          },
-          { id: "status", label: "Status", width: 118, cell: cellStatus },
-        ]}
-        items={appState ? appState.mods : []}
-        keyOf={(m) => m.id}
-        isSelected={(m) => selectedIds.has(m.id)}
-        onSelect={(m, mods) => {
-          handleSelect(m.id, mods);
-        }}
-        onContextMenu={(m, e) => {
-          if (m.sep) onSepContext(m.id, e);
-          else onRowContext(m.id, e);
-        }}
-        onBackgroundClear={() => {
-          clearSelection();
-        }}
-        onActivate={(m) => openEdit(m.id)}
-        isDetail={(m) => !!m.sep}
-        canReorder={!filtering}
-        onReorder={(from, to, pos) => handleDataListReorder(from, to, pos)}
+    <!-- List + selection toolbar share one wrapper so the page's flex gap
+         doesn't separate them; the toolbar sits flush against the list. -->
+    <div class="flex min-h-0 flex-1 flex-col">
+      <div
+        class="flex min-h-0 flex-1 flex-col overflow-hidden border border-border bg-card {selectedIds.size
+          ? 'rounded-t-[7px]'
+          : 'rounded-[7px]'}"
       >
-        {#snippet detail({ row: m }: { row: ModRow })}
-          <button
-            class="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-muted-foreground"
-            onclick={() => toggleCollapse(m.id)}
-          >
-            <span class="flex h-4 w-4 items-center justify-center">
-              {#if collapsed[m.id]}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}
-            </span>
-            {m.name}
-            <span class="font-normal">({countMembers(m.id)})</span>
-          </button>
-        {/snippet}
-        {#snippet empty()}
-          <div
-            class="flex h-full min-h-0 items-center justify-center p-8 text-center text-[12pt] text-muted-foreground"
-          >
-            {#if !appState}
-              Set the game folder in Settings…
-            {:else}
-              {"No mods yet\n\nClick Install mods, or drop .zip / .7z / .rar files here"}
-            {/if}
-          </div>
-        {/snippet}
-      </DataList>
-    </div>
+        <DataList
+          columns={[
+            {
+              id: "priority",
+              label: "Priority",
+              width: 76,
+              cell: cellPriority,
+            },
+            { id: "name", label: "Mod", width: 340, cell: cellName },
+            { id: "version", label: "Version", width: 100, cell: cellVersion },
+            {
+              id: "installed",
+              label: "Installed",
+              width: 110,
+              cell: cellInstalled,
+            },
+            { id: "status", label: "Status", width: 118, cell: cellStatus },
+          ]}
+          items={appState ? appState.mods : []}
+          keyOf={(m) => m.id}
+          isSelected={(m) => selectedIds.has(m.id)}
+          onSelect={(m, mods) => {
+            handleSelect(m.id, mods);
+          }}
+          onContextMenu={(m, e) => {
+            if (m.sep) onSepContext(m.id, e);
+            else onRowContext(m.id, e);
+          }}
+          onBackgroundClear={() => {
+            clearSelection();
+          }}
+          onActivate={(m) => openEdit(m.id)}
+          isDetail={(m) => !!m.sep}
+          canReorder={!filtering}
+          onReorder={(from, to, pos) => handleDataListReorder(from, to, pos)}
+        >
+          {#snippet detail({ row: m }: { row: ModRow })}
+            <button
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-muted-foreground"
+              onclick={() => toggleCollapse(m.id)}
+            >
+              <span class="flex h-4 w-4 items-center justify-center">
+                {#if collapsed[m.id]}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}
+              </span>
+              {m.name}
+              <span class="font-normal">({countMembers(m.id)})</span>
+            </button>
+          {/snippet}
+          {#snippet empty()}
+            <div
+              class="flex h-full min-h-0 items-center justify-center p-8 text-center text-[12pt] text-muted-foreground"
+            >
+              {#if !appState}
+                Set the game folder in Settings…
+              {:else}
+                {"No mods yet\n\nClick Install mods, or drop .zip / .7z / .rar files here"}
+              {/if}
+            </div>
+          {/snippet}
+        </DataList>
+      </div>
 
-    <SelectionToolbar
-      count={selectedIds.size}
-      onEnable={enableSelected}
-      onDisable={disableSelected}
-      onUninstall={removeSelected}
-      onClear={clearSelection}
-      onCheckUpdates={checkSelected}
-      checkingUpdates={[...selectedIds].some((id) => checkingIds.has(id))}
-    />
+      <SelectionToolbar
+        attached
+        count={selectedIds.size}
+        onEnable={enableSelected}
+        onDisable={disableSelected}
+        onUninstall={removeSelected}
+        onClear={clearSelection}
+        onCheckUpdates={checkSelected}
+        checkingUpdates={[...selectedIds].some((id) => checkingIds.has(id))}
+      />
+    </div>
 
     <div class="flex items-center gap-2">
       <span
