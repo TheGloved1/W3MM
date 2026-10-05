@@ -316,8 +316,6 @@
       }
       if (gameDir) await open();
       else status = "Set the game folder in Settings…";
-      // Boot-time banner from the persisted version cache — no network.
-      if (gameDir) hits = await invoke<typeof hits>("cached_updates").catch(() => []);
     } catch (e) {
       error = String(e);
     }
@@ -371,6 +369,16 @@
     );
     void qtip;
     quotaText = qt;
+    // Regrow hits from the persisted version cache (no network): downgrades
+    // and restarts instantly show their known updates again.
+    try {
+      const cached = await invoke<typeof hits>("cached_updates");
+      if (cached.length) {
+        const seen = new Set(hits.map((h) => h.id));
+        const fresh = cached.filter((h) => !seen.has(h.id));
+        if (fresh.length) hits = [...hits, ...fresh];
+      }
+    } catch {}
     pruneHits();
     console.debug(`[w3mm] refresh: done`);
   }
@@ -720,6 +728,7 @@
     row_id?: string;
     file_id?: string;
     version?: string;
+    local_path?: string;
     error?: string;
   };
   // Promises waiting on `update-resolved` for one mod id.
@@ -749,6 +758,27 @@
     if (typeof p.premium === "boolean") premiumCache = p.premium;
     if (p.error) {
       error = p.error;
+      return;
+    }
+    // The update file is already in Downloads: install from it directly —
+    // no redownload, no Nexus page. The hit stays until the install lands
+    // (pruneHits clears it afterwards).
+    if (p.local_path) {
+      const m = modById(p.id);
+      const qp = new URLSearchParams({
+        path: p.local_path,
+        name: m?.name ?? "",
+        version: p.version ?? "",
+        nexus: (m?.nexus ?? "").replace(/\D/g, ""),
+      });
+      flash(`Update file already downloaded — installing ${m?.name ?? "mod"} from local copy…`);
+      await invoke("open_tool_window", {
+        kind: "install",
+        query: qp.toString(),
+        path: p.local_path,
+      }).catch((e) => {
+        error = String(e);
+      });
       return;
     }
     if (p.premium === false) {

@@ -1019,6 +1019,17 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
     downloads::items()
 }
 
+/// Update file already sitting in the downloads dir (exact filename match):
+/// install straight from it instead of redownloading.
+fn local_download_file(hist: Option<&std::path::PathBuf>, file_name: &str) -> Option<String> {
+    if file_name.is_empty() {
+        return None;
+    }
+    hist.and_then(|h| h.parent().map(|d| d.join(file_name)))
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 /// Resolve one installed mod to its newer Nexus file and queue it.
 /// Network runs on a worker thread — the command returns at once and the
 /// result arrives as `update-resolved`, so Update clicks never stall the UI.
@@ -1052,6 +1063,13 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
         if let Some(t) = crate::nexus::cached_target(&nexus) {
             if crate::nexus::version_is_newer(&t.version, &version) {
                 use tauri::Emitter;
+                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                    let _ = app.emit(
+                        "update-resolved",
+                        serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local }),
+                    );
+                    return Ok(true);
+                }
                 let row_id = downloads::enqueue_resolved(&nexus, &t);
                 if let Some(h) = hist.as_ref() {
                     downloads::save_history(h);
@@ -1077,12 +1095,17 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
             Ok(None) => serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }),
             Ok(Some(t)) => {
                 crate::nexus::store_target(&nexus, &t);
-                let row_id = downloads::enqueue_resolved(&nexus, &t);
-                if let Some(h) = hist.as_ref() {
-                    downloads::save_history(h);
+                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                    log_line("rust", &format!("update_mod: using local {} for {nexus}", t.file_name));
+                    serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local })
+                } else {
+                    let row_id = downloads::enqueue_resolved(&nexus, &t);
+                    if let Some(h) = hist.as_ref() {
+                        downloads::save_history(h);
+                    }
+                    log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
+                    serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id })
                 }
-                log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
-                serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id })
             }
         };
         let _ = app.emit("update-resolved", payload);
@@ -1095,7 +1118,7 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
 /// arrives as `update-resolved` with `{ id, premium, file_id, version }`.
 #[tauri::command]
 fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key: String, premium: Option<bool>) -> Result<bool, String> {
-    let (nexus, version): (String, String) = {
+    let (nexus, version, hist): (String, String, Option<std::path::PathBuf>) = {
         let g = lock_shared(&shared, "resolve_mod_update")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
@@ -1108,7 +1131,10 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
         if nid.is_empty() {
             return Err("no Nexus ID on this mod — set one in Edit…".into());
         }
-        (nid, row.version.clone())
+        let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+        let _ = std::fs::create_dir_all(&dir);
+        let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
+        (nid, row.version.clone(), Some(hist))
     };
     log_line("rust", &format!("resolve_mod_update: resolving {nexus} (installed {version})"));
     // Zero-network fast path for known free accounts with a cached target.
@@ -1116,10 +1142,11 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
         if let Some(t) = crate::nexus::cached_target(&nexus) {
             if crate::nexus::version_is_newer(&t.version, &version) {
                 use tauri::Emitter;
-                let _ = app.emit(
-                    "update-resolved",
-                    serde_json::json!({ "id": id, "premium": false, "file_id": t.file_id, "version": t.version }),
-                );
+                let mut payload = serde_json::json!({ "id": id, "premium": false, "file_id": t.file_id, "version": t.version });
+                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                    payload["local_path"] = serde_json::Value::String(local);
+                }
+                let _ = app.emit("update-resolved", payload);
                 return Ok(true);
             }
         }
@@ -1136,7 +1163,11 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
             Ok(None) => serde_json::json!({ "id": id, "premium": prem, "file_id": "", "version": version }),
             Ok(Some(t)) => {
                 crate::nexus::store_target(&nexus, &t);
-                serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version })
+                let mut payload = serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version });
+                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                    payload["local_path"] = serde_json::Value::String(local);
+                }
+                payload
             }
         };
         let _ = app.emit("update-resolved", payload);
