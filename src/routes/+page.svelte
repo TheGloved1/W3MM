@@ -1607,10 +1607,7 @@
         >
           {#if updatesOpen}<ChevronDown class="size-4 shrink-0" />{:else}<ChevronRight class="size-4 shrink-0" />{/if}
           <span class="flex-1 truncate"
-            >{hits.length} update{hits.length === 1 ? "" : "s"} on Nexus: {hits
-              .slice(0, 3)
-              .map((h) => `${h.name} → ${h.remote}`)
-              .join(" · ")}{hits.length > 3 ? " …" : ""}</span
+            >{hits.length} update{hits.length === 1 ? "" : "s"} on Nexus</span
           >
         </button>
         <button
