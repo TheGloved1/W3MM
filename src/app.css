@@ -117,8 +117,17 @@
    per-cell right borders read as a spreadsheet rather than a mod list. */
 .data-list .sv-grid-cell {
   border-right: 0;
-  padding: 0 8px;
+  /* Vertical padding is what sets the row height (autoRowHeight measures the
+     content). 9px lands rows at 42px — roomier than before without wasting
+     space on a long list. */
+  padding: 9px 8px;
   user-select: text;
+}
+/* The priority input brings its own vertical padding; without this the
+   tallest cell in the row would be the number field, not the mod name. */
+.data-list .sv-grid-cell > input[type="number"] {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .data-list .sv-grid-head .sv-grid-column {
   text-transform: uppercase;

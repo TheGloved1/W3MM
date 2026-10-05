@@ -157,7 +157,7 @@
       columns={cols}
       getRowId={keyOf}
       containerHeight="100%"
-      rowHeight={34}
+      rowHeight={42}
       headerHeight={40}
       autoRowHeight
       fitColumns
