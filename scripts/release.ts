@@ -227,7 +227,7 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
   const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
   // Render one section: unscoped bullets first, then single-entry scopes
-  // inline, then duplicate scopes grouped under `#### Scope` headers.
+  // inline, then duplicate scopes grouped under `### Scope` headers.
   function renderSection(entries: ScopedEntry[]): string {
     // Dedupe messages within each scope (plus the unscoped bucket) so
     // identical messages under different scopes don't eat each other.
@@ -256,7 +256,7 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
     for (const [scope, msgs] of deduped) {
       if (scope !== null && msgs.length > 1) {
         if (lines.length) lines.push('');
-        lines.push(`#### ${capitalize(scope)}`);
+        lines.push(`### ${capitalize(scope)}`);
         for (const msg of msgs) {
           lines.push(`- ${msg}`);
         }
@@ -271,10 +271,10 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
   const other = renderSection(otherRaw);
 
   let body = '';
-  if (added) body += '\n\n### Added\n\n' + added;
-  if (fixed) body += '\n\n### Fixed\n\n' + fixed;
-  if (changed) body += '\n\n### Changed\n\n' + changed;
-  if (other) body += '\n\n### Other\n\n' + other;
+  if (added) body += '\n\n## Added\n\n' + added;
+  if (fixed) body += '\n\n## Fixed\n\n' + fixed;
+  if (changed) body += '\n\n## Changed\n\n' + changed;
+  if (other) body += '\n\n## Other\n\n' + other;
   if (!body) body = '\n\nMaintenance release.';
 
   const today = new Date().toISOString().slice(0, 10);
