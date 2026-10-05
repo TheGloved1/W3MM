@@ -1672,7 +1672,7 @@
           onclick={(e) => e.stopPropagation()}
           onkeydown={(e) => e.stopPropagation()}
           title="Priority — 1 wins"
-          class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none"
+          class="w-[40px] bg-transparent px-1 py-[3px] text-left text-[13px] font-semibold text-foreground outline-none"
           style="-moz-appearance:textfield;-webkit-appearance:none;"
         />
       {:else}
@@ -1759,12 +1759,11 @@
             id: "priority",
             label: "Priority",
             width: 76,
-            align: "center",
             cell: cellPriority,
           },
           { id: "name", label: "Mod", width: 340, cell: cellName },
           { id: "version", label: "Version", width: 100, cell: cellVersion },
-          { id: "status", label: "Status", width: 220, cell: cellStatus },
+          { id: "status", label: "Status", width: 118, cell: cellStatus },
           {
             id: "installed",
             label: "Installed",
