@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import type { AppState, MadeFor, QueueItem } from "$lib/types";
@@ -52,8 +52,8 @@
   let updatingIds: Set<string> = $state(new Set());
   let premiumCache: boolean | null = $state(null);
   let updatesOpen: boolean = $state(false);
-  let dismissedHits: Set<string> = $state(new Set());
-  const visibleHits = $derived(hits.filter((h) => !dismissedHits.has(h.id)));
+  let updatesDismissed: boolean = $state(false);
+  let updatesBanner: HTMLDivElement | null = $state(null);
   let gameDir: string = $state("");
   let prefix: string = $state("");
   let nexusKey: string = $state("");
@@ -378,8 +378,6 @@
   function pruneHits() {
     if (!hits.length || !appState) return;
     const before = hits.length;
-    const live = new Set(appState.mods.filter((x) => !x.sep).map((x) => x.id));
-    dismissedHits = new Set([...dismissedHits].filter((id) => live.has(id)));
     hits = hits.filter((h) => {
       const m = appState!.mods.find((x) => x.id === h.id && !x.sep);
       if (!m) return false;
@@ -654,7 +652,7 @@
   }
 
   async function updateSelected(premium?: boolean) {
-    const targets = visibleHits.filter((h) => selectedIds.has(h.id));
+    const targets = hits.filter((h) => selectedIds.has(h.id));
     if (!targets.length) return;
     const cfg = await loadConfigNative().catch(() => null);
     const isPrem =
@@ -811,14 +809,14 @@
 
   async function updateAll() {
     menuOpen = false;
-    if (!visibleHits.length) return;
+    if (!hits.length) return;
     const cfg = await loadConfigNative().catch(() => null);
     const premium =
       premiumCache ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
     premiumCache = premium;
-    const total = visibleHits.length;
+    const total = hits.length;
     let i = 0;
-    for (const h of [...visibleHits]) {
+    for (const h of [...hits]) {
       i++;
       flash(`Updating ${i}/${total}: ${h.name}…`);
       await updateMod(h.id, premium);
@@ -1410,8 +1408,8 @@
                 );
               }
             } else {
-              // Fresh full check: previously dismissed updates show again.
-              dismissedHits = new Set();
+              // Fresh full check: a dismissed banner shows again.
+              updatesDismissed = false;
               hits = e.payload.hits;
               busy = "";
               flash(
@@ -1495,8 +1493,11 @@
             e.stopPropagation();
             menuOpen = !menuOpen;
           }}
-          class="rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent"
-          aria-label="More">•••</button
+          class="relative rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent"
+          aria-label="More">•••{#if hits.length && !menuOpen}<span
+              class="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#b5d95a] px-1 text-[11px] font-bold text-[#1c2127]"
+              >{hits.length}</span
+            >{/if}</button
         >
         {#if menuOpen}
           <div
@@ -1506,6 +1507,22 @@
             onclick={(e) => e.stopPropagation()}
             onkeydown={(e) => e.stopPropagation()}
           >
+            {#if hits.length}
+              <button
+                onclick={async () => {
+                  menuOpen = false;
+                  updatesDismissed = false;
+                  updatesOpen = true;
+                  await tick();
+                  updatesBanner?.scrollIntoView({ block: "nearest" });
+                }}
+                class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                ><span class="flex-1">Updates</span><span
+                  class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#b5d95a] px-1 text-[11px] font-bold text-[#1c2127]"
+                  >{hits.length}</span
+                ></button
+              >
+            {/if}
             <button
               onclick={addSection}
               class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
@@ -1575,8 +1592,9 @@
         >
       </div>
     {/if}
-    {#if visibleHits.length}
+    {#if hits.length && !updatesDismissed}
       <div
+        bind:this={updatesBanner}
         class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm"
       >
         <button
@@ -1585,10 +1603,10 @@
           class="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[#b5d95a]"
         >
           <span class="flex-1 truncate"
-            >{visibleHits.length} update{visibleHits.length === 1 ? "" : "s"} on Nexus: {visibleHits
+            >{hits.length} update{hits.length === 1 ? "" : "s"} on Nexus: {hits
               .slice(0, 3)
               .map((h) => `${h.name} → ${h.remote}`)
-              .join(" · ")}{visibleHits.length > 3 ? " …" : ""}</span
+              .join(" · ")}{hits.length > 3 ? " …" : ""}</span
           >
           {#if updatesOpen}<ChevronDown class="size-4 shrink-0" />{:else}<ChevronRight class="size-4 shrink-0" />{/if}
         </button>
@@ -1598,17 +1616,17 @@
           class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110 disabled:opacity-50"
           >{updatingIds.size > 0 ? `Updating… (${updatingIds.size})` : "Update all"}</button
         >
-        {#if visibleHits.some((h) => selectedIds.has(h.id))}
+        {#if hits.some((h) => selectedIds.has(h.id))}
           <button
             onclick={() => updateSelected()}
             disabled={updatingIds.size > 0}
             class="shrink-0 rounded-[7px] border border-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#b5d95a] hover:bg-[#b5d95a]/10 disabled:opacity-50"
-            >Update selected ({visibleHits.filter((h) => selectedIds.has(h.id)).length})</button
+            >Update selected ({hits.filter((h) => selectedIds.has(h.id)).length})</button
           >
         {/if}
         <button
           onclick={() => {
-            dismissedHits = new Set([...dismissedHits, ...visibleHits.map((h) => h.id)]);
+            updatesDismissed = true;
             updatesOpen = false;
           }}
           title="Dismiss until the next check finds something new"
@@ -1618,7 +1636,7 @@
       </div>
       {#if updatesOpen}
         <div class="flex max-h-56 flex-col gap-0.5 overflow-auto rounded-[7px] border border-border bg-card px-2 py-1.5">
-          {#each visibleHits as h}
+          {#each hits as h}
             <div class="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-sm hover:bg-accent/40">
               <span class="min-w-0 flex-1 truncate">{h.name}</span>
               <span class="shrink-0 font-mono text-[12px] text-muted-foreground">{h.local} → <span class="text-[#b5d95a]">{h.remote}</span></span>
