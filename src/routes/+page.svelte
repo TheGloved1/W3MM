@@ -619,36 +619,42 @@
     }
   }
 
-  async function checkOne(id: string) {
-    ctx = null;
+  /**
+   * Single entry point for every update check. `ids === null` scans the
+   * whole list; an array scopes to those mods. The command returns at once —
+   * results arrive on `updates-done` (full replace vs partial merge).
+   */
+  async function checkForUpdates(ids: string[] | null) {
+    menuOpen = false;
     error = "";
-    const m = modById(id);
-    checkingIds = new Set([...checkingIds, id]);
-    flash(`Checking ${m?.name ?? "mod"}…`);
+    if (ids === null) {
+      busy = "Checking Nexus…";
+    } else {
+      if (!ids.length) return;
+      checkingIds = new Set([...checkingIds, ...ids]);
+      flash(
+        ids.length === 1
+          ? `Checking ${modById(ids[0])?.name ?? "mod"}…`
+          : `Checking ${ids.length} mods…`,
+      );
+    }
     try {
       const cfg = await loadConfigNative();
-      // Scoped: backend only scans this mod; the result arrives on
-      // `updates-done` (partial) and is merged into `hits` there.
-      await invoke("check_updates", { apiKey: cfg.nexusKey, ids: [id] });
+      await invoke("check_updates", { apiKey: cfg.nexusKey, ...(ids === null ? {} : { ids }) });
     } catch (e) {
-      checkingIds = new Set([...checkingIds].filter((x) => x !== id));
+      if (ids === null) busy = "";
+      else checkingIds = new Set([...checkingIds].filter((x) => !ids.includes(x)));
       error = String(e);
     }
   }
 
+  async function checkOne(id: string) {
+    ctx = null;
+    await checkForUpdates([id]);
+  }
+
   async function checkSelected() {
-    if (!selectedIds.size) return;
-    error = "";
-    const ids = [...selectedIds];
-    checkingIds = new Set([...checkingIds, ...ids]);
-    flash(`Checking ${ids.length} mod${ids.length === 1 ? "" : "s"}…`);
-    try {
-      const cfg = await loadConfigNative();
-      await invoke("check_updates", { apiKey: cfg.nexusKey, ids });
-    } catch (e) {
-      checkingIds = new Set([...checkingIds].filter((x) => !selectedIds.has(x)));
-      error = String(e);
-    }
+    await checkForUpdates([...selectedIds]);
   }
 
   async function updateSelected(premium?: boolean) {
@@ -824,17 +830,7 @@
   }
 
   async function checkUpdates() {
-    menuOpen = false;
-    busy = "Checking Nexus…";
-    error = "";
-    try {
-      const cfg = await loadConfigNative();
-      // Returns immediately; results arrive on the `updates-done` event.
-      await invoke("check_updates", { apiKey: cfg.nexusKey });
-    } catch (e) {
-      error = String(e);
-      busy = "";
-    }
+    await checkForUpdates(null);
   }
 
   async function play() {
@@ -1385,6 +1381,11 @@
               // Scoped re-check: merge these ids into the existing banner.
               const fresh = new Map(e.payload.hits.map((h) => [h.id, h]));
               const checked = new Set(e.payload.ids);
+              const known = new Set(hits.map((h) => h.id));
+              // Genuinely new finds pop a dismissed banner back up.
+              if ([...fresh.keys()].some((id) => !known.has(id))) {
+                updatesDismissed = false;
+              }
               hits = [
                 ...hits.filter((h) => !checked.has(h.id)),
                 ...[...checked].filter((id) => fresh.has(id)).map((id) => fresh.get(id)!),
