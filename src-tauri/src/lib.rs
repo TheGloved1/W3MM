@@ -733,6 +733,15 @@ fn open_path(target: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let tool = host_tool("xdg-open").ok_or("xdg-open not found outside the app sandbox")?;
+        log_line(
+            "rust",
+            &format!(
+                "open_path: tool={} desktop={:?} data_dirs={:?}",
+                tool.display(),
+                std::env::var("XDG_CURRENT_DESKTOP").ok(),
+                std::env::var("XDG_DATA_DIRS").ok(),
+            ),
+        );
         let mut cmd = std::process::Command::new(tool);
         cmd.arg(&target)
             .stdin(std::process::Stdio::null())
