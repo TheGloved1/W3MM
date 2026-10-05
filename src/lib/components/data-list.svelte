@@ -110,13 +110,11 @@
           <col style="width: {colWidths[col.id] ?? 'auto'};" />
         {/each}
       </colgroup>
-      <Table.Header
-        class="sticky top-0 z-10 bg-muted/70 backdrop-blur supports-[backdrop-filter]:bg-muted/70"
-      >
+      <Table.Header>
         <Table.Row class="border-b border-border hover:bg-transparent">
           {#each columns as col}
             <Table.Head
-              class="relative border-b border-border text-[11px] tracking-wide text-muted-foreground {col.align ===
+              class="relative sticky top-0 z-10 bg-muted/80 text-[11px] tracking-wide text-muted-foreground backdrop-blur {col.align ===
               'right'
                 ? 'text-right'
                 : ''}"
