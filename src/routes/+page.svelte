@@ -609,8 +609,7 @@
       return;
     }
     try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(`https://www.nexusmods.com/witcher3/mods/${nid}`);
+      await invoke("open_path", { target: `https://www.nexusmods.com/witcher3/mods/${nid}` });
     } catch (e) {
       console.error(`[w3mm] open nexus page failed: ${String(e)}`);
       error = String(e);
@@ -621,8 +620,7 @@
     ctx = null;
     try {
       const dir = await invoke<string>("mod_dir", { id });
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(dir);
+      await invoke("open_path", { target: dir });
     } catch (e) {
       console.error(`[w3mm] open mod folder failed: ${String(e)}`);
       error = String(e);
@@ -786,8 +784,9 @@
         error = "No Nexus ID on this mod — set one in Edit…";
         return;
       }
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${p.file_id}&nmm=1`);
+      await invoke("open_path", {
+        target: `https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${p.file_id}&nmm=1`,
+      });
       flash("Pick Slow Download on the Nexus page, then Install mods → select the file.");
       return;
     }
@@ -849,8 +848,7 @@
   async function play() {
     if (gameDir.toLowerCase().includes("steamapps")) {
       try {
-        const { open } = await import("@tauri-apps/plugin-shell");
-        await open("steam://rungameid/292030");
+        await invoke("open_path", { target: "steam://rungameid/292030" });
       } catch (e) {
         error = String(e);
       }
@@ -862,7 +860,6 @@
   async function openPath(kind: string) {
     menuOpen = false;
     try {
-      const { open } = await import("@tauri-apps/plugin-shell");
       const target =
         kind === "game"
           ? gameDir
@@ -870,7 +867,7 @@
             ? await invoke<string>("settings_dir_path")
             : `${await invoke<string>("settings_dir_path")}/${kind}`;
       console.debug(`[w3mm] opening ${kind}: ${target}`);
-      await open(target);
+      await invoke("open_path", { target });
     } catch (e) {
       console.error(`[w3mm] open ${kind} failed: ${String(e)}`);
       error = String(e);
@@ -1149,10 +1146,9 @@
 
   async function openDownloadsFolder() {
     try {
-      const { open } = await import("@tauri-apps/plugin-shell");
       const d = await downloadsDir();
       console.debug(`[w3mm] opening downloads folder: ${d}`);
-      await open(d);
+      await invoke("open_path", { target: d });
     } catch (e) {
       console.error(`[w3mm] open downloads folder failed: ${String(e)}`);
       error = String(e);

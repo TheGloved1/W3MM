@@ -638,6 +638,44 @@ fn cached_updates(shared: State<Shared>) -> Result<Vec<UpdateHit>, String> {
     Ok(out)
 }
 
+/// Open a folder or URL without blocking: the child is spawned detached, so
+/// the command returns at once even when `xdg-open` (or the handler it
+/// launches) lingers — `plugin-shell open()` waits on it and hangs.
+#[tauri::command]
+fn open_path(target: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("xdg-open failed: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("open failed: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &target])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("start failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Read-only import preview from a legacy `_ModManager/state.json`
 /// (clean-break rule: never writes into `_ModManager`).
 #[tauri::command]
@@ -1878,6 +1916,7 @@ pub fn run() {
             merge_inputs,
             save_merge,
             mod_dir,
+            open_path,
             remove_section_cmd,
             move_to_section,
             move_mod,
