@@ -121,13 +121,40 @@
      content). 9px lands rows at 42px — roomier than before without wasting
      space on a long list. */
   padding: 9px 8px;
-  user-select: text;
 }
 /* The priority input brings its own vertical padding; without this the
    tallest cell in the row would be the number field, not the mod name. */
 .data-list .sv-grid-cell > input[type="number"] {
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* Selection here is per-ROW, so the grid's per-cell affordances are suppressed:
+   the accent ring on the active cell (set on every pointerdown, independent of
+   whether cell selection is enabled) and the range outline. Row highlighting is
+   `.dl-selected` above; the editing ring stays, since editors are never opened
+   in this list but the rule costs nothing to keep honest. */
+.data-list .sv-grid-cell-active,
+.data-list .sv-grid-cell[data-selected-range] {
+  box-shadow: none;
+}
+.data-list .sv-grid-cell-active:not(.sv-grid-cell-editing) {
+  z-index: auto;
+}
+
+/* Nothing in a mod list is copyable: names, versions and dates are labels to
+   read, and a drag across rows is a reorder gesture, so text selection would
+   only ever get in the way. Inputs opt back in, since you must be able to
+   select a priority number to retype it. */
+.data-list .sv-grid-cell,
+.data-list .sv-grid-detail-cell {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.data-list input,
+.data-list textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 .data-list .sv-grid-head .sv-grid-column {
   text-transform: uppercase;
