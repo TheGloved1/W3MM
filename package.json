@@ -20,8 +20,9 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "sync-version": "bun run scripts/sync-version.js",
+    "sync-version": "bun scripts/sync-version.js",
     "release": "bun scripts/release.ts",
+    "release-status": "bun scripts/release-status.ts",
     "push-tags": "git push origin main --tags",
     "release:no-changelog": "bun scripts/release.ts --no-changelog"
   },

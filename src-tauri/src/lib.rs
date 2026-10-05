@@ -977,12 +977,15 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
 }
 
 /// Resolve one installed mod to its newer Nexus file and queue it.
-/// Returns `{ row_id, version }` ready for `queue_start`, or `{ row_id: "",
-/// version }` when already current. The finished download then flows through
+/// Network runs on a worker thread — the command returns at once and the
+/// result arrives as `update-resolved`, so Update clicks never stall the UI.
+/// Payload: `{ id, premium, row_id, version, file_id }` (`row_id == ""` when
+/// current) or `{ id, error }`. The finished download then flows through
 /// the normal offer-install path (labeled Update via version verdict).
 #[tauri::command]
-fn update_mod(shared: State<Shared>, id: String, api_key: String) -> Result<serde_json::Value, String> {
-    let (nexus, version): (String, String) = {
+fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key: String, premium: Option<bool>) -> Result<bool, String> {
+    // Snapshot everything the worker needs; only owned data crosses threads.
+    let (nexus, version, hist): (String, String, Option<std::path::PathBuf>) = {
         let g = lock_shared(&shared, "update_mod")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
@@ -995,24 +998,37 @@ fn update_mod(shared: State<Shared>, id: String, api_key: String) -> Result<serd
         if nid.is_empty() {
             return Err("no Nexus ID on this mod — set one in Edit…".into());
         }
-        (nid, row.version.clone())
+        let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+        let _ = std::fs::create_dir_all(&dir);
+        let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
+        (nid, row.version.clone(), Some(hist))
     };
     log_line("rust", &format!("update_mod: resolving {nexus} (installed {version})"));
-    match crate::nexus::resolve_update(&nexus, &version, &api_key)? {
-        None => Ok(serde_json::json!({ "row_id": "", "version": version, "file_id": "" })),
-        Some(t) => {
-            let row_id = downloads::enqueue_resolved(&nexus, &t);
-            dl_save(&shared);
-            log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
-            Ok(serde_json::json!({ "row_id": row_id, "version": t.version, "file_id": t.file_id }))
-        }
-    }
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
+        let payload = match crate::nexus::resolve_update(&nexus, &version, &api_key) {
+            Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
+            Ok(None) => serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }),
+            Ok(Some(t)) => {
+                let row_id = downloads::enqueue_resolved(&nexus, &t);
+                if let Some(h) = hist.as_ref() {
+                    downloads::save_history(h);
+                }
+                log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
+                serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id })
+            }
+        };
+        let _ = app.emit("update-resolved", payload);
+    });
+    Ok(true)
 }
 
-/// Resolve a mod's latest newer file without enqueuing; used for free-account
-/// browser links.
+/// Resolve a mod's latest newer file without enqueuing (free-account
+/// browser links). Same background pattern as `update_mod`: the result
+/// arrives as `update-resolved` with `{ id, premium, file_id, version }`.
 #[tauri::command]
-fn resolve_mod_update(shared: State<Shared>, id: String, api_key: String) -> Result<serde_json::Value, String> {
+fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key: String, premium: Option<bool>) -> Result<bool, String> {
     let (nexus, version): (String, String) = {
         let g = lock_shared(&shared, "resolve_mod_update")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
@@ -1029,10 +1045,17 @@ fn resolve_mod_update(shared: State<Shared>, id: String, api_key: String) -> Res
         (nid, row.version.clone())
     };
     log_line("rust", &format!("resolve_mod_update: resolving {nexus} (installed {version})"));
-    match crate::nexus::resolve_update(&nexus, &version, &api_key)? {
-        None => Ok(serde_json::json!({ "file_id": "", "version": version })),
-        Some(t) => Ok(serde_json::json!({ "file_id": t.file_id, "version": t.version })),
-    }
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
+        let payload = match crate::nexus::resolve_update(&nexus, &version, &api_key) {
+            Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
+            Ok(None) => serde_json::json!({ "id": id, "premium": prem, "file_id": "", "version": version }),
+            Ok(Some(t)) => serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version }),
+        };
+        let _ = app.emit("update-resolved", payload);
+    });
+    Ok(true)
 }
 
 

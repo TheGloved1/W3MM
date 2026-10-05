@@ -60,15 +60,21 @@ pub fn version_is_newer(remote: &str, local: &str) -> bool {
     version_tuple(remote) > version_tuple(local)
 }
 
+fn http_client() -> &'static reqwest::blocking::Client {
+    static C: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent("W3MM/1.0")
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("http client")
+    })
+}
+
 pub fn nexus_get(path: &str, api_key: &str) -> Result<serde_json::Value, String> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("W3MM/1.0")
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
     let url = format!("https://api.nexusmods.com/v1{path}");
-    let resp = client
+    let resp = http_client()
         .get(&url)
         .header("apikey", api_key)
         .header("Application-Name", "W3MM")

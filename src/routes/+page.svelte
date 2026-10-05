@@ -702,11 +702,85 @@
     busy = "";
   }
 
+  type UpdateResolution = {
+    id: string;
+    premium?: boolean;
+    row_id?: string;
+    file_id?: string;
+    version?: string;
+    error?: string;
+  };
+  // Promises waiting on `update-resolved` for one mod id.
+  const pendingUpdates = new Map<string, ((v: UpdateResolution) => void)[]>();
+
+  /** Fire a background resolve; settles when `update-resolved` arrives. */
+  async function requestUpdate(id: string, premium: boolean | null): Promise<UpdateResolution> {
+    const cfg = await loadConfigNative();
+    if (!cfg.nexusKey) throw new Error("Set Nexus API key in Settings first");
+    const cmd = premium === false ? "resolve_mod_update" : "update_mod";
+    return new Promise<UpdateResolution>((resolve) => {
+      const arr = pendingUpdates.get(id) ?? [];
+      arr.push(resolve);
+      pendingUpdates.set(id, arr);
+      invoke(cmd, { id, apiKey: cfg.nexusKey, premium }).catch((e) => {
+        // Synchronous validation failure (unknown mod / no Nexus ID):
+        // drop our waiter so a later retry isn't double-settled.
+        const cur = (pendingUpdates.get(id) ?? []).filter((w) => w !== resolve);
+        if (cur.length) pendingUpdates.set(id, cur);
+        else pendingUpdates.delete(id);
+        resolve({ id, error: String(e) });
+      });
+    });
+  }
+
+  async function finishUpdate(p: UpdateResolution) {
+    if (typeof p.premium === "boolean") premiumCache = p.premium;
+    if (p.error) {
+      error = p.error;
+      return;
+    }
+    if (p.premium === false) {
+      // Free accounts: open the exact Nexus file page.
+      if (!p.file_id) {
+        flash("Already on the newest version.");
+        return;
+      }
+      const nid = modById(p.id)?.nexus?.trim();
+      if (!nid) {
+        error = "No Nexus ID on this mod — set one in Edit…";
+        return;
+      }
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${p.file_id}&nmm=1`);
+      flash("Pick Slow Download on the Nexus page, then Install mods → select the file.");
+      return;
+    }
+    if (!p.row_id) {
+      flash("Already on the newest version.");
+      return;
+    }
+    // Optimistically drop from the banner (pruneHits() keeps it honest).
+    hits = hits.filter((h) => h.id !== p.id);
+    dlOpen = true;
+    try {
+      queue = await invoke<QueueItem[]>("queue_list");
+      await invoke("queue_start", {
+        id: p.row_id,
+        destDir: await downloadsDir(),
+        apiKey: (await loadConfigNative()).nexusKey,
+      });
+      queue = await invoke<QueueItem[]>("queue_list");
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   async function updateMod(id: string, premium?: boolean) {
     ctx = null;
     error = "";
+    if (updatingIds.has(id)) return;
     // Instant feedback before any network round-trip so the click never
-    // feels dead while Nexus resolves.
+    // feels dead while Nexus resolves in the background.
     updatingIds = new Set([...updatingIds, id]);
     flash(`Resolving update for ${modById(id)?.name ?? "mod"}…`);
     try {
@@ -719,37 +793,8 @@
       // on every Update click.
       const isPrem =
         premium ?? premiumCache ?? (premiumCache = await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
-      if (!isPrem) {
-        // Free accounts: resolve file_id first so we can open the exact file.
-        const res = await invoke<{ file_id: string; version: string }>("resolve_mod_update", { id, apiKey: cfg.nexusKey });
-        if (!res.file_id) {
-          flash("Already on the newest version.");
-          return;
-        }
-        const nid = modById(id)?.nexus?.trim();
-        if (!nid) {
-          error = "No Nexus ID on this mod — set one in Edit…";
-          return;
-        }
-        const { open } = await import("@tauri-apps/plugin-shell");
-        await open(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${res.file_id}&nmm=1`);
-        flash("Pick Slow Download on the Nexus page, then Install mods → select the file.");
-        return;
-      }
-      flash("Resolving update…");
-      const res = await invoke<{ row_id: string; version: string; file_id: string }>("update_mod", { id, apiKey: cfg.nexusKey });
-      if (!res.row_id) {
-        flash("Already on the newest version.");
-        return;
-      }
-      //optimistically drop from the banner
-      hits = hits.filter(h => h.id !== id);
-      dlOpen = true;
-      queue = await invoke<QueueItem[]>("queue_list");
-      await invoke("queue_start", { id: res.row_id, destDir: await downloadsDir(), apiKey: cfg.nexusKey });
-      queue = await invoke<QueueItem[]>("queue_list");
-      // refresh the hits banner so the updated mod drops out of the list
-      checkUpdates();
+      const p = await requestUpdate(id, isPrem);
+      await finishUpdate(p);
     } catch (e) {
       console.error(`[w3mm] update failed: ${String(e)}`);
       error = String(e);
@@ -1252,6 +1297,7 @@
     let unlistenMeta: (() => void) | undefined;
     let unlistenM: (() => void) | undefined;
     let unlistenU: (() => void) | undefined;
+    let unlistenUR: (() => void) | undefined;
     (async () => {
       try {
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
@@ -1372,6 +1418,14 @@
             quotaText = qt;
           },
         );
+        unlistenUR = await listen<UpdateResolution>(
+          "update-resolved",
+          async (e) => {
+            const waiters = pendingUpdates.get(e.payload.id) ?? [];
+            pendingUpdates.delete(e.payload.id);
+            for (const w of waiters) w(e.payload);
+          },
+        );
       } catch {}
     })();
     function onDocClick() {
@@ -1396,6 +1450,7 @@
       unlistenMeta?.();
       unlistenM?.();
       unlistenU?.();
+      unlistenUR?.();
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);
     };
@@ -1524,13 +1579,15 @@
         >
         <button
           onclick={updateAll}
-          class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110"
-          >Update all</button
+          disabled={updatingIds.size > 0}
+          class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110 disabled:opacity-50"
+          >{updatingIds.size > 0 ? `Updating… (${updatingIds.size})` : "Update all"}</button
         >
         {#if hits.some((h) => selectedIds.has(h.id))}
           <button
             onclick={() => updateSelected()}
-            class="shrink-0 rounded-[7px] border border-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#b5d95a] hover:bg-[#b5d95a]/10"
+            disabled={updatingIds.size > 0}
+            class="shrink-0 rounded-[7px] border border-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#b5d95a] hover:bg-[#b5d95a]/10 disabled:opacity-50"
             >Update selected ({hits.filter((h) => selectedIds.has(h.id)).length})</button
           >
         {/if}
