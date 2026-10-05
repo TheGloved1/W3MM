@@ -2,12 +2,13 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import type { AppState, MadeFor, QueueItem } from "$lib/types";
+  import type { AppState, MadeFor, ModRow, QueueItem } from "$lib/types";
   import { loadConfigNative } from "$lib/config";
-  import DataList from "$lib/components/data-list.svelte";
+  import DataList, {
+    type ClickModifiers,
+  } from "$lib/components/data-list.svelte";
   import Button from "$lib/components/button.svelte";
   import SelectionToolbar from "$lib/components/selection-toolbar.svelte";
-  import * as Table from "$lib/components/ui/table/index.js";
   import {
     ArrowUp,
     AtSign,
@@ -472,12 +473,12 @@
   }
 
   /** NMM-style multi-select: plain = single, Ctrl = toggle, Shift = range. */
-  function handleSelect(id: string, e: MouseEvent | KeyboardEvent) {
+  function handleSelect(id: string, mods: ClickModifiers) {
     if (!appState) return;
     const row = appState.mods.find((m) => m.id === id);
     if (!row || row.sep) return;
-    const isCtrl = (e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey;
-    const isShift = (e as MouseEvent).shiftKey;
+    const isCtrl = mods.ctrlKey || mods.metaKey;
+    const isShift = mods.shiftKey;
     // Range uses visible mod order (separators skipped, like NMM slice).
     const order = appState.mods.filter((m) => !m.sep).map((m) => m.id);
     if (isShift && lastSelected && order.includes(lastSelected)) {
@@ -1659,24 +1660,123 @@
       {/if}
     {/if}
 
+    <!-- One cell renderer per column. Declared before <DataList> so the
+         `columns` array below can reference them. -->
+    {#snippet cellPriority(m: ModRow)}
+      {#if m.enabled}
+        <input
+          type="number"
+          min="1"
+          value={prioOf(m.id)}
+          onchange={(e) => setPrio(m.id, e)}
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => e.stopPropagation()}
+          title="Priority — 1 wins"
+          class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none"
+          style="-moz-appearance:textfield;-webkit-appearance:none;"
+        />
+      {:else}
+        <span class="text-muted-foreground/50">–</span>
+      {/if}
+    {/snippet}
+    {#snippet cellName(m: ModRow)}
+      <div class="flex min-w-0 items-center gap-2">
+        <input
+          type="checkbox"
+          checked={m.enabled}
+          onchange={() => toggle(m.id, m.enabled)}
+          onclick={(e) => e.stopPropagation()}
+          class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat"
+        />
+        <span
+          role="button"
+          tabindex="0"
+          class="relative min-w-0"
+          onmouseenter={(e) => {
+            hoverTip = { id: m.id, x: e.clientX, y: e.clientY };
+          }}
+          onmouseleave={() => {
+            hoverTip = null;
+          }}
+          onfocus={() => {
+            hoverTip = null;
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter") openEdit(m.id);
+          }}
+        >
+          <span class="block truncate text-sm">{m.name}</span>
+          {#if hoverTip && hoverTip.id === m.id && targetsOf(m.id).length}
+            {@const tip = hoverTip}
+            <span
+              class="pointer-events-none fixed z-50 max-w-[420px] rounded-[6px] border border-[#5d6773] bg-[#2f3740] px-3 py-2 shadow-xl"
+              style="left:{Math.min(tip.x + 12, window.innerWidth - 440)}px;top:{tip.y + 14}px"
+            >
+              <span class="block border-b border-[#5d6773] pb-1 text-[13px] font-semibold"
+                >Installs to</span
+              >
+              {#each targetsOf(m.id).slice(0, 12) as t}
+                <span class="block truncate font-mono text-[12px] text-[#86b0cf]"
+                  >{t}</span
+                >
+              {/each}
+              {#if targetsOf(m.id).length > 12}<span
+                  class="block text-[11px] text-muted-foreground"
+                  >… {targetsOf(m.id).length - 12} more</span
+                >{/if}
+            </span>
+          {/if}
+        </span>
+      </div>
+    {/snippet}
+    {#snippet cellVersion(m: ModRow)}
+      <span class="truncate text-[13px]">{m.version}</span>
+    {/snippet}
+    {#snippet cellStatus(m: ModRow)}
+      <div class="flex flex-wrap gap-1 py-1">
+        {#each chipsFor(m) as c}
+          {@const Icon = c.icon}
+          <span
+            title={c.tip}
+            class="inline-flex items-center gap-1 rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
+          >
+            {#if Icon}<Icon class="size-3" />{/if}
+            {#if c.text}<span>{c.text}</span>{/if}
+          </span>
+        {/each}
+      </div>
+    {/snippet}
+    {#snippet cellInstalled(m: ModRow)}
+      <span class="truncate text-[13px]">{fmtDate(m.updated)}</span>
+    {/snippet}
+
     <div
       class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[7px] border border-border bg-card"
     >
       <DataList
         columns={[
-          { id: "priority", label: "Priority", sortable: false, align: "left" },
-          { id: "name", label: "Mod", sortable: false },
-          { id: "version", label: "Version", sortable: false },
-          { id: "status", label: "Status", sortable: false },
-          { id: "installed", label: "Installed", sortable: false },
+          {
+            id: "priority",
+            label: "Priority",
+            width: 76,
+            align: "center",
+            cell: cellPriority,
+          },
+          { id: "name", label: "Mod", width: 340, cell: cellName },
+          { id: "version", label: "Version", width: 100, cell: cellVersion },
+          { id: "status", label: "Status", width: 220, cell: cellStatus },
+          {
+            id: "installed",
+            label: "Installed",
+            width: 110,
+            cell: cellInstalled,
+          },
         ]}
         items={appState ? appState.mods : []}
         keyOf={(m) => m.id}
         isSelected={(m) => selectedIds.has(m.id)}
-        sortKey={null}
-        sortDir="asc"
-        onSelect={(m, e) => {
-          handleSelect(m.id, e);
+        onSelect={(m, mods) => {
+          handleSelect(m.id, mods);
         }}
         onContextMenu={(m, e) => {
           if (m.sep) onSepContext(m.id, e);
@@ -1686,116 +1786,21 @@
           clearSelection();
         }}
         onActivate={(m) => openEdit(m.id)}
-        isDraggable={(m) => !m.sep && !filtering}
+        isDetail={(m) => !!m.sep}
+        canReorder={!filtering}
         onReorder={(from, to, pos) => handleDataListReorder(from, to, pos)}
       >
-        {#snippet row(m, sel)}
-          {#if m.sep}
-            <Table.Cell
-              colspan={5}
-              class="border border-border px-3 py-2 text-left"
-            >
-              <button
-                class="text-[13px] font-semibold text-muted-foreground flex items-center gap-2"
-                onclick={() => toggleCollapse(m.id)}
-              >
-              <span class="flex h-4 w-4 items-center justify-center">
-                {#if collapsed[m.id]}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}
-              </span>
-                {m.name}
-                <span class="font-normal">({countMembers(m.id)})</span>
-              </button>
-            </Table.Cell>
-          {:else}
-            <Table.Cell class="text-center">
-              {#if m.enabled}
-                <input
-                  type="number"
-                  min="1"
-                  value={prioOf(m.id)}
-                  onchange={(e) => setPrio(m.id, e)}
-                  title="Priority — 1 wins"
-                  class="w-[52px] bg-transparent px-1 py-[3px] text-center text-[13px] font-semibold text-foreground outline-none"
-                  style="-moz-appearance:textfield;-webkit-appearance:none;"
-                />
-              {:else}
-                <span class="text-muted-foreground/50">–</span>
-              {/if}
-            </Table.Cell>
-            <Table.Cell class="max-w-md">
-              <div class="flex min-w-0 items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={m.enabled}
-                  onchange={() => toggle(m.id, m.enabled)}
-                  class="h-[18px] w-[18px] shrink-0 cursor-pointer appearance-none rounded-[4px] border-[1.5px] border-[#4a535e] bg-transparent checked:border-[#c9a45c] checked:bg-[#c9a45c] checked:bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 18 18%22><path d=%22M5.2 9.3l2.5 2.5 5.1-5.3%22 fill=%22none%22 stroke=%22%231c2127%22 stroke-width=%222.1%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] checked:bg-center checked:bg-no-repeat"
-                />
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="relative min-w-0"
-                  onmouseenter={(e) => {
-                    hoverTip = { id: m.id, x: e.clientX, y: e.clientY };
-                  }}
-                  onmouseleave={() => {
-                    hoverTip = null;
-                  }}
-                  onfocus={() => {
-                    hoverTip = null;
-                  }}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") openEdit(m.id);
-                  }}
-                >
-                  <span class="block truncate text-sm">{m.name}</span>
-                  {#if hoverTip?.id === m.id && targetsOf(m.id).length}
-                    <span
-                      class="pointer-events-none fixed z-50 max-w-[420px] rounded-[6px] border border-[#5d6773] bg-[#2f3740] px-3 py-2 shadow-xl"
-                      style="left:{Math.min(
-                        hoverTip.x + 12,
-                        window.innerWidth - 440,
-                      )}px;top:{hoverTip.y + 14}px"
-                    >
-                      <span
-                        class="block border-b border-[#5d6773] pb-1 text-[13px] font-semibold"
-                        >Installs to</span
-                      >
-                      {#each targetsOf(m.id).slice(0, 12) as t}
-                        <span
-                          class="block truncate font-mono text-[12px] text-[#86b0cf]"
-                          >{t}</span
-                        >
-                      {/each}
-                      {#if targetsOf(m.id).length > 12}<span
-                          class="block text-[11px] text-muted-foreground"
-                          >… {targetsOf(m.id).length - 12} more</span
-                        >{/if}
-                    </span>
-                  {/if}
-                </span>
-              </div>
-            </Table.Cell>
-            <Table.Cell class="truncate text-[13px]"
-              >{m.version}</Table.Cell
-            >
-            <Table.Cell>
-              <div class="flex flex-wrap gap-1 py-1">
-                {#each chipsFor(m) as c}
-                  {@const Icon = c.icon}
-                  <span
-                    title={c.tip}
-                    class="inline-flex items-center gap-1 rounded-full px-2 py-[1px] text-[11px] font-semibold {c.cls}"
-                  >
-                    {#if Icon}<Icon class="size-3" />{/if}
-                    {#if c.text}<span>{c.text}</span>{/if}
-                  </span>
-                {/each}
-              </div>
-            </Table.Cell>
-            <Table.Cell class="truncate text-[13px]"
-              >{fmtDate(m.updated)}</Table.Cell
-            >
-          {/if}
+        {#snippet detail({ row: m }: { row: ModRow })}
+          <button
+            class="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-semibold text-muted-foreground"
+            onclick={() => toggleCollapse(m.id)}
+          >
+            <span class="flex h-4 w-4 items-center justify-center">
+              {#if collapsed[m.id]}<ChevronRight class="size-4" />{:else}<ChevronDown class="size-4" />{/if}
+            </span>
+            {m.name}
+            <span class="font-normal">({countMembers(m.id)})</span>
+          </button>
         {/snippet}
         {#snippet empty()}
           <div

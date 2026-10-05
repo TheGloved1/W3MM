@@ -74,6 +74,59 @@
   background: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
+/* @svgrid/grid theme — the mod list's grid reads these instead of its
+   light-mode defaults. Declared on :root so every [data-theme] block below
+   re-points the app's --color-* tokens and the grid follows along. */
+:root {
+  --sg-bg: var(--color-card);
+  --sg-fg: var(--color-foreground);
+  --sg-muted: var(--color-muted-foreground);
+  --sg-border: var(--color-border);
+  --sg-header-bg: var(--color-card);
+  --sg-header-fg: var(--color-muted-foreground);
+  --sg-bg-subtle: var(--color-muted);
+  --sg-row-alt-bg: var(--color-card);
+  --sg-row-hover-bg: var(--color-muted);
+  --sg-selection-bg: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  --sg-input-bg: var(--color-card);
+  --sg-input-border: var(--color-border);
+  --sg-accent: var(--color-primary);
+  --sg-on-accent: var(--color-primary-foreground);
+  --sg-radius: 7px;
+  --sg-font: var(--font-sans);
+  --sg-danger: var(--color-destructive);
+  --sg-muted-bg: var(--color-muted);
+  /* The grid draws its own scrollbar element (it hides the native one), so
+     the app-wide scrollbar rules never reach the mod list. Theme it here. */
+  --sg-scrollbar-bg: var(--color-card);
+  --sg-scrollbar-border: var(--color-border);
+  --sg-scrollbar-thumb: var(--color-nms-border-light);
+  --sg-scrollbar-thumb-hover: var(--color-nms-accent-dim);
+  --sg-scrollbar-thumb-active: var(--color-nms-accent-dim);
+  --sg-scrollbar-arrow: var(--color-muted-foreground);
+}
+
+/* containerHeight="100%" puts the grid in fill mode; as a flex child of the
+   list wrapper it also has to claim the remaining height itself. */
+.data-list > .sv-grid-root {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Grid lines: our rows already carry a bottom border, and the library's
+   per-cell right borders read as a spreadsheet rather than a mod list. */
+.data-list .sv-grid-cell {
+  border-right: 0;
+  padding: 0 8px;
+  user-select: text;
+}
+.data-list .sv-grid-head .sv-grid-column {
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
 /* Font presets */
 [data-font="inter"] { --font-sans: 'Inter', system-ui, sans-serif; }
 [data-font="jetbrains"] { --font-sans: 'JetBrains Mono', ui-monospace, monospace; }
