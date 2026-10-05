@@ -1759,6 +1759,7 @@
           : 'rounded-[7px]'}"
       >
         <DataList
+          flexColumn="name"
           columns={[
             {
               id: "priority",

@@ -4,7 +4,8 @@
   export interface DataListColumn<T> {
     id: string;
     label: string;
-    /** Initial width in px. The grid scales these to fill the viewport. */
+    /** Fixed width in px. The column holds this width at every window size —
+     *  see `flexColumn` for the one that soaks up the remaining space. */
     width?: number;
     align?: "left" | "center" | "right";
     /** Contents of one cell. Receives a single params object, not positional
@@ -47,6 +48,10 @@
       toKey: string,
       pos: "before" | "after",
     ) => void;
+    /** Column id that absorbs the leftover width. Every other column keeps the
+     *  fixed `width` it declares, however wide the window gets. Defaults to
+     *  the widest declared column. */
+    flexColumn?: string;
     /** Shown instead of the grid when there are no rows. */
     empty?: Snippet;
   }
@@ -64,6 +69,7 @@
     detail,
     canReorder = false,
     onReorder,
+    flexColumn,
     empty,
   }: Props = $props();
 
@@ -107,6 +113,33 @@
       };
     }) as GridCol[],
   );
+
+  /** The one column allowed to grow; the rest are pinned at their widths. */
+  // Only Mod is allowed to grow; the other four hold their widths at every
+  // window size (see pinFixedWidths).
+  const flexId = $derived(
+    flexColumn ??
+      columns.reduce(
+        (widest, c) => ((c.width ?? 0) > (widest?.width ?? 0) ? c : widest),
+        columns[0],
+      )?.id,
+  );
+
+  /**
+   * `fitColumns` scales every column that has no explicit width, so on a wide
+   * window Version/Installed/Status all stretched and nothing looked pinned.
+   * Writing a width through the API marks a column as user-resized, and the
+   * fit pass takes those at face value — so pinning every column but the
+   * flexible one leaves Name to absorb the slack on its own.
+   */
+  function pinFixedWidths(api: {
+    setColumnWidth: (id: string, w: number) => void;
+  }) {
+    for (const c of columns) {
+      if (c.id === flexId || c.width == null) continue;
+      api.setColumnWidth(c.id, c.width);
+    }
+  }
 
   /** Row under a DOM event, via the index SvGrid stamps on every cell. */
   function rowAt(e: Event): T | null {
@@ -162,6 +195,7 @@
       autoRowHeight
       fitColumns
       columnResize
+      onApiReady={pinFixedWidths}
       virtualization={false}
       columnVirtualization={false}
       enableRowHover
