@@ -1814,7 +1814,7 @@ fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
     let _ = std::fs::remove_dir_all(&tmp);
     let plan = plan?;
     // group staged targets by their top two segments (kind + folder)
-    let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    let mut groups: std::collections::BTreeMap<(String, String), (usize, String)> = Default::default();
     for (_src, rel) in &plan.moves {
         let (first, folder, _rest) = install::split_rel(rel);
         if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
@@ -1825,19 +1825,16 @@ fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
                 _ => "Mod",
             }
             .to_string();
-            *groups.entry((kind, folder)).or_default() += 1;
+            let e = groups.entry((kind, folder)).or_insert((0, String::new()));
+            e.0 += 1;
+            e.1 = install::src_prefix(rel);
         } else {
-            *groups.entry(("Mod".to_string(), String::new())).or_default() += 1;
+            groups.entry(("Mod".to_string(), String::new())).or_insert((0, String::new())).0 += 1;
         }
     }
     Ok(groups
         .into_iter()
-        .map(|((kind, folder), files)| PlanRoot {
-            prefix: if folder.is_empty() { String::new() } else { format!("{}/{}", kind.to_lowercase(), folder) },
-            kind,
-            folder,
-            files,
-        })
+        .map(|((kind, folder), (files, prefix))| PlanRoot { prefix, kind, folder, files })
         .collect())
 }
 
@@ -1864,7 +1861,7 @@ fn install_preview(path: String) -> Result<InstallPreview, String> {
     let _ = std::fs::remove_dir_all(&tmp);
     let plan = plan?;
     // group staged targets by their top two segments (kind + folder)
-    let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    let mut groups: std::collections::BTreeMap<(String, String), (usize, String)> = Default::default();
     for (_src, rel) in &plan.moves {
         let (first, folder, _rest) = install::split_rel(rel);
         if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
@@ -1875,19 +1872,16 @@ fn install_preview(path: String) -> Result<InstallPreview, String> {
                 _ => "Mod",
             }
             .to_string();
-            *groups.entry((kind, folder)).or_default() += 1;
+            let e = groups.entry((kind, folder)).or_insert((0, String::new()));
+            e.0 += 1;
+            e.1 = install::src_prefix(rel);
         } else {
-            *groups.entry(("Mod".to_string(), String::new())).or_default() += 1;
+            groups.entry(("Mod".to_string(), String::new())).or_insert((0, String::new())).0 += 1;
         }
     }
     let roots = groups
         .into_iter()
-        .map(|((kind, folder), files)| PlanRoot {
-            prefix: if folder.is_empty() { String::new() } else { format!("{}/{}", kind.to_lowercase(), folder) },
-            kind,
-            folder,
-            files,
-        })
+        .map(|((kind, folder), (files, prefix))| PlanRoot { prefix, kind, folder, files })
         .collect();
     Ok(InstallPreview { roots, moves: plan.moves })
 }

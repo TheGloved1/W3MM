@@ -14,11 +14,9 @@
     roots: Root[];
     kinds: string[];
     rootLabel: (r: Root) => string;
-    /** Fired whenever a row's Type or Folder name changes. */
-    onchange?: () => void;
   }
 
-  let { roots, kinds, rootLabel, onchange }: Props = $props();
+  let { roots, kinds, rootLabel }: Props = $props();
 
   /** Mod and DLC name a directory in the game; content/ and bin/ take files
    *  directly, so their folder is inapplicable and reads "(loose files)". */
@@ -36,11 +34,6 @@
     } else {
       r.folder = '';
     }
-    onchange?.();
-  }
-
-  function onFolderInput() {
-    onchange?.();
   }
 </script>
 
@@ -70,7 +63,6 @@
         value={r.folder}
         oninput={(e: Event) => {
           r.folder = (e.currentTarget as HTMLInputElement).value;
-          onFolderInput();
         }}
         mono
         disabled={!needsFolder(r.kind)}

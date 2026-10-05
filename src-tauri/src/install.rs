@@ -199,6 +199,19 @@ fn is_game_dir(seg: &str) -> bool {
     ["mods", "dlc", "bin", "content"].contains(&seg.to_lowercase().as_str())
 }
 
+/// Stable identity of a rel's source group — how a dialog row is tied to the
+/// files it owns. Derived from the path segments, never from the kind name:
+/// the directory is `mods/` but the kind is "Mod", so `kind.to_lowercase()`
+/// would produce `mod/` and silently fail to match.
+pub fn src_prefix(rel: &str) -> String {
+    let (first, folder, _rest) = split_rel(rel);
+    if folder.is_empty() {
+        String::new()
+    } else {
+        format!("{first}/{folder}")
+    }
+}
+
 /// Resolve the staging rel for one planned file through the dialog's root
 /// table.
 ///
@@ -235,10 +248,10 @@ pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String
             .find(|r| r.folder.is_empty() && r.prefix.is_empty())
             .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder.is_empty()))
     } else {
-        let src_prefix = format!("{first}/{folder}");
+        let prefix = src_prefix(rel);
         roots
             .iter()
-            .find(|r| r.prefix == src_prefix)
+            .find(|r| r.prefix == prefix)
             .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder == folder))
     };
     let Some(row) = row else {
@@ -518,6 +531,79 @@ mod tests {
             targets,
             vec!["bin/x.dll", "mods/modFoo/content/a.ws"],
             "mod folder must not be wrapped twice"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn content_selection_end_to_end_from_bare_mod_archive() {
+        // Mirrors the whole Install-window flow: a bare `modAxiiDelusion`
+        // archive, grouped exactly like install_preview does, then the user
+        // picks Content (folder cleared) in the table.
+        let tmp = tmpdir("e2e-content");
+        write(
+            &tmp.join("modAxiiDelusion/content/scripts/game/player/playerWitcher.ws"),
+            "x",
+        );
+        let plan = analyze(&tmp);
+        assert!(
+            plan.moves.iter().all(|(_, r)| r.starts_with("mods/modAxiiDelusion/content/")),
+            "analyze should qualify the bare mod folder: {:?}",
+            plan.moves
+        );
+        // Preview grouping: (kind, folder) per rel, with the source prefix
+        // derived from the path (mods/, not "mod").
+        let mut groups: std::collections::BTreeMap<(String, String), (usize, String)> = Default::default();
+        for (_src, rel) in &plan.moves {
+            let (first, folder, _rest) = split_rel(rel);
+            let kind = match first.as_str() {
+                "dlc" => "DLC",
+                "bin" => "Bin",
+                "content" => "Content",
+                _ => "Mod",
+            };
+            let e = groups.entry((kind.to_string(), folder)).or_insert((0, String::new()));
+            e.0 += 1;
+            e.1 = src_prefix(rel);
+        }
+        let rows: Vec<RootChoice> = groups
+            .into_iter()
+            .map(|((kind, folder), (files, prefix))| RootChoice {
+                prefix,
+                kind,
+                folder,
+                files,
+            })
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].prefix, "mods/modAxiiDelusion");
+
+        // Default (Mod) keeps the mod folder.
+        let as_mod = remap_target(
+            "mods/modAxiiDelusion/content/scripts/game/player/playerWitcher.ws",
+            &rows,
+            "Axii Delusion",
+        );
+        assert_eq!(
+            as_mod,
+            "mods/modAxiiDelusion/content/scripts/game/player/playerWitcher.ws"
+        );
+
+        // User picks Content: folder is cleared and disabled in the dialog.
+        let rows = [RootChoice {
+            kind: "Content".to_string(),
+            folder: String::new(),
+            prefix: "mods/modAxiiDelusion".to_string(),
+            files: 1,
+        }];
+        assert_eq!(
+            remap_target(
+                "mods/modAxiiDelusion/content/scripts/game/player/playerWitcher.ws",
+                &rows,
+                "Axii Delusion"
+            ),
+            "content/scripts/game/player/playerWitcher.ws",
+            "Content selection must land in the game's content/ dir"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

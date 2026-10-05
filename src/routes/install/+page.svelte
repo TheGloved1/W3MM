@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -70,14 +70,24 @@
   /** Re-run the backend mapping so the file tree follows the table's edits. */
   async function remapFiles(): Promise<string[]> {
     if (!rawFiles.length) return [];
+    const choices = roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files }));
+    console.debug(`[w3mm] remap_roots: ${rawFiles.length} rels, rows=${JSON.stringify(choices)}, first=${rawFiles[0]}`);
     return invoke<string[]>('remap_roots', {
       rels: rawFiles,
-      roots: roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
+      roots: choices,
       modFolder: name,
-    }).catch((e) => {
-      warn = String(e);
-      return rawFiles;
-    });
+    })
+      .then((out) => {
+        console.debug(`[w3mm] remap_roots -> ${out.length} rels, first=${out[0] ?? ''}`);
+        return out;
+      })
+      .catch((e) => {
+        // Keep the tree usable, but make the failure visible: a stale backend
+        // (missing command) silently looked like "edits do nothing".
+        console.error(`[w3mm] remap_roots failed: ${String(e)}`);
+        warn = `Could not apply archive table: ${String(e)}`;
+        return rawFiles;
+      });
   }
 
   let remapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -88,6 +98,14 @@
       addedOpen = true;
     }, 120);
   }
+
+  // Drive invalidation from state, not from control events, so every edit path
+  // (select, typed folder, future controls) refreshes the preview.
+  $effect(() => {
+    const sig = JSON.stringify(roots.map((r) => [r.prefix, r.kind, r.folder]));
+    if (!sig || !rawFiles.length) return;
+    untrack(scheduleRemap);
+  });
 
   async function install() {
     if (!name.trim()) { warn = 'Give the mod a name first.'; return; }
@@ -134,7 +152,7 @@
 
   <ModForm bind:name bind:version bind:nexus bind:section sections={sections} showSectionActions={false} />
 
-  <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} onchange={scheduleRemap} />
+  <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} />
 
   <FilesSection open={addedOpen} label="Added to the game folder" paths={addedFiles} maxHeight="16rem" onToggle={(o)=> addedOpen = o} />
 
