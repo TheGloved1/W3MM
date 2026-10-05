@@ -27,9 +27,12 @@
 
 {#if count > 0}
   <div
-    class="flex shrink-0 items-center gap-2 rounded-b-[7px] border border-border bg-card px-[14px] py-1.5 text-sm {attached
+    class="flex shrink-0 items-center gap-2 rounded-b-[7px] border border-border px-[14px] py-1.5 text-sm {attached
       ? 'rounded-t-none border-t-0'
       : 'rounded-t-[7px]'}"
+    /* A shade below the list's bg-card, mixed toward the page background so it
+       stays a subtle step down in every theme rather than a hardcoded hex. */
+    style="background: color-mix(in srgb, var(--color-card) 88%, var(--color-background));"
   >
     <span class="font-medium">{count} selected</span>
     <div class="h-4 w-px bg-border"></div>
