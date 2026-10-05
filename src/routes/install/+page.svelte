@@ -30,6 +30,8 @@
   let roots: Root[] = $state([]);
   let addedOpen: boolean = $state(false);
   let addedFiles: string[] = $state([]);
+  /** Unmapped destinations from install_preview; remapped for display. */
+  let rawFiles: string[] = $state([]);
   let warn: string = $state('');
   let busy: boolean = $state(false);
 
@@ -50,7 +52,8 @@
       const prev = await invoke<{ roots: Root[]; moves: [string, string][] }>('install_preview', { path: archPath });
       roots = prev.roots;
       if (!roots.length) roots = [{ prefix: '', kind: 'Mod', folder: '', files: 0 }];
-      addedFiles = prev.moves.map(([, d]) => d);
+      rawFiles = prev.moves.map(([, d]) => d);
+      addedFiles = await remapFiles();
       const [managed] = await invoke<[string[], string[]]>('find_collisions', { targets: addedFiles });
       collisions = managed;
       const st = await invoke<{ mods: { sep: boolean; id: string; name: string }[] }>('list_mods');
@@ -64,10 +67,36 @@
     return `${base}/${r.folder}/`;
   }
 
+  /** Re-run the backend mapping so the file tree follows the table's edits. */
+  async function remapFiles(): Promise<string[]> {
+    if (!rawFiles.length) return [];
+    return invoke<string[]>('remap_roots', {
+      rels: rawFiles,
+      roots: roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
+      modFolder: name,
+    }).catch((e) => {
+      warn = String(e);
+      return rawFiles;
+    });
+  }
+
+  let remapTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleRemap() {
+    clearTimeout(remapTimer);
+    remapTimer = setTimeout(async () => {
+      addedFiles = await remapFiles();
+      addedOpen = true;
+    }, 120);
+  }
+
   async function install() {
     if (!name.trim()) { warn = 'Give the mod a name first.'; return; }
+    // Mod and DLC rows need a folder; content/bin take loose files.
     for (const r of roots) {
-      if (!r.folder.trim()) { warn = 'Every archive row needs a folder name.'; return; }
+      if ((r.kind === 'Mod' || r.kind === 'DLC') && !r.folder.trim()) {
+        warn = 'Every Mod and DLC row needs a folder name.';
+        return;
+      }
     }
     busy = true; warn = '';
     try {
@@ -105,7 +134,7 @@
 
   <ModForm bind:name bind:version bind:nexus bind:section sections={sections} showSectionActions={false} />
 
-  <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} />
+  <ArchiveRootsList roots={roots} kinds={kinds} rootLabel={rootLabel} onchange={scheduleRemap} />
 
   <FilesSection open={addedOpen} label="Added to the game folder" paths={addedFiles} maxHeight="16rem" onToggle={(o)=> addedOpen = o} />
 

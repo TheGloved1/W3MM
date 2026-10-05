@@ -14,9 +14,34 @@
     roots: Root[];
     kinds: string[];
     rootLabel: (r: Root) => string;
+    /** Fired whenever a row's Type or Folder name changes. */
+    onchange?: () => void;
   }
 
-  let { roots, kinds, rootLabel }: Props = $props();
+  let { roots, kinds, rootLabel, onchange }: Props = $props();
+
+  /** Mod and DLC name a directory in the game; content/ and bin/ take files
+   *  directly, so their folder is inapplicable and reads "(loose files)". */
+  function needsFolder(kind: string): boolean {
+    return kind === 'Mod' || kind === 'DLC';
+  }
+
+  function onKindChange(r: Root) {
+    if (needsFolder(r.kind)) {
+      // Restore the archive's own folder when coming back from a game dir.
+      if (!r.folder) {
+        const seg = r.prefix.split('/')[1] ?? '';
+        if (seg) r.folder = seg;
+      }
+    } else {
+      r.folder = '';
+    }
+    onchange?.();
+  }
+
+  function onFolderInput() {
+    onchange?.();
+  }
 </script>
 
 <div class="rounded-[7px] border border-border bg-card px-3 py-2">
@@ -32,8 +57,26 @@
         <span class="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border-[1.5px] border-[#c9a45c] bg-[#c9a45c] text-[#1c2127]"><Check class="size-3" /></span>
         <span class="truncate font-mono text-[12px]">{rootLabel(r)}</span>
       </span>
-      <FormSelect bind:value={r.kind} options={kinds.map(k=>({value:k,label:k}))} class="rounded-[7px] border border-input bg-background px-2 py-1 text-[13px] outline-none focus:border-primary" />
-      <FormInput bind:value={r.folder} mono class="rounded-[7px] border border-input bg-background px-2 py-1 text-[12px]" />
+      <FormSelect
+        value={r.kind}
+        onchange={(e: Event) => {
+          r.kind = (e.currentTarget as HTMLSelectElement).value;
+          onKindChange(r);
+        }}
+        options={kinds.map((k) => ({ value: k, label: k }))}
+        class="rounded-[7px] border border-input bg-background px-2 py-1 text-[13px] outline-none focus:border-primary"
+      />
+      <FormInput
+        value={r.folder}
+        oninput={(e: Event) => {
+          r.folder = (e.currentTarget as HTMLInputElement).value;
+          onFolderInput();
+        }}
+        mono
+        disabled={!needsFolder(r.kind)}
+        placeholder={needsFolder(r.kind) ? '' : 'n/a'}
+        class="rounded-[7px] border border-input bg-background px-2 py-1 text-[12px] disabled:opacity-50"
+      />
     </div>
   {/each}
 </div>

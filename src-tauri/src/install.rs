@@ -150,11 +150,27 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
 
 /// A row of the Install window's archive-contents table: one archive root the
 /// user can re-kind or re-folder before installing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RootChoice {
     pub kind: String,
     pub folder: String,
     pub prefix: String,
+    #[serde(default)]
+    pub files: usize,
+}
+
+/// Re-map the planned destinations through the dialog's current table so the
+/// Install window's file preview can follow live edits. Returns unique,
+/// sorted rels — the same values `build_staging` would produce.
+#[tauri::command]
+pub fn remap_roots(rels: Vec<String>, roots: Vec<RootChoice>, mod_folder: String) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = rels
+        .iter()
+        .map(|r| remap_target(r, &roots, &mod_folder))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
 fn kind_dir(kind: &str) -> &'static str {
@@ -166,17 +182,35 @@ fn kind_dir(kind: &str) -> &'static str {
     }
 }
 
+/// Split a planned rel into (top dir, folder, rest). The folder is empty when
+/// the rel has no folder layer — `content/x.ws` is a loose file, not an
+/// `x.ws` folder.
+pub fn split_rel(rel: &str) -> (String, String, Vec<String>) {
+    let segs: Vec<&str> = rel.split('/').collect();
+    let first = segs.first().copied().unwrap_or("").to_lowercase();
+    if segs.len() > 2 {
+        (first, segs[1].to_string(), segs[2..].iter().map(|s| s.to_string()).collect())
+    } else {
+        (first, String::new(), segs[1..].iter().map(|s| s.to_string()).collect())
+    }
+}
+
+fn is_game_dir(seg: &str) -> bool {
+    ["mods", "dlc", "bin", "content"].contains(&seg.to_lowercase().as_str())
+}
+
 /// Resolve the staging rel for one planned file through the dialog's root
 /// table.
 ///
-/// The user's Type/folder edits must win: the row is matched on the kind the
-/// rel implies first, then on folder alone (editing Type changes that implied
-/// kind). Picking a game dir instead of Mod strips the mod's own folder —
+/// Rows are identified by their *source* group (`prefix`), which the dialog
+/// carries through untouched, so editing Type or the folder name still maps
+/// the right files. Which kinds keep a folder: Mod and DLC (both name a
+/// directory in the game); content/ and bin/ take files directly, so those
+/// strip the mod folder and the source's inner wrapper —
 /// `mods/modFoo/content/x` as Content becomes `content/x`, not the inert
 /// `content/modFoo/x`.
 pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String {
-    let mut parts = rel.split('/');
-    let first = parts.next().unwrap_or("").to_lowercase();
+    let (first, folder, mut rest) = split_rel(rel);
     if !["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
         // Bare file(s) with no game dir: the catch-all row owns them.
         let row = roots.iter().find(|r| r.folder.is_empty() || r.prefix.is_empty());
@@ -186,7 +220,6 @@ pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String
             None => format!("mods/{}/{}", crate::state::folder_safe(mod_folder), rel),
         };
     }
-    let folder = parts.next().unwrap_or("").to_string();
     let implied = match first.as_str() {
         "dlc" => "DLC",
         "bin" => "Bin",
@@ -196,31 +229,45 @@ pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String
     // Identify the row by its *source* group (prefix, which the dialog carries
     // through untouched) so editing Type or folder name still maps the right
     // files. Fall back to the original kind+folder pairing.
-    let src_prefix = format!("{first}/{folder}");
-    let row = roots
-        .iter()
-        .find(|r| r.prefix == src_prefix)
-        .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder == folder));
+    let row = if folder.is_empty() {
+        roots
+            .iter()
+            .find(|r| r.folder.is_empty() && r.prefix.is_empty())
+            .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder.is_empty()))
+    } else {
+        let src_prefix = format!("{first}/{folder}");
+        roots
+            .iter()
+            .find(|r| r.prefix == src_prefix)
+            .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder == folder))
+    };
     let Some(row) = row else {
         return rel.to_string();
     };
-    if row.folder.is_empty() {
+    // DLC folders are named in the game (dlc/<name>/…) so DLC keeps one, and
+    // so does Mod. content/ and bin/ take files directly, so those kinds drop
+    // the folder entirely — `(loose files)` in the dialog.
+    let needs_folder = matches!(row.kind.as_str(), "Mod" | "DLC");
+    if needs_folder && row.folder.is_empty() {
         return rel.to_string();
     }
-    let mut rest: Vec<&str> = rel.split('/').skip(2).collect();
     let dir = kind_dir(&row.kind);
-    if row.kind != "Mod" {
-        // Game dir target: neither the mod's own folder nor its inner
-        // content//bin/ wrapper means anything there — keeping them would
-        // produce content/modFoo/content/x.ws, which nothing loads.
-        if rest
-            .first()
-            .map(|s| ["mods", "dlc", "bin", "content"].contains(&s.to_lowercase().as_str()))
-            .unwrap_or(false)
-        {
+    if !needs_folder {
+        // Drop the source's own wrapper (content/, dlc/, …) too, or we'd get
+        // content/modFoo/content/x — inert.
+        if rest.first().map(|s| is_game_dir(s)).unwrap_or(false) {
             rest.remove(0);
         }
         return format!("{dir}/{}", rest.join("/"));
+    }
+    if row.kind == "DLC" {
+        if rest.first().map(|s| is_game_dir(s)).unwrap_or(false) {
+            rest.remove(0);
+        }
+        // Already carries its folder (modFoo/dlc/dlcFoo/…): don't repeat it.
+        if rest.first().map(|s| s.eq_ignore_ascii_case(&row.folder)).unwrap_or(false) {
+            return format!("{dir}/{}", rest.join("/"));
+        }
     }
     format!("{dir}/{}/{}", row.folder, rest.join("/"))
 }
@@ -282,6 +329,7 @@ mod tests {
             kind: kind.to_string(),
             folder: folder.to_string(),
             prefix: prefix.to_string(),
+            files: 0,
         }
     }
     const AXII: &str = "mods/modAxiiDelusion";
@@ -322,6 +370,29 @@ mod tests {
         assert_eq!(
             remap_target("mods/modFoo/dlc/dlcFoo/x.bin", &roots, "Foo"),
             "dlc/dlcFoo/x.bin"
+        );
+    }
+
+    #[test]
+    fn remap_top_level_dlc_keeps_its_folder() {
+        // A plain dlc/<name>/… archive must not lose its directory.
+        let roots = [choice("DLC", "dlcFoo", "dlc/dlcFoo")];
+        assert_eq!(remap_target("dlc/dlcFoo/x.bin", &roots, "Foo"), "dlc/dlcFoo/x.bin");
+    }
+
+    #[test]
+    fn remap_dlc_without_folder_leaves_rel_alone() {
+        let roots = [choice("DLC", "", "dlc/dlcFoo")];
+        assert_eq!(remap_target("dlc/dlcFoo/x.bin", &roots, "Foo"), "dlc/dlcFoo/x.bin");
+    }
+
+    #[test]
+    fn remap_content_ignores_stale_folder_name() {
+        // Even if a folder name lingers in the row, Content drops it.
+        let roots = [choice("Content", "modAxiiDelusion", AXII)];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/content/x.ws", &roots, "Axii"),
+            "content/x.ws"
         );
     }
 

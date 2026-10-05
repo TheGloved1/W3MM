@@ -1816,10 +1816,8 @@ fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
     // group staged targets by their top two segments (kind + folder)
     let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
     for (_src, rel) in &plan.moves {
-        let mut parts = rel.split('/');
-        let first = parts.next().unwrap_or("").to_lowercase();
+        let (first, folder, _rest) = install::split_rel(rel);
         if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
-            let folder = parts.next().unwrap_or("").to_string();
             let kind = match first.as_str() {
                 "dlc" => "DLC",
                 "bin" => "Bin",
@@ -1868,10 +1866,8 @@ fn install_preview(path: String) -> Result<InstallPreview, String> {
     // group staged targets by their top two segments (kind + folder)
     let mut groups: std::collections::BTreeMap<(String, String), usize> = Default::default();
     for (_src, rel) in &plan.moves {
-        let mut parts = rel.split('/');
-        let first = parts.next().unwrap_or("").to_lowercase();
+        let (first, folder, _rest) = install::split_rel(rel);
         if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
-            let folder = parts.next().unwrap_or("").to_string();
             let kind = match first.as_str() {
                 "dlc" => "DLC",
                 "bin" => "Bin",
@@ -1941,6 +1937,7 @@ fn install_roots(
                 kind: r.kind.clone(),
                 folder: r.folder.clone(),
                 prefix: r.prefix.clone(),
+                files: r.files,
             })
             .collect();
         let remapped: Vec<(String, String)> = plan
@@ -2116,6 +2113,7 @@ pub fn run() {
             preview_roots,
             install_preview,
             install_roots,
+            install::remap_roots,
             frontend_log
         ])
         .run(tauri::generate_context!())

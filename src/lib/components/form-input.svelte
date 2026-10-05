@@ -6,6 +6,7 @@
     mono?: boolean;
     width?: string;
     class?: string;
+    disabled?: boolean;
     oninput?: (e: Event) => void;
   }
   let {
@@ -15,6 +16,7 @@
     mono = false,
     width = '',
     class: className = '',
+    disabled = false,
     oninput,
   }: Props = $props();
 
@@ -26,6 +28,7 @@
 <input
   {type}
   placeholder={placeholder}
+  {disabled}
   class="{base} {monoClass} {widthClass} {className}"
   bind:value
   {oninput}
