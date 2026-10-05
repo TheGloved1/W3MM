@@ -44,6 +44,19 @@ fn qualify_mod_folder(root: &Path, rel: &str) -> String {
     format!("mods/{name}/{rel}")
 }
 
+/// `modFoo/` sitting inside a game-layout archive (one that also ships real
+/// content/bin). It's a mod folder, so read it as `mods/modFoo` rather than
+/// letting the caller wrap it a second time. The structural check (it must
+/// contain a game dir of its own) keeps unrelated folders like `models/`
+/// out of it.
+fn is_nested_mod_dir(root: &Path, seg: &str) -> bool {
+    if !seg.to_lowercase().starts_with("mod") {
+        return false;
+    }
+    let dir = root.join(seg);
+    dir.is_dir() && ["mods", "dlc", "bin", "content"].iter().any(|s| dir.join(s).is_dir())
+}
+
 fn find_roots(tmp: &Path) -> Vec<PathBuf> {
     let mut roots = vec![];
     let mut stack = vec![tmp.to_path_buf()];
@@ -103,12 +116,16 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
             let rel = rel.trim_end_matches('/').trim_end_matches('\\').to_string();
             let low = rel.to_lowercase();
             // Top-level grouping: mods|dlc|bin|content/...
-            let first = rel.split(['/', '\\']).next().unwrap_or("").to_lowercase();
+            let seg = rel.split(['/', '\\']).next().unwrap_or("").to_string();
+            let first = seg.to_lowercase();
             // Inside a bare mod folder every game dir belongs to that mod:
             // `modFoo/content/…` and `modFoo/bin/…` both become
-            // `mods/modFoo/…`.
+            // `mods/modFoo/…`. A mod folder nested in a game layout gets the
+            // same treatment, without the caller's second wrap.
             let rel = if mod_folder_root && ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
                 qualify_mod_folder(&root, &rel)
+            } else if !mod_folder_root && is_nested_mod_dir(&root, &seg) {
+                format!("mods/{rel}")
             } else {
                 rel
             };
@@ -265,23 +282,35 @@ mod tests {
     }
 
     #[test]
-    fn mod_folder_next_to_bin_never_leaks_into_game_content() {
-        // A game layout that *contains* a mod folder: the mod's files must not
-        // land in the game's own content/ or bin/.
+    fn mod_folder_next_to_bin_is_not_double_wrapped() {
+        // A game layout that *contains* a mod folder: the mod's files land in
+        // mods/modFoo/… (not mods/modFoo/modFoo/…), and real game files keep
+        // their own place.
         let tmp = tmpdir("mod-inside-layout");
         write(&tmp.join("modFoo/content/a.ws"), "x");
         write(&tmp.join("bin/x.dll"), "y");
         let plan = analyze(&tmp);
         let stage = tmp.join("stage");
         let (targets, _) = build_staging(&plan, &stage, "modFoo").unwrap();
-        assert!(
-            targets.contains(&"bin/x.dll".to_string()),
-            "real game bin/ should keep its place: {targets:?}"
+        assert_eq!(
+            targets,
+            vec!["bin/x.dll", "mods/modFoo/content/a.ws"],
+            "mod folder must not be wrapped twice"
         );
-        assert!(
-            !targets.iter().any(|t| t.starts_with("content/")),
-            "mod folder leaked into game content: {targets:?}"
-        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn plain_dirs_named_like_mods_are_left_alone() {
+        // `models/` isn't a mod folder: no game dir inside, so it must not be
+        // promoted to mods/models/.
+        let tmp = tmpdir("models-dir");
+        write(&tmp.join("models/asset.dds"), "x");
+        write(&tmp.join("bin/x.dll"), "y");
+        let plan = analyze(&tmp);
+        let stage = tmp.join("stage");
+        let (targets, _) = build_staging(&plan, &stage, "modPack").unwrap();
+        assert_eq!(targets, vec!["bin/x.dll", "mods/modPack/models/asset.dds"]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
