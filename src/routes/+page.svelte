@@ -1987,9 +1987,14 @@
       {#each Object.values(groupedQueue) as group}
         {@const rows = group.rows}
         {@const nested = rows.length > 1}
+        {@const settled = rows.some((r) => r.status === "done" && dlSameFile(r))}
         {@const collapsed =
           dlCollapsed[group.key] ??
-          rows.every((r) => r.status === "done" && dlSameFile(r))}
+          rows.every(
+            (r) =>
+              (r.status === "done" && dlSameFile(r)) ||
+              (settled && r.status === "done"),
+          )}
         {@const single = rows.length === 1 ? rows[0] : null}
         {@const running = rows.some(
           (r) =>
@@ -2018,7 +2023,7 @@
               >{group.mod_name ||
                 (group.mod_id ? `Nexus mod ${group.mod_id}` : "Mod")}</button
             >
-            {#if collapsed && rows.length && rows.every((r) => r.status === "done" && dlSameFile(r))}
+            {#if collapsed && rows.length && settled}
               <span
                 title="Installed: this exact version"
                 class="mt-0.5 shrink-0 text-[#7fbf8a]"
