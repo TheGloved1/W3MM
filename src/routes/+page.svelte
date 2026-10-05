@@ -1663,17 +1663,16 @@
     <!-- One cell renderer per column. Declared before <DataList> so the
          `columns` array below can reference them. -->
     {#snippet cellPriority({ item: m }: { item: ModRow })}
-      <!-- The number is the mod's position in the load order and nothing else,
-           so it looks identical whether the mod is enabled or not — the
-           checkbox is the sole indicator of enabled state. A disabled mod keeps
-           its slot in the order, so it still shows a number; that one is
-           readonly, since editing it would reorder a mod that isn't taking part.
+      <!-- The number is the mod's position in the load order, so it stays
+           visible for a disabled mod; it is readonly then, since reordering a
+           mod that isn't taking part would be meaningless. A disabled mod's
+           number is dimmed to match its name — colour only, so the box is
+           untouched and the row cannot resize when a mod is toggled.
 
            Always an <input>, never swapped for a <span>: an input is a form
            control whose text sits in its own UA-defined centring box, and no
            amount of matching classes makes it agree with a span's line box.
-           With one element the two states are the same box by construction, so
-           autoRowHeight can't resize the row when a mod is toggled. -->
+           With one element the two states are the same box by construction. -->
       <input
         type="number"
         min="1"
@@ -1684,7 +1683,9 @@
         readonly={!m.enabled}
         tabindex={m.enabled ? 0 : -1}
         title="Priority — 1 wins"
-        class="h-[22px] w-[40px] bg-transparent px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground outline-none read-only:cursor-default"
+        class="h-[22px] w-[40px] bg-transparent px-1 text-left text-[13px] font-semibold leading-[16px] outline-none read-only:cursor-default {m.enabled
+          ? 'text-foreground'
+          : 'text-muted-foreground'}"
         style="-moz-appearance:textfield;-webkit-appearance:none;"
       />
     {/snippet}
@@ -1714,7 +1715,9 @@
             if (e.key === "Enter") openEdit(m.id);
           }}
         >
-          <span class="block truncate text-sm">{m.name}</span>
+          <span class="block truncate text-sm {m.enabled ? '' : 'text-muted-foreground'}"
+            >{m.name}</span
+          >
           {#if hoverTip && hoverTip.id === m.id && targetsOf(m.id).length}
             {@const tip = hoverTip}
             <span
