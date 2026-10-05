@@ -746,9 +746,23 @@ fn open_path(target: String) -> Result<(), String> {
         cmd.arg(&target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped());
         scrub_env(&mut cmd);
-        cmd.spawn().map_err(|e| format!("open failed: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("open failed: {e}"))?;
+        // xdg-open's diagnostics would otherwise vanish: reap stderr on a
+        // thread (fire-and-forget, never blocks this command).
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = String::new();
+                if std::io::BufReader::new(stderr).read_to_string(&mut buf).is_ok() {
+                    let t = buf.trim().to_string();
+                    if !t.is_empty() {
+                        log_line("rust", &format!("open_path: xdg-open said: {t}"));
+                    }
+                }
+            });
+        }
     }
     #[cfg(target_os = "macos")]
     {
