@@ -122,12 +122,9 @@
      space on a long list. */
   padding: 9px 8px;
 }
-/* The priority input brings its own vertical padding; without this the
-   tallest cell in the row would be the number field, not the mod name. */
-.data-list .sv-grid-cell > input[type="number"] {
-  padding-top: 0;
-  padding-bottom: 0;
-}
+/* No vertical-padding reset on the priority input: it must keep the same box
+   as the muted span shown for disabled mods, or the two states measure to
+   different row heights and the list jumps when a mod is toggled. */
 
 /* Selection here is per-ROW, so the grid's per-cell affordances are suppressed:
    the accent ring on the active cell (set on every pointerdown, independent of

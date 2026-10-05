@@ -1675,15 +1675,16 @@
           onclick={(e) => e.stopPropagation()}
           onkeydown={(e) => e.stopPropagation()}
           title="Priority — 1 wins"
-          class="w-[40px] bg-transparent px-1 py-[3px] text-left text-[13px] font-semibold text-foreground outline-none"
+          class="h-[22px] w-[40px] bg-transparent px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground outline-none"
           style="-moz-appearance:textfield;-webkit-appearance:none;"
         />
       {:else}
-        <!-- Mirrors the input's box exactly (w-40 + px-1 + py-3), so the digit
-             sits at the same offset whether the mod is enabled or not and the
-             column doesn't shift when one is toggled. -->
+        <!-- Identical box to the input above (h-22 + w-40 + px-1 + leading-16),
+             so the digit sits at the same offset AND both states measure the
+             same height — otherwise autoRowHeight resizes the row and the list
+             jumps when a mod is toggled. -->
         <span
-          class="block w-[40px] px-1 py-[3px] text-left text-[13px] font-semibold text-muted-foreground/50"
+          class="block h-[22px] w-[40px] px-1 text-left text-[13px] font-semibold leading-[16px] text-muted-foreground/50"
           >{prioOf(m.id)}</span
         >
       {/if}
