@@ -810,6 +810,12 @@ fn scrub_env(cmd: &mut std::process::Command) -> Vec<String> {
             }
         }
     }
+    // The bundle forces GTK_THEME=Adwaita:dark (never set in a host session);
+    // libadwaita apps fight it and render off-theme, so drop it under AppImage.
+    if appdir.is_some() && std::env::var("GTK_THEME").is_ok() {
+        changed.push("GTK_THEME".to_string());
+        cmd.env_remove("GTK_THEME");
+    }
     changed
 }
 
