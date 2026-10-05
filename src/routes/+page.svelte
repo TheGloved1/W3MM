@@ -2037,7 +2037,7 @@
           {#if !collapsed}
             <div
               class={nested
-                ? "mt-3 flex flex-col gap-2 pl-4"
+                ? "mt-3 flex flex-col gap-1 divide-y divide-[#363e48]/60 pl-4"
                 : "mt-3 flex flex-col gap-2"}
             >
               {#each rows as qq}
@@ -2057,7 +2057,7 @@
                       : action}
                 <div
                   class={nested
-                    ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-2.5"
+                    ? "px-2 py-2"
                     : ""}
                 >
                   {#if nested}
