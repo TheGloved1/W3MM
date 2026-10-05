@@ -101,6 +101,7 @@ fn lock_shared<'a>(shared: &'a State<Shared>, ctx: &str) -> Result<std::sync::Mu
 fn open_manager(shared: State<Shared>, game_dir: String, prefix: String) -> Result<bool, String> {
     let m = Manager::open(&game_dir, &prefix)?;
     crate::nexus::load_version_cache(std::path::Path::new(&game_dir));
+    log_launch_env();
     *lock_shared(&shared, "open_manager")? = Some(m);
     Ok(true)
 }
@@ -638,7 +639,65 @@ fn cached_updates(shared: State<Shared>) -> Result<Vec<UpdateHit>, String> {
     Ok(out)
 }
 
-/// PATH entries belonging to an AppImage mount (e.g. `/tmp/.mount_xxx/usr/bin`
+/// One-line launch environment report, once per process: AppImage status +
+/// the vars that decide what opened children look like. The log file itself
+/// is append-only (`w3mm.log` is never truncated), so this marks sessions.
+fn log_launch_env() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let in_appimage =
+            std::env::var("APPIMAGE").map(|v| !v.is_empty()).unwrap_or(false)
+                || std::env::var("APPDIR").map(|v| !v.is_empty()).unwrap_or(false);
+        log_line(
+            "rust",
+            &format!(
+                "launch: appimage={} appdir={:?} desktop={:?} display={:?}/{:?} path={:?} data_dirs={:?} ld_library_path={}",
+                if in_appimage { "yes" } else { "no" },
+                std::env::var("APPDIR").ok(),
+                std::env::var("XDG_CURRENT_DESKTOP").ok(),
+                std::env::var("DISPLAY").ok(),
+                std::env::var("WAYLAND_DISPLAY").ok(),
+                std::env::var("PATH").ok(),
+                std::env::var("XDG_DATA_DIRS").ok(),
+                if std::env::var("LD_LIBRARY_PATH").is_ok() { "set" } else { "unset" },
+            ),
+        );
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_output(args: &[&str]) -> Option<String> {
+    let tool = host_tool("xdg-mime")?;
+    let mut cmd = std::process::Command::new(tool);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    scrub_env(&mut cmd);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Which .desktop file xdg-open would use for this target, seen through the
+/// same scrubbed environment the child gets. `None` = no handler (or lookup
+/// failed) — the interesting case for "nothing opened".
+#[cfg(target_os = "linux")]
+fn default_handler(target: &str) -> Option<String> {
+    let p = std::path::Path::new(target);
+    let mime = if p.is_dir() {
+        "inode/directory".to_string()
+    } else {
+        xdg_output(&["query", "filetype", target])?
+    };
+    xdg_output(&["query", "default", &mime])
+}
 /// or `$APPDIR/usr/bin`): host tools resolved through them are the mount's
 /// broken copies (see tauri#10617), so they must not leak into children.
 fn is_sandbox_path(entry: &str, appdir: Option<&str>) -> bool {
@@ -733,13 +792,15 @@ fn open_path(target: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let tool = host_tool("xdg-open").ok_or("xdg-open not found outside the app sandbox")?;
+        log_launch_env();
         log_line(
             "rust",
             &format!(
-                "open_path: tool={} desktop={:?} data_dirs={:?}",
+                "open_path: target={} tool={} desktop={:?} handler={:?}",
+                target,
                 tool.display(),
                 std::env::var("XDG_CURRENT_DESKTOP").ok(),
-                std::env::var("XDG_DATA_DIRS").ok(),
+                default_handler(&target),
             ),
         );
         let mut cmd = std::process::Command::new(tool);
