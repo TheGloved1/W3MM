@@ -1660,7 +1660,7 @@
     {/if}
 
     <div
-      class="min-h-0 flex-1 overflow-hidden rounded-[7px] border border-border bg-card"
+      class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[7px] border border-border bg-card"
     >
       <DataList
         columns={[

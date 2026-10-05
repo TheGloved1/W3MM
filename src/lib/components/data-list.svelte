@@ -112,7 +112,7 @@
       </colgroup>
       <Table.Header>
         <Table.Row class="border-b border-border hover:bg-transparent">
-          {#each columns as col}
+          {#each columns as col, colIndex}
             <Table.Head
               class="relative sticky top-0 z-10 bg-muted/80 text-[11px] tracking-wide text-muted-foreground backdrop-blur {col.align ===
               'right'
@@ -131,9 +131,10 @@
               {:else}
                 <span class="uppercase">{col.label}</span>
               {/if}
+              {#if colIndex < columns.length - 1}
               <span
                 role="presentation"
-                class="absolute inset-y-0 right-0 w-2 cursor-col-resize touch-none select-none bg-border/50 hover:bg-primary/60"
+                class="absolute inset-y-0 right-0 w-2 cursor-col-resize touch-none select-none bg-transparent hover:bg-primary/50"
                 onpointerdown={(e) => {
                   e.preventDefault();
                   resizeCol = col.id;
@@ -161,6 +162,7 @@
                   resizeCol = null;
                 }}
               ></span>
+            {/if}
             </Table.Head>
           {/each}
         </Table.Row>
