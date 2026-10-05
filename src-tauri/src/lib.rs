@@ -653,17 +653,18 @@ fn is_sandbox_path(entry: &str, appdir: Option<&str>) -> bool {
     false
 }
 
+/// Mount entries removed from one path-list value; order preserved.
+fn scrub_entries(val: &std::ffi::OsStr, appdir: Option<&str>) -> Vec<std::path::PathBuf> {
+    std::env::split_paths(val)
+        .filter(|e| !is_sandbox_path(&e.to_string_lossy(), appdir))
+        .collect()
+}
+
 /// Host PATH with sandbox entries stripped; `None` when nothing usable left.
 fn sanitized_path() -> Option<std::ffi::OsString> {
     let appdir = std::env::var("APPDIR").ok();
     let path = std::env::var_os("PATH")?;
-    let mut kept = vec![];
-    for entry in std::env::split_paths(&path) {
-        let s = entry.to_string_lossy();
-        if !is_sandbox_path(&s, appdir.as_deref()) {
-            kept.push(entry);
-        }
-    }
+    let kept = scrub_entries(&path, appdir.as_deref());
     if kept.is_empty() {
         return None;
     }
@@ -683,23 +684,62 @@ fn host_tool(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// Path-list env vars an AppImage prefixes with its mount: a host file
+/// manager inheriting them loads the bundle's themes/icons/schemas instead of
+/// the system's (unstyled, sometimes outright different handler).
+#[cfg(target_os = "linux")]
+const SANDBOX_PATH_VARS: &[&str] = &[
+    "PATH",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
+    "GTK_PATH",
+    "GTK_DATA_PREFIX",
+    "GTK_EXE_PREFIX",
+    "GIO_MODULE_DIR",
+    "GSETTINGS_SCHEMA_DIR",
+    "QT_PLUGIN_PATH",
+    "QML_IMPORT_PATH",
+    "QML2_IMPORT_PATH",
+    "FONTCONFIG_PATH",
+];
+
+/// Strip AppImage mount entries from the sandbox-sensitive vars and drop the
+/// bundled lib path, so the child sees a host environment. Vars left with no
+/// entries are removed so system defaults apply.
+#[cfg(target_os = "linux")]
+fn scrub_env(cmd: &mut std::process::Command) {
+    let appdir = std::env::var("APPDIR").ok();
+    for var in SANDBOX_PATH_VARS {
+        let Some(val) = std::env::var_os(var) else {
+            continue;
+        };
+        let kept = scrub_entries(&val, appdir.as_deref());
+        if kept.is_empty() {
+            cmd.env_remove(var);
+        } else if let Ok(joined) = std::env::join_paths(kept) {
+            cmd.env(var, joined);
+        }
+    }
+    cmd.env_remove("LD_LIBRARY_PATH");
+}
+
 /// Open a folder or URL without blocking: the child is spawned detached with
 /// a host-sanitized environment, so the command returns at once. Besides the
-/// PATH fix above, the AppImage's bundled `LD_LIBRARY_PATH` is dropped — a
-/// host file manager inheriting it loads the wrong libs and misbehaves.
+/// PATH fix above, the AppImage's bundled lib/theme paths are scrubbed — a
+/// host file manager inheriting them loads the wrong libs and renders
+/// unstyled.
 #[tauri::command]
 fn open_path(target: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let tool = host_tool("xdg-open").ok_or("xdg-open not found outside the app sandbox")?;
-        std::process::Command::new(tool)
-            .arg(&target)
+        let mut cmd = std::process::Command::new(tool);
+        cmd.arg(&target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .env_remove("LD_LIBRARY_PATH")
-            .spawn()
-            .map_err(|e| format!("open failed: {e}"))?;
+            .stderr(std::process::Stdio::null());
+        scrub_env(&mut cmd);
+        cmd.spawn().map_err(|e| format!("open failed: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -1982,8 +2022,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sandbox_paths_detected() {
-        assert!(is_sandbox_path("/tmp/.mount_abc123/usr/bin", None));
+    fn sandbox_paths_detected() {        assert!(is_sandbox_path("/tmp/.mount_abc123/usr/bin", None));
         assert!(is_sandbox_path("/tmp/.mount_abc123/usr/bin", Some("/tmp/.mount_abc123")));
         assert!(is_sandbox_path("/opt/app/usr/bin", Some("/opt/app")));
         assert!(is_sandbox_path("/opt/app", Some("/opt/app")));
@@ -1992,5 +2031,16 @@ mod tests {
         assert!(!is_sandbox_path("/home/u/.local/bin", None));
         // A normal dir that merely shares a prefix is kept.
         assert!(!is_sandbox_path("/opt/application/bin", Some("/opt/app")));
+    }
+
+    #[test]
+    fn scrub_entries_keeps_host_order() {
+        use std::ffi::OsStr;
+        let v = scrub_entries(
+            OsStr::new("/tmp/.mount_x/usr/share:/usr/share:/home/u/.local/share:/opt/app/share"),
+            Some("/opt/app"),
+        );
+        let s: Vec<_> = v.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        assert_eq!(s, vec!["/usr/share", "/home/u/.local/share"]);
     }
 }
