@@ -1662,7 +1662,7 @@
 
     <!-- One cell renderer per column. Declared before <DataList> so the
          `columns` array below can reference them. -->
-    {#snippet cellPriority(m: ModRow)}
+    {#snippet cellPriority({ item: m }: { item: ModRow })}
       {#if m.enabled}
         <input
           type="number"
@@ -1679,7 +1679,7 @@
         <span class="text-muted-foreground/50">–</span>
       {/if}
     {/snippet}
-    {#snippet cellName(m: ModRow)}
+    {#snippet cellName({ item: m }: { item: ModRow })}
       <div class="flex min-w-0 items-center gap-2">
         <input
           type="checkbox"
@@ -1729,10 +1729,10 @@
         </span>
       </div>
     {/snippet}
-    {#snippet cellVersion(m: ModRow)}
+    {#snippet cellVersion({ item: m }: { item: ModRow })}
       <span class="truncate text-[13px]">{m.version}</span>
     {/snippet}
-    {#snippet cellStatus(m: ModRow)}
+    {#snippet cellStatus({ item: m }: { item: ModRow })}
       <div class="flex flex-wrap gap-1 py-1">
         {#each chipsFor(m) as c}
           {@const Icon = c.icon}
@@ -1746,7 +1746,7 @@
         {/each}
       </div>
     {/snippet}
-    {#snippet cellInstalled(m: ModRow)}
+    {#snippet cellInstalled({ item: m }: { item: ModRow })}
       <span class="truncate text-[13px]">{fmtDate(m.updated)}</span>
     {/snippet}
 

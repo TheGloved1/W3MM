@@ -7,8 +7,9 @@
     /** Initial width in px. The grid scales these to fill the viewport. */
     width?: number;
     align?: "left" | "center" | "right";
-    /** Contents of one cell. Omit to render the raw value. */
-    cell?: Snippet<[item: T, selected: boolean]>;
+    /** Contents of one cell. Receives a single params object, not positional
+     *  arguments — destructure it: `{#snippet cell({ item })}`. */
+    cell?: Snippet<[{ item: T; selected: boolean }]>;
   }
 
   /** Modifier state at the time of the click. SvGrid's row callbacks carry
@@ -74,12 +75,11 @@
     metaKey: false,
   });
 
-  type GridRow = { id: string; original: unknown };
   type GridCol = ColumnDef<never, T & RowData>;
 
   const cols: GridCol[] = $derived(
     columns.map((c) => {
-      const cell = c.cell as Snippet<[{ item: T; selected: boolean }]>;
+      const cell = c.cell;
       return {
         id: c.id,
         header: c.label,
@@ -93,8 +93,10 @@
         editable: false,
         ...(cell
           ? {
-              cell: (ctx: { row: GridRow }) => {
-                const item = ctx.row.original as T;
+              // The `cell` renderer is the one callback that receives a Row
+              // wrapper, so the item has to come off `.original` here.
+              cell: (ctx: { row: { original: T } }) => {
+                const item = ctx.row.original;
                 return renderSnippet(cell, {
                   item,
                   selected: isSelected(item),
@@ -121,9 +123,11 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+<!-- `role="presentation"` keeps this a plain container: the handlers below are
+     event delegation over the grid, not interaction on a semantic element. -->
 <div
   class="data-list relative flex min-h-0 flex-1 flex-col"
+  role="presentation"
   onmousedown={(e) => {
     mods = { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
   }}
@@ -167,10 +171,10 @@
       enableInlineEditing={false}
       selectable={false}
       selectionMode="none"
-      rowClass={({ row }) =>
-        isSelected(row.original as T) ? "dl-selected" : ""
-      }
-      isDetailRow={(row) => !!isDetail?.(row.original as T)}
+      // NB: every callback below except `cell` receives the raw item, not a
+      // Row wrapper. Only the cell renderer needs `.original`.
+      rowClass={({ row }) => (isSelected(row) ? "dl-selected" : "")}
+      isDetailRow={(row) => !!isDetail?.(row)}
       renderDetailRow={detail}
       rowDragManaged={canReorder}
       onRowDrop={
@@ -178,23 +182,17 @@
           ? ({ row, target, side }) => {
               // `into` only occurs on tree/group rows, which we don't have.
               if (!target || side === "into") return;
-              onReorder(
-                keyOf(row.original as T),
-                keyOf(target as T),
-                side,
-              );
+              onReorder(keyOf(row), keyOf(target), side);
             }
           : undefined
       }
       onRowClick={({ row }) => {
-        const item = row.original as T;
-        if (isDetail?.(item)) return;
-        onSelect?.(item, mods);
+        if (isDetail?.(row)) return;
+        onSelect?.(row, mods);
       }}
       onRowDoubleClick={({ row }) => {
-        const item = row.original as T;
-        if (isDetail?.(item)) return;
-        onActivate?.(item);
+        if (isDetail?.(row)) return;
+        onActivate?.(row);
       }}
     />
   {/if}
