@@ -67,16 +67,12 @@ impl AppState {
         self.mods.iter_mut().find(|r| r.id == mid)
     }
 
-    /// Every mod id, top priority first; unknown ids appended in list order.
+    /// Priority always mirrors list order (mods only, separators skipped):
+    /// every writer that moves rows rebuilds it, so readers never see a
+    /// stale order. Any previously desynced state heals on next call.
     /// Mirrors python `priority_ids` first-time setup from list order.
     pub fn priority_ids(&mut self) -> Vec<String> {
-        let known: Vec<String> = self.mods_only().iter().map(|m| m.id.clone()).collect();
-        self.priority.retain(|id| known.contains(id));
-        for id in &known {
-            if !self.priority.contains(id) {
-                self.priority.push(id.clone());
-            }
-        }
+        self.priority = self.mods_only().iter().map(|m| m.id.clone()).collect();
         self.priority.clone()
     }
 
@@ -270,5 +266,26 @@ mod tests {
         assert_eq!(s.priority, vec!["b", "a"]);
         s.set_enabled(&["a".to_string()], false);
         assert!(!s.get("a").unwrap().enabled);
+    }
+    #[test]
+    fn replace_insert_keeps_rank() {
+        // Update/reinstall flow: new row takes the old row's list slot, and
+        // the priority rank must follow instead of dropping to the end.
+        let mut s = AppState::default();
+        s.mods = vec![row("a", "A"), row("b", "B"), row("c", "C")];
+        assert_eq!(s.priority_ids(), vec!["a", "b", "c"]);
+        let at = s.mods.iter().position(|r| r.id == "b").unwrap();
+        s.remove_rows(&["b".to_string()]);
+        s.mods.insert(at.min(s.mods.len()), row("b2", "B2"));
+        assert_eq!(s.priority_ids(), vec!["a", "b2", "c"]);
+    }
+    #[test]
+    fn desynced_priority_heals() {
+        // A stale priority vec (e.g. from an older section move) snaps back
+        // to list order on next call.
+        let mut s = AppState::default();
+        s.mods = vec![row("a", "A"), row("b", "B"), row("c", "C")];
+        s.priority = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        assert_eq!(s.priority_ids(), vec!["a", "b", "c"]);
     }
 }

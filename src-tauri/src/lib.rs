@@ -126,7 +126,11 @@ fn list_mods(shared: State<Shared>) -> Result<state::AppState, String> {
         let g = lock_shared(&shared, "list_mods")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
-        s.clone()
+        let mut st = s.clone();
+        // Normalize the copy so the UI never shows a stale priority order
+        // even before the next mutating command persists the heal.
+        st.priority_ids();
+        st
     };
     Ok(cloned)
 }
@@ -1250,6 +1254,9 @@ fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<
                 None => s.mods.push(row),
             }
         }
+        // Keep list order and priority in sync (same rebuild the other
+        // row-moving writers do).
+        s.priority_ids();
     }
     m.save()?;
     Ok(true)
