@@ -1,3 +1,14 @@
+# [26.10.10] - 2026-10-05
+
+## Fixed
+
+- install:
+```
+- treat bare mod folders as mods/<mod> instead of game content
+- qualify all game dirs inside bare mod folders as one mod
+- normalize mod folders nested inside game layouts
+```
+
 # [26.10.9] - 2026-10-05
 
 ## Added
