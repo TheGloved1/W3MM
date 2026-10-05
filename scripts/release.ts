@@ -507,12 +507,12 @@ async function rechangelog(dryRun = false) {
 
   if (!dryRun) {
     const current = readFileSync('CHANGELOG.md', 'utf-8');
-    const marker = '\n## [';
-    const idx = current.indexOf(marker);
+    const marker = current.match(/\n##? \[/);
+    const idx = marker?.index ?? -1;
     const preamble = (idx === -1 ? current : current.slice(0, idx)).trimEnd();
     const entries = [...built]
       .reverse()
-      .map((b) => `## [${b.ver}] - ${b.date}\n\n${b.body}`);
+      .map((b) => `# [${b.ver}] - ${b.date}\n\n${b.body}`);
     writeFileSync('CHANGELOG.md', `${preamble}\n\n${entries.join('\n\n')}\n`);
   }
   ok(dryRun ? 'Preview only — nothing written' : `Rewrote ${built.length} changelogs + CHANGELOG.md`);
