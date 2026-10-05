@@ -513,7 +513,7 @@ async function rechangelog(dryRun = false) {
     const entries = [...built]
       .reverse()
       .map((b) => `# [${b.ver}] - ${b.date}\n\n${b.body}`);
-    writeFileSync('CHANGELOG.md', `${preamble}\n\n${entries.join('\n\n')}\n`);
+    writeFileSync('CHANGELOG.md', preamble ? `${preamble}\n\n${entries.join('\n\n')}\n` : `${entries.join('\n\n')}\n`);
   }
   ok(dryRun ? 'Preview only — nothing written' : `Rewrote ${built.length} changelogs + CHANGELOG.md`);
 }
