@@ -1732,6 +1732,9 @@
     {#snippet cellVersion({ item: m }: { item: ModRow })}
       <span class="truncate text-[13px]">{m.version}</span>
     {/snippet}
+    {#snippet cellInstalled({ item: m }: { item: ModRow })}
+      <span class="truncate text-[13px]">{fmtDate(m.updated)}</span>
+    {/snippet}
     {#snippet cellStatus({ item: m }: { item: ModRow })}
       <div class="flex flex-wrap gap-1 py-1">
         {#each chipsFor(m) as c}
@@ -1745,9 +1748,6 @@
           </span>
         {/each}
       </div>
-    {/snippet}
-    {#snippet cellInstalled({ item: m }: { item: ModRow })}
-      <span class="truncate text-[13px]">{fmtDate(m.updated)}</span>
     {/snippet}
 
     <div
@@ -1763,13 +1763,13 @@
           },
           { id: "name", label: "Mod", width: 340, cell: cellName },
           { id: "version", label: "Version", width: 100, cell: cellVersion },
-          { id: "status", label: "Status", width: 118, cell: cellStatus },
           {
             id: "installed",
             label: "Installed",
             width: 110,
             cell: cellInstalled,
           },
+          { id: "status", label: "Status", width: 118, cell: cellStatus },
         ]}
         items={appState ? appState.mods : []}
         keyOf={(m) => m.id}
