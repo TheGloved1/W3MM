@@ -1663,9 +1663,16 @@
     <!-- One cell renderer per column. Declared before <DataList> so the
          `columns` array below can reference them. -->
     {#snippet cellPriority({ item: m }: { item: ModRow })}
-      <!-- A disabled mod keeps its place in the order, so it still shows its
-           number — as static text, since editing it would reorder a mod that
-           isn't taking part in the load order. -->
+      <!-- The number is the mod's position in the load order and nothing else,
+           so it looks identical whether the mod is enabled or not — enabled
+           state is the checkbox's job. A disabled mod keeps its slot in the
+           order, so it still shows a number; that one is static, since editing
+           it would reorder a mod that isn't taking part.
+
+           Both branches share the same box (h-22 + w-40 + px-1) and line
+           height so autoRowHeight can't resize the row between states, and the
+           span is flex-centred because the browser centres an input's text but
+           a plain span sits its text on the top of the line. -->
       {#if m.enabled}
         <input
           type="number"
@@ -1679,12 +1686,8 @@
           style="-moz-appearance:textfield;-webkit-appearance:none;"
         />
       {:else}
-        <!-- Identical box to the input above (h-22 + w-40 + px-1 + leading-16),
-             so the digit sits at the same offset AND both states measure the
-             same height — otherwise autoRowHeight resizes the row and the list
-             jumps when a mod is toggled. -->
         <span
-          class="block h-[22px] w-[40px] px-1 text-left text-[13px] font-semibold leading-[16px] text-muted-foreground/50"
+          class="flex h-[22px] w-[40px] items-center px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground"
           >{prioOf(m.id)}</span
         >
       {/if}
