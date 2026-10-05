@@ -1659,7 +1659,7 @@
             updatesDismissed = true;
             updatesOpen = false;
           }}
-          title="Dismiss banner (updates stay behind •••)"
+          title="Dismiss"
           class="shrink-0 rounded-[6px] p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           ><X class="size-4" /></button
         >
