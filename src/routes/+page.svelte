@@ -1664,33 +1664,29 @@
          `columns` array below can reference them. -->
     {#snippet cellPriority({ item: m }: { item: ModRow })}
       <!-- The number is the mod's position in the load order and nothing else,
-           so it looks identical whether the mod is enabled or not — enabled
-           state is the checkbox's job. A disabled mod keeps its slot in the
-           order, so it still shows a number; that one is static, since editing
-           it would reorder a mod that isn't taking part.
+           so it looks identical whether the mod is enabled or not — the
+           checkbox is the sole indicator of enabled state. A disabled mod keeps
+           its slot in the order, so it still shows a number; that one is
+           readonly, since editing it would reorder a mod that isn't taking part.
 
-           Both branches share the same box (h-22 + w-40 + px-1) and line
-           height so autoRowHeight can't resize the row between states, and the
-           span is flex-centred because the browser centres an input's text but
-           a plain span sits its text on the top of the line. -->
-      {#if m.enabled}
-        <input
-          type="number"
-          min="1"
-          value={prioOf(m.id)}
-          onchange={(e) => setPrio(m.id, e)}
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.stopPropagation()}
-          title="Priority — 1 wins"
-          class="h-[22px] w-[40px] bg-transparent px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground outline-none"
-          style="-moz-appearance:textfield;-webkit-appearance:none;"
-        />
-      {:else}
-        <span
-          class="flex h-[22px] w-[40px] items-center px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground"
-          >{prioOf(m.id)}</span
-        >
-      {/if}
+           Always an <input>, never swapped for a <span>: an input is a form
+           control whose text sits in its own UA-defined centring box, and no
+           amount of matching classes makes it agree with a span's line box.
+           With one element the two states are the same box by construction, so
+           autoRowHeight can't resize the row when a mod is toggled. -->
+      <input
+        type="number"
+        min="1"
+        value={prioOf(m.id)}
+        onchange={m.enabled ? (e) => setPrio(m.id, e) : undefined}
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+        readonly={!m.enabled}
+        tabindex={m.enabled ? 0 : -1}
+        title="Priority — 1 wins"
+        class="h-[22px] w-[40px] bg-transparent px-1 text-left text-[13px] font-semibold leading-[16px] text-foreground outline-none read-only:cursor-default"
+        style="-moz-appearance:textfield;-webkit-appearance:none;"
+      />
     {/snippet}
     {#snippet cellName({ item: m }: { item: ModRow })}
       <div class="flex min-w-0 items-center gap-2">
