@@ -114,7 +114,7 @@
         <Table.Row class="border-b border-border hover:bg-transparent">
           {#each columns as col, colIndex}
             <Table.Head
-              class="relative sticky top-0 z-10 bg-muted/80 text-[11px] tracking-wide text-muted-foreground backdrop-blur {col.align ===
+              class="relative sticky top-0 z-10 bg-card text-[11px] tracking-wide text-muted-foreground {col.align ===
               'right'
                 ? 'text-right'
                 : ''}"

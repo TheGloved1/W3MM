@@ -1477,7 +1477,7 @@
 
 <div class="flex h-full min-h-0">
   <div
-    class="flex min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[18px] pb-[12px]"
+    class="flex min-h-0 min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[18px] pb-[12px]"
   >
     <div class="flex items-center gap-[10px]">
       <div class="min-w-0 flex-1 leading-tight">
