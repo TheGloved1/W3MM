@@ -743,43 +743,42 @@ fn host_tool(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Path-list env vars an AppImage prefixes with its mount: a host file
-/// manager inheriting them loads the bundle's themes/icons/schemas instead of
-/// the system's (unstyled, sometimes outright different handler).
-#[cfg(target_os = "linux")]
-const SANDBOX_PATH_VARS: &[&str] = &[
-    "PATH",
-    "XDG_DATA_DIRS",
-    "XDG_CONFIG_DIRS",
-    "GTK_PATH",
-    "GTK_DATA_PREFIX",
-    "GTK_EXE_PREFIX",
-    "GIO_MODULE_DIR",
-    "GSETTINGS_SCHEMA_DIR",
-    "QT_PLUGIN_PATH",
-    "QML_IMPORT_PATH",
-    "QML2_IMPORT_PATH",
-    "FONTCONFIG_PATH",
-];
+/// Strip AppImage mount entries from one env value; `None` means remove it.
+fn scrub_value(val: &std::ffi::OsStr, appdir: Option<&str>) -> Option<std::ffi::OsString> {
+    let kept = scrub_entries(val, appdir);
+    if kept.is_empty() {
+        None
+    } else {
+        std::env::join_paths(kept).ok()
+    }
+}
 
-/// Strip AppImage mount entries from the sandbox-sensitive vars and drop the
-/// bundled lib path, so the child sees a host environment. Vars left with no
-/// entries are removed so system defaults apply.
+/// Give the child a host environment: every inherited var carrying mount
+/// entries (PATH-like or scalar, e.g. PYTHONHOME/LD_LIBRARY_PATH) is
+/// cleaned, so a launched file manager or terminal never loads the bundle's
+/// libs, themes, or Python. Vars without mount entries pass through
+/// byte-identical, so the session (display server, D-Bus, desktop hints) is
+/// untouched.
 #[cfg(target_os = "linux")]
 fn scrub_env(cmd: &mut std::process::Command) {
     let appdir = std::env::var("APPDIR").ok();
-    for var in SANDBOX_PATH_VARS {
-        let Some(val) = std::env::var_os(var) else {
+    // Snapshot first: `cmd.env_*` only affects the child.
+    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    for (k, v) in &vars {
+        let polluted = std::env::split_paths(v)
+            .any(|p| is_sandbox_path(&p.to_string_lossy(), appdir.as_deref()));
+        if !polluted {
             continue;
-        };
-        let kept = scrub_entries(&val, appdir.as_deref());
-        if kept.is_empty() {
-            cmd.env_remove(var);
-        } else if let Ok(joined) = std::env::join_paths(kept) {
-            cmd.env(var, joined);
+        }
+        match scrub_value(v, appdir.as_deref()) {
+            Some(clean) => {
+                cmd.env(k, clean);
+            }
+            None => {
+                cmd.env_remove(k);
+            }
         }
     }
-    cmd.env_remove("LD_LIBRARY_PATH");
 }
 
 /// Open a folder or URL without blocking: the child is spawned detached with
@@ -2126,5 +2125,25 @@ mod tests {
         );
         let s: Vec<_> = v.iter().map(|p| p.to_string_lossy().to_string()).collect();
         assert_eq!(s, vec!["/usr/share", "/home/u/.local/share"]);
+    }
+
+    #[test]
+    fn scrub_value_removes_mount_scalars() {
+        use std::ffi::OsStr;
+        // Pure mount value -> remove the var entirely.
+        assert_eq!(scrub_value(OsStr::new("/tmp/.mount_x/usr"), Some("/opt/app")), None);
+        // Mixed list -> mount entries dropped, rest intact.
+        assert_eq!(
+            scrub_value(
+                OsStr::new("/tmp/.mount_x/usr/share/pyshared/:/usr/lib/python3"),
+                Some("/opt/app")
+            ),
+            Some(std::ffi::OsString::from("/usr/lib/python3"))
+        );
+        // Clean values pass through unchanged.
+        assert_eq!(
+            scrub_value(OsStr::new("unix:path=/run/user/1000/bus"), None),
+            Some(std::ffi::OsString::from("unix:path=/run/user/1000/bus"))
+        );
     }
 }
