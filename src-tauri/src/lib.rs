@@ -612,6 +612,28 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
     Ok(())
 }
 
+/// Update hits derivable from the persisted version cache alone (no
+/// network): powers the boot-time banner so cached updates show immediately.
+#[tauri::command]
+fn cached_updates(shared: State<Shared>) -> Result<Vec<UpdateHit>, String> {
+    let g = lock_shared(&shared, "cached_updates")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let s = m.state.lock().map_err(|e| e.to_string())?;
+    let mut out = vec![];
+    for r in s.mods_only() {
+        let nid = if r.nexus.trim().is_empty() { crate::nexus::extract_nexus_id(&r.name) } else { r.nexus.clone() };
+        if nid.is_empty() {
+            continue;
+        }
+        if let Some(remote) = crate::nexus::cached_remote(&nid) {
+            if !remote.is_empty() && !r.version.is_empty() && crate::nexus::version_is_newer(&remote, &r.version) {
+                out.push(UpdateHit { id: r.id.clone(), name: r.name.clone(), local: r.version.clone(), remote });
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Read-only import preview from a legacy `_ModManager/state.json`
 /// (clean-break rule: never writes into `_ModManager`).
 #[tauri::command]
@@ -1801,6 +1823,7 @@ pub fn run() {
             write_user_settings,
             read_mods_settings,
             check_updates,
+            cached_updates,
             import_legacy_preview,
             made_for,
             quota,

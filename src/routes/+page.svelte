@@ -316,6 +316,8 @@
       }
       if (gameDir) await open();
       else status = "Set the game folder in Settings…";
+      // Boot-time banner from the persisted version cache — no network.
+      if (gameDir) hits = await invoke<typeof hits>("cached_updates").catch(() => []);
     } catch (e) {
       error = String(e);
     }
@@ -1495,7 +1497,7 @@
             menuOpen = !menuOpen;
           }}
           class="relative rounded-[7px] border border-border bg-popover px-3 py-[7px] text-sm hover:bg-accent"
-          aria-label="More">•••{#if hits.length && !menuOpen}<span
+          aria-label="More">•••{#if hits.length && updatesDismissed && !menuOpen}<span
               class="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#b5d95a] px-1 text-[11px] font-bold text-[#1c2127]"
               >{hits.length}</span
             >{/if}</button
@@ -1508,7 +1510,7 @@
             onclick={(e) => e.stopPropagation()}
             onkeydown={(e) => e.stopPropagation()}
           >
-            {#if hits.length}
+            {#if hits.length && updatesDismissed}
               <button
                 onclick={async () => {
                   menuOpen = false;
@@ -1630,7 +1632,7 @@
             updatesDismissed = true;
             updatesOpen = false;
           }}
-          title="Dismiss until the next check finds something new"
+          title="Dismiss banner (updates stay behind •••)"
           class="shrink-0 rounded-[6px] p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           ><X class="size-4" /></button
         >
