@@ -153,10 +153,15 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
   const log = execSync(`git log ${range} --pretty=format:"%s%n" --reverse`, { encoding: 'utf-8' });
   const lines = log.split('\n').filter(Boolean);
 
-  const addedRaw: string[] = [];
-  const fixedRaw: string[] = [];
-  const changedRaw: string[] = [];
-  const otherRaw: string[] = [];
+  interface ScopedEntry {
+    scope: string | null;
+    msg: string;
+  }
+
+  const addedRaw: ScopedEntry[] = [];
+  const fixedRaw: ScopedEntry[] = [];
+  const changedRaw: ScopedEntry[] = [];
+  const otherRaw: ScopedEntry[] = [];
 
   const pattern = /^(\w+)(\(.*?\))?!?:\s(.+)$/;
 
@@ -196,7 +201,7 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
     const m = line.match(pattern);
     if (m) {
       const [, type, scope, msg] = m;
-      const entry = scope ? `**${scope.slice(1, -1)}**: ${msg}` : msg;
+      const entry: ScopedEntry = { scope: scope ? scope.slice(1, -1) : null, msg };
       switch (type) {
         case 'feat':
           addedRaw.push(entry);
@@ -215,20 +220,61 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
       }
     } else {
       // Non-conventional commit: treat as Other
-      otherRaw.push(line);
+      otherRaw.push({ scope: null, msg: line });
     }
   }
 
-  const added = dedupe(addedRaw);
-  const fixed = dedupe(fixedRaw);
-  const changed = dedupe(changedRaw);
-  const other = dedupe(otherRaw);
+  const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+  // Render one section: unscoped bullets first, then single-entry scopes
+  // inline, then duplicate scopes grouped under `#### Scope` headers.
+  function renderSection(entries: ScopedEntry[]): string {
+    // Dedupe messages within each scope (plus the unscoped bucket) so
+    // identical messages under different scopes don't eat each other.
+    const byScope = new Map<string | null, string[]>();
+    for (const e of entries) {
+      const list = byScope.get(e.scope) ?? [];
+      list.push(e.msg);
+      byScope.set(e.scope, list);
+    }
+    const deduped = new Map<string | null, string[]>();
+    for (const [scope, msgs] of byScope) {
+      deduped.set(scope, dedupe(msgs));
+    }
+    const lines: string[] = [];
+    // 1. Unscoped plain bullets.
+    for (const msg of deduped.get(null) ?? []) {
+      lines.push(`- ${msg}`);
+    }
+    // 2. Single-entry scopes stay inline.
+    for (const [scope, msgs] of deduped) {
+      if (scope !== null && msgs.length === 1) {
+        lines.push(`- **${scope}**: ${msgs[0]}`);
+      }
+    }
+    // 3. Duplicate scopes grouped under subheaders.
+    for (const [scope, msgs] of deduped) {
+      if (scope !== null && msgs.length > 1) {
+        if (lines.length) lines.push('');
+        lines.push(`#### ${capitalize(scope)}`);
+        for (const msg of msgs) {
+          lines.push(`- ${msg}`);
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
+  const added = renderSection(addedRaw);
+  const fixed = renderSection(fixedRaw);
+  const changed = renderSection(changedRaw);
+  const other = renderSection(otherRaw);
 
   let body = '';
-  if (added.length) body += '\n\n### Added\n\n' + added.map((e) => `- ${e}`).join('\n');
-  if (fixed.length) body += '\n\n### Fixed\n\n' + fixed.map((e) => `- ${e}`).join('\n');
-  if (changed.length) body += '\n\n### Changed\n\n' + changed.map((e) => `- ${e}`).join('\n');
-  if (other.length) body += '\n\n### Other\n\n' + other.map((e) => `- ${e}`).join('\n');
+  if (added) body += '\n\n### Added\n\n' + added;
+  if (fixed) body += '\n\n### Fixed\n\n' + fixed;
+  if (changed) body += '\n\n### Changed\n\n' + changed;
+  if (other) body += '\n\n### Other\n\n' + other;
   if (!body) body = '\n\nMaintenance release.';
 
   const today = new Date().toISOString().slice(0, 10);
