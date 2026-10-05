@@ -106,8 +106,7 @@
 
   async function getKey() {
     try {
-      const { open } = await import('@tauri-apps/plugin-shell');
-      await open('https://www.nexusmods.com/users/myaccount?tab=api');
+      await invoke('open_path', { target: 'https://www.nexusmods.com/users/myaccount?tab=api' });
     } catch {}
   }
 

@@ -638,6 +638,92 @@ fn cached_updates(shared: State<Shared>) -> Result<Vec<UpdateHit>, String> {
     Ok(out)
 }
 
+/// PATH entries belonging to an AppImage mount (e.g. `/tmp/.mount_xxx/usr/bin`
+/// or `$APPDIR/usr/bin`): host tools resolved through them are the mount's
+/// broken copies (see tauri#10617), so they must not leak into children.
+fn is_sandbox_path(entry: &str, appdir: Option<&str>) -> bool {
+    if entry.contains(".mount_") {
+        return true;
+    }
+    if let Some(dir) = appdir {
+        if !dir.is_empty() && (entry == dir || entry.starts_with(&format!("{dir}/"))) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Host PATH with sandbox entries stripped; `None` when nothing usable left.
+fn sanitized_path() -> Option<std::ffi::OsString> {
+    let appdir = std::env::var("APPDIR").ok();
+    let path = std::env::var_os("PATH")?;
+    let mut kept = vec![];
+    for entry in std::env::split_paths(&path) {
+        let s = entry.to_string_lossy();
+        if !is_sandbox_path(&s, appdir.as_deref()) {
+            kept.push(entry);
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    std::env::join_paths(kept).ok()
+}
+
+/// Resolve a tool against the sanitized PATH so the child never picks up the
+/// AppImage mount's copy.
+fn host_tool(name: &str) -> Option<std::path::PathBuf> {
+    let path = sanitized_path()?;
+    for entry in std::env::split_paths(&path) {
+        let cand = entry.join(name);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Open a folder or URL without blocking: the child is spawned detached with
+/// a host-sanitized environment, so the command returns at once. Besides the
+/// PATH fix above, the AppImage's bundled `LD_LIBRARY_PATH` is dropped — a
+/// host file manager inheriting it loads the wrong libs and misbehaves.
+#[tauri::command]
+fn open_path(target: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let tool = host_tool("xdg-open").ok_or("xdg-open not found outside the app sandbox")?;
+        std::process::Command::new(tool)
+            .arg(&target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .env_remove("LD_LIBRARY_PATH")
+            .spawn()
+            .map_err(|e| format!("open failed: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("open failed: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &target])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("open failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Read-only import preview from a legacy `_ModManager/state.json`
 /// (clean-break rule: never writes into `_ModManager`).
 #[tauri::command]
@@ -1878,6 +1964,7 @@ pub fn run() {
             merge_inputs,
             save_merge,
             mod_dir,
+            open_path,
             remove_section_cmd,
             move_to_section,
             move_mod,
@@ -1888,4 +1975,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_paths_detected() {
+        assert!(is_sandbox_path("/tmp/.mount_abc123/usr/bin", None));
+        assert!(is_sandbox_path("/tmp/.mount_abc123/usr/bin", Some("/tmp/.mount_abc123")));
+        assert!(is_sandbox_path("/opt/app/usr/bin", Some("/opt/app")));
+        assert!(is_sandbox_path("/opt/app", Some("/opt/app")));
+        assert!(!is_sandbox_path("/usr/bin", Some("/opt/app")));
+        assert!(!is_sandbox_path("/usr/bin", None));
+        assert!(!is_sandbox_path("/home/u/.local/bin", None));
+        // A normal dir that merely shares a prefix is kept.
+        assert!(!is_sandbox_path("/opt/application/bin", Some("/opt/app")));
+    }
 }
