@@ -599,6 +599,10 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
             }
             if !remote.is_empty() && !m.version.is_empty() && crate::nexus::version_is_newer(&remote, &m.version) {
                 hits.push(UpdateHit { id: m.id.clone(), name: m.name.clone(), local: m.version.clone(), remote });
+                // Prefetch the file target now so the Update click is instant.
+                if let Ok(Some(t)) = crate::nexus::resolve_update(&nid, &m.version, &api_key) {
+                    crate::nexus::store_target(&nid, &t);
+                }
             }
             let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
         }
@@ -1017,13 +1021,36 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
         (nid, row.version.clone(), Some(hist))
     };
     log_line("rust", &format!("update_mod: resolving {nexus} (installed {version})"));
+    // Zero-network fast path: cached target + known premium.
+    if let Some(prem) = premium {
+        if let Some(t) = crate::nexus::cached_target(&nexus) {
+            if crate::nexus::version_is_newer(&t.version, &version) {
+                use tauri::Emitter;
+                let row_id = downloads::enqueue_resolved(&nexus, &t);
+                if let Some(h) = hist.as_ref() {
+                    downloads::save_history(h);
+                }
+                let _ = app.emit(
+                    "update-resolved",
+                    serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id }),
+                );
+                return Ok(true);
+            }
+        }
+    }
     std::thread::spawn(move || {
         use tauri::Emitter;
         let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
-        let payload = match crate::nexus::resolve_update(&nexus, &version, &api_key) {
+        // Cached target avoids the files.json fetch; otherwise resolve live.
+        let resolved = match crate::nexus::cached_target(&nexus) {
+            Some(t) if crate::nexus::version_is_newer(&t.version, &version) => Ok(Some(t)),
+            _ => crate::nexus::resolve_update(&nexus, &version, &api_key),
+        };
+        let payload = match resolved {
             Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
             Ok(None) => serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }),
             Ok(Some(t)) => {
+                crate::nexus::store_target(&nexus, &t);
                 let row_id = downloads::enqueue_resolved(&nexus, &t);
                 if let Some(h) = hist.as_ref() {
                     downloads::save_history(h);
@@ -1058,13 +1085,33 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
         (nid, row.version.clone())
     };
     log_line("rust", &format!("resolve_mod_update: resolving {nexus} (installed {version})"));
+    // Zero-network fast path for known free accounts with a cached target.
+    if premium == Some(false) {
+        if let Some(t) = crate::nexus::cached_target(&nexus) {
+            if crate::nexus::version_is_newer(&t.version, &version) {
+                use tauri::Emitter;
+                let _ = app.emit(
+                    "update-resolved",
+                    serde_json::json!({ "id": id, "premium": false, "file_id": t.file_id, "version": t.version }),
+                );
+                return Ok(true);
+            }
+        }
+    }
     std::thread::spawn(move || {
         use tauri::Emitter;
         let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
-        let payload = match crate::nexus::resolve_update(&nexus, &version, &api_key) {
+        let resolved = match crate::nexus::cached_target(&nexus) {
+            Some(t) if crate::nexus::version_is_newer(&t.version, &version) => Ok(Some(t)),
+            _ => crate::nexus::resolve_update(&nexus, &version, &api_key),
+        };
+        let payload = match resolved {
             Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
             Ok(None) => serde_json::json!({ "id": id, "premium": prem, "file_id": "", "version": version }),
-            Ok(Some(t)) => serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version }),
+            Ok(Some(t)) => {
+                crate::nexus::store_target(&nexus, &t);
+                serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version })
+            }
         };
         let _ = app.emit("update-resolved", payload);
     });

@@ -103,11 +103,21 @@ fn last_limits() -> &'static std::sync::Mutex<std::collections::HashMap<String, 
     L.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Remote mod versions seen this session (mod_id -> (version, unix ts)) so
-/// repeat checks skip mods already known to be current. Fresh update
-/// resolves (`resolve_update`) always hit the network — they need file ids.
-fn version_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, (String, i64)>> {
-    static V: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (String, i64)>>> =
+/// Cached remote state per mod: latest seen version plus, when known, the
+/// full update target (file id etc.) so Update clicks can skip resolving.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct CachedVersion {
+    version: String,
+    ts: i64,
+    #[serde(default)]
+    target: Option<UpdateTarget>,
+}
+
+/// Remote mod versions seen recently (mod_id -> entry). Fresh update
+/// resolves (`resolve_update`) always hit the network when the cache misses —
+/// they need file ids.
+fn version_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, CachedVersion>> {
+    static V: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, CachedVersion>>> =
         std::sync::OnceLock::new();
     V.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
@@ -117,16 +127,37 @@ const VERSION_TTL_SECS: i64 = 86400;
 /// Fresh-enough cached remote version, if any.
 pub fn cached_remote(mod_id: &str) -> Option<String> {
     let cache = version_cache().lock().ok()?;
-    let (v, ts) = cache.get(mod_id)?;
-    if chrono::Utc::now().timestamp() - ts > VERSION_TTL_SECS {
+    let e = cache.get(mod_id)?;
+    if chrono::Utc::now().timestamp() - e.ts > VERSION_TTL_SECS {
         return None;
     }
-    Some(v.clone())
+    Some(e.version.clone())
 }
 
 pub fn store_remote(mod_id: &str, version: &str) {
     if let Ok(mut cache) = version_cache().lock() {
-        cache.insert(mod_id.to_string(), (version.to_string(), chrono::Utc::now().timestamp()));
+        let e = cache.entry(mod_id.to_string()).or_default();
+        e.version = version.to_string();
+        e.ts = chrono::Utc::now().timestamp();
+    }
+}
+
+/// Fresh-enough cached update target, if any.
+pub fn cached_target(mod_id: &str) -> Option<UpdateTarget> {
+    let cache = version_cache().lock().ok()?;
+    let e = cache.get(mod_id)?;
+    if chrono::Utc::now().timestamp() - e.ts > VERSION_TTL_SECS {
+        return None;
+    }
+    e.target.clone()
+}
+
+pub fn store_target(mod_id: &str, target: &UpdateTarget) {
+    if let Ok(mut cache) = version_cache().lock() {
+        let e = cache.entry(mod_id.to_string()).or_default();
+        e.version = target.version.clone();
+        e.target = Some(target.clone());
+        e.ts = chrono::Utc::now().timestamp();
     }
 }
 
@@ -136,15 +167,25 @@ fn cache_path_for(game_dir: &std::path::Path) -> std::path::PathBuf {
         .join("version-cache.json")
 }
 
-/// Persisted across restarts: `{ mod_id: [version, unix_ts] }`.
+/// Persisted across restarts: `{ mod_id: {version, ts, target?} }`.
+/// Older `[version, ts]` tuple files are upgraded on load.
 pub fn load_version_cache(game_dir: &std::path::Path) {
     let data = std::fs::read_to_string(cache_path_for(game_dir)).unwrap_or_default();
     if data.is_empty() {
         return;
     }
-    if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, (String, i64)>>(&data) {
+    if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, CachedVersion>>(&data) {
         if let Ok(mut cache) = version_cache().lock() {
             *cache = map;
+        }
+        return;
+    }
+    if let Ok(old) = serde_json::from_str::<std::collections::HashMap<String, (String, i64)>>(&data) {
+        if let Ok(mut cache) = version_cache().lock() {
+            *cache = old
+                .into_iter()
+                .map(|(k, (version, ts))| (k, CachedVersion { version, ts, target: None }))
+                .collect();
         }
     }
 }
