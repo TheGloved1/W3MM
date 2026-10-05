@@ -70,6 +70,9 @@
   /** Body column widths mirrored onto the fixed header so both stay aligned
    *  (they are two tables now, so auto layout would size them differently). */
   let measured: Record<string, number> = $state({});
+  /** Body table's rendered width — the header must match it exactly (it also
+   *  differs from the header's own container by the scrollbar's width). */
+  let bodyWidth: number | null = $state(null);
   let resizeCol: string | null = $state(null);
   let resizeStartX = 0;
   let resizeStartW = 0;
@@ -77,23 +80,30 @@
   // element: box-shadow on <tr> doesn't paint under border-collapse.
   let indicatorTop: number | null = $state(null);
 
-  function headerTotal(): number {
-    const sum = columns.reduce((n, c) => n + (measured[c.id] ?? 0), 0);
-    return sum || 100;
-  }
-
+  /** Measure the body's settled column widths, then pin the header to them. */
   function syncHeaderWidths() {
     if (!bodyTable) return;
     const row = Array.from(bodyTable.querySelectorAll("tbody tr")).find(
       (r) => (r as HTMLTableRowElement).cells.length === columns.length,
     ) as HTMLTableRowElement | undefined;
     if (!row) return;
+    const total = Math.round(bodyTable.getBoundingClientRect().width);
     const next: Record<string, number> = {};
+    let sum = 0;
     Array.from(row.cells).forEach((cell, i) => {
       const col = columns[i];
-      if (col) next[col.id] = Math.round(cell.getBoundingClientRect().width);
+      if (!col) return;
+      const w = Math.round(cell.getBoundingClientRect().width);
+      next[col.id] = w;
+      sum += w;
     });
-    if (Object.keys(next).length === columns.length) measured = next;
+    if (Object.keys(next).length !== columns.length) return;
+    // Absorb rounding/scrollbar drift into the last column so the colgroup sums
+    // to exactly the table width; otherwise fixed layout redistributes it.
+    const last = columns[columns.length - 1];
+    if (last && total > sum) next[last.id] += total - sum;
+    measured = next;
+    bodyWidth = total;
   }
 
   /** Keep the fixed header aligned while the body scrolls sideways. */
@@ -142,7 +152,7 @@
     <!-- Header sits OUTSIDE the scroller: no sticky needed, and an overlay
          scrollbar can never paint over it. -->
     <div bind:this={headerWrap} class="shrink-0 overflow-hidden bg-card">
-      <table aria-hidden="true" class="caption-bottom text-sm" style="width: {headerTotal()}px">
+      <table aria-hidden="true" class="table-fixed caption-bottom text-sm" style="width: {bodyWidth ?? 100}px">
         <colgroup>
           {#each columns as col}
             <col style="width: {measured[col.id] ?? 'auto'};" />
@@ -222,7 +232,7 @@
     <table bind:this={bodyTable} class="w-full caption-bottom text-sm">
       <colgroup>
         {#each columns as col}
-          <col style="width: {colWidths[col.id] ?? measured[col.id] ?? 'auto'};" />
+          <col style="width: {colWidths[col.id] ?? 'auto'};" />
         {/each}
       </colgroup>
       <Table.Body>
