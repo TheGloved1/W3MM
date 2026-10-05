@@ -1933,37 +1933,21 @@ fn install_roots(
         };
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let stage = staging.join(&id);
-        // remap each planned move through the dialog's root table
-        let mut remapped: Vec<(String, String)> = vec![];
-        for (src, rel) in &plan.moves {
-            let mut parts = rel.split('/');
-            let first = parts.next().unwrap_or("").to_lowercase();
-            let mapped = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
-                let folder = parts.next().unwrap_or("").to_string();
-                let kind = match first.as_str() {
-                    "dlc" => "DLC",
-                    "bin" => "Bin",
-                    "content" => "Content",
-                    _ => "Mod",
-                };
-                let row = roots.iter().find(|r| r.kind == kind && r.folder == folder);
-                match row {
-                    Some(r) if !r.folder.is_empty() => {
-                        let rest: Vec<&str> = rel.split('/').skip(2).collect();
-                        format!("{}/{}/{}", kind_dir(&r.kind), r.folder, rest.join("/"))
-                    }
-                    _ => rel.clone(),
-                }
-            } else {
-                let row = roots.iter().find(|r| r.folder.is_empty() || r.prefix.is_empty());
-                match row {
-                    Some(r) if !r.folder.is_empty() => format!("{}/{rel}", kind_dir(&r.kind)),
-                    Some(r) => format!("{}/{}", kind_dir(&r.kind), state::folder_safe(&name)),
-                    None => format!("mods/{}/{}", state::folder_safe(&name), rel),
-                }
-            };
-            remapped.push((src.clone(), mapped));
-        }
+        // Remap each planned move through the dialog's root table (pure fn,
+        // unit-tested in install.rs).
+        let choices: Vec<install::RootChoice> = roots
+            .iter()
+            .map(|r| install::RootChoice {
+                kind: r.kind.clone(),
+                folder: r.folder.clone(),
+                prefix: r.prefix.clone(),
+            })
+            .collect();
+        let remapped: Vec<(String, String)> = plan
+            .moves
+            .iter()
+            .map(|(src, rel)| (src.clone(), install::remap_target(rel, &choices, &name)))
+            .collect();
         let sub = install::InstallPlan { moves: remapped, docs: plan.docs.clone() };
         let folder = state::ensure_mod_prefix(&name);
         crate::log_line("rust", &format!("install_roots: building staging for '{}' with {} moves into '{}'", name, sub.moves.len(), stage.display()));
@@ -2021,15 +2005,6 @@ fn install_roots(
     })();
     let _ = std::fs::remove_dir_all(&tmp);
     res
-}
-
-fn kind_dir(kind: &str) -> &'static str {
-    match kind {
-        "DLC" => "dlc",
-        "Bin" => "bin",
-        "Content" => "content",
-        _ => "mods",
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

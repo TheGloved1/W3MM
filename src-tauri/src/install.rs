@@ -148,6 +148,83 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
     InstallPlan { moves, docs }
 }
 
+/// A row of the Install window's archive-contents table: one archive root the
+/// user can re-kind or re-folder before installing.
+#[derive(Debug, Clone)]
+pub struct RootChoice {
+    pub kind: String,
+    pub folder: String,
+    pub prefix: String,
+}
+
+fn kind_dir(kind: &str) -> &'static str {
+    match kind {
+        "DLC" => "dlc",
+        "Bin" => "bin",
+        "Content" => "content",
+        _ => "mods",
+    }
+}
+
+/// Resolve the staging rel for one planned file through the dialog's root
+/// table.
+///
+/// The user's Type/folder edits must win: the row is matched on the kind the
+/// rel implies first, then on folder alone (editing Type changes that implied
+/// kind). Picking a game dir instead of Mod strips the mod's own folder —
+/// `mods/modFoo/content/x` as Content becomes `content/x`, not the inert
+/// `content/modFoo/x`.
+pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String {
+    let mut parts = rel.split('/');
+    let first = parts.next().unwrap_or("").to_lowercase();
+    if !["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
+        // Bare file(s) with no game dir: the catch-all row owns them.
+        let row = roots.iter().find(|r| r.folder.is_empty() || r.prefix.is_empty());
+        return match row {
+            Some(r) if !r.folder.is_empty() => format!("{}/{rel}", kind_dir(&r.kind)),
+            Some(r) => format!("{}/{}/{}", kind_dir(&r.kind), crate::state::folder_safe(mod_folder), rel),
+            None => format!("mods/{}/{}", crate::state::folder_safe(mod_folder), rel),
+        };
+    }
+    let folder = parts.next().unwrap_or("").to_string();
+    let implied = match first.as_str() {
+        "dlc" => "DLC",
+        "bin" => "Bin",
+        "content" => "Content",
+        _ => "Mod",
+    };
+    // Identify the row by its *source* group (prefix, which the dialog carries
+    // through untouched) so editing Type or folder name still maps the right
+    // files. Fall back to the original kind+folder pairing.
+    let src_prefix = format!("{first}/{folder}");
+    let row = roots
+        .iter()
+        .find(|r| r.prefix == src_prefix)
+        .or_else(|| roots.iter().find(|r| r.kind == implied && r.folder == folder));
+    let Some(row) = row else {
+        return rel.to_string();
+    };
+    if row.folder.is_empty() {
+        return rel.to_string();
+    }
+    let mut rest: Vec<&str> = rel.split('/').skip(2).collect();
+    let dir = kind_dir(&row.kind);
+    if row.kind != "Mod" {
+        // Game dir target: neither the mod's own folder nor its inner
+        // content//bin/ wrapper means anything there — keeping them would
+        // produce content/modFoo/content/x.ws, which nothing loads.
+        if rest
+            .first()
+            .map(|s| ["mods", "dlc", "bin", "content"].contains(&s.to_lowercase().as_str()))
+            .unwrap_or(false)
+        {
+            rest.remove(0);
+        }
+        return format!("{dir}/{}", rest.join("/"));
+    }
+    format!("{dir}/{}/{}", row.folder, rest.join("/"))
+}
+
 /// Copy plan sources into `staging/<id>/`, wrapping bare files under `mods/<mod>/`.
 /// Returns target rels for state + doc rels.
 pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Result<(Vec<String>, Vec<String>), String> {
@@ -197,6 +274,80 @@ pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dialog row: `kind`/`folder` are the user's (editable) outputs,
+    /// `prefix` is the untouched source group the files come from.
+    fn choice(kind: &str, folder: &str, prefix: &str) -> RootChoice {
+        RootChoice {
+            kind: kind.to_string(),
+            folder: folder.to_string(),
+            prefix: prefix.to_string(),
+        }
+    }
+    const AXII: &str = "mods/modAxiiDelusion";
+
+    #[test]
+    fn remap_default_mod_keeps_folder() {
+        let roots = [choice("Mod", "modAxiiDelusion", AXII)];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/content/x.ws", &roots, "Axii Delusion"),
+            "mods/modAxiiDelusion/content/x.ws"
+        );
+    }
+
+    #[test]
+    fn remap_content_kind_targets_game_content_dir() {
+        // User picked Content: files go straight to the game's content/,
+        // without the mod folder layer.
+        let roots = [choice("Content", "modAxiiDelusion", AXII)];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/content/x.ws", &roots, "Axii Delusion"),
+            "content/x.ws"
+        );
+    }
+
+    #[test]
+    fn remap_bin_kind_targets_game_bin_dir() {
+        let roots = [choice("Bin", "modAxiiDelusion", AXII)];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/bin/a.dll", &roots, "Axii Delusion"),
+            "bin/a.dll"
+        );
+    }
+
+    #[test]
+    fn remap_dlc_keeps_its_folder() {
+        // dlc/ dirs are named in the game, so the folder stays.
+        let roots = [choice("DLC", "dlcFoo", "mods/modFoo")];
+        assert_eq!(
+            remap_target("mods/modFoo/dlc/dlcFoo/x.bin", &roots, "Foo"),
+            "dlc/dlcFoo/x.bin"
+        );
+    }
+
+    #[test]
+    fn remap_top_level_content_drop_untouched() {
+        let roots = [choice("Content", "", "content/x.ws")];
+        assert_eq!(remap_target("content/x.ws", &roots, "Loose"), "content/x.ws");
+    }
+
+    #[test]
+    fn remap_honours_edited_folder_name() {
+        let roots = [choice("Mod", "renamed", AXII)];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/content/x.ws", &roots, "Axii"),
+            "mods/renamed/content/x.ws"
+        );
+    }
+
+    #[test]
+    fn remap_unmatched_root_leaves_rel_alone() {
+        let roots = [choice("Mod", "someOtherMod", "mods/somethingElse")];
+        assert_eq!(
+            remap_target("mods/modAxiiDelusion/content/x.ws", &roots, "Axii"),
+            "mods/modAxiiDelusion/content/x.ws"
+        );
+    }
 
     fn tmpdir(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("w3mm-test-{tag}-{}", std::process::id()));
