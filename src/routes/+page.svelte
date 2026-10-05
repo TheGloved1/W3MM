@@ -1968,7 +1968,7 @@
 
   {#if dlOpen}
     <div
-      class="flex w-[330px] max-w-[80vw] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[#363e48] bg-[#232930] px-4 py-[18px]"
+      class="flex w-[400px] max-w-[80vw] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[#363e48] bg-[#232930] px-4 py-[18px]"
     >
       <div class="flex items-start gap-1.5">
         <div class="flex-1 leading-tight">
@@ -2037,7 +2037,7 @@
           {#if !collapsed}
             <div
               class={nested
-                ? "mt-3 flex flex-col gap-2 pl-[26px]"
+                ? "mt-3 flex flex-col gap-2 pl-4"
                 : "mt-3 flex flex-col gap-2"}
             >
               {#each rows as qq}
@@ -2057,7 +2057,7 @@
                       : action}
                 <div
                   class={nested
-                    ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-[10px_12px]"
+                    ? "rounded-[6px] border border-[#363e48] bg-[#232930] p-2.5"
                     : ""}
                 >
                   {#if nested}
