@@ -112,7 +112,7 @@ fn version_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String
     V.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-const VERSION_TTL_SECS: i64 = 3600;
+const VERSION_TTL_SECS: i64 = 86400;
 
 /// Fresh-enough cached remote version, if any.
 pub fn cached_remote(mod_id: &str) -> Option<String> {
@@ -127,6 +127,33 @@ pub fn cached_remote(mod_id: &str) -> Option<String> {
 pub fn store_remote(mod_id: &str, version: &str) {
     if let Ok(mut cache) = version_cache().lock() {
         cache.insert(mod_id.to_string(), (version.to_string(), chrono::Utc::now().timestamp()));
+    }
+}
+
+fn cache_path_for(game_dir: &std::path::Path) -> std::path::PathBuf {
+    game_dir
+        .join(crate::home::MANAGER_DIRNAME)
+        .join("version-cache.json")
+}
+
+/// Persisted across restarts: `{ mod_id: [version, unix_ts] }`.
+pub fn load_version_cache(game_dir: &std::path::Path) {
+    let data = std::fs::read_to_string(cache_path_for(game_dir)).unwrap_or_default();
+    if data.is_empty() {
+        return;
+    }
+    if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, (String, i64)>>(&data) {
+        if let Ok(mut cache) = version_cache().lock() {
+            *cache = map;
+        }
+    }
+}
+
+pub fn save_version_cache(game_dir: &std::path::Path) {
+    if let Ok(cache) = version_cache().lock() {
+        if let Ok(s) = serde_json::to_string(&*cache) {
+            let _ = std::fs::write(cache_path_for(game_dir), s);
+        }
     }
 }
 

@@ -100,6 +100,7 @@ fn lock_shared<'a>(shared: &'a State<Shared>, ctx: &str) -> Result<std::sync::Mu
 #[tauri::command]
 fn open_manager(shared: State<Shared>, game_dir: String, prefix: String) -> Result<bool, String> {
     let m = Manager::open(&game_dir, &prefix)?;
+    crate::nexus::load_version_cache(std::path::Path::new(&game_dir));
     *lock_shared(&shared, "open_manager")? = Some(m);
     Ok(true)
 }
@@ -550,12 +551,12 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
     if api_key.trim().is_empty() {
         return Err("Set a Nexus API key first".into());
     }
-    let mods: Vec<state::ModRow> = {
+    let (mods, game_dir): (Vec<state::ModRow>, std::path::PathBuf) = {
         let g = lock_shared(&shared, "check_updates")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let v: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
-        v
+        (v, m.home.game.clone())
     };
     // Scoped re-checks (single mod / selection) only scan the given ids.
     let wanted = ids.unwrap_or_default();
@@ -602,6 +603,7 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, 
             let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
         }
         let _ = app.emit("updates-done", serde_json::json!({ "hits": hits, "ids": wanted, "partial": scoped }));
+        crate::nexus::save_version_cache(&game_dir);
     });
     Ok(())
 }
