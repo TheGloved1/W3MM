@@ -138,9 +138,9 @@ function resolveNextVersion(current: string, bump: string, betaModifier: boolean
 // Changelog generation
 // ---------------------------------------------------------------------------
 
-function generateChangelog(next: string, baseTag?: string): { changelogEntry: string; releaseEntry: string } {
+function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { changelogEntry: string; releaseEntry: string } {
   let rangeStart = baseTag;
-  if (rangeStart === undefined) {
+  if (rangeStart === undefined && endTag === 'HEAD') {
     try {
       rangeStart = execSync('git tag --list "v*" --sort=-creatordate', { encoding: 'utf-8' }).trim().split('\n')[0] ?? '';
     } catch {
@@ -148,10 +148,13 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
     }
   }
 
-  const range = rangeStart ? `${rangeStart}..HEAD` : 'HEAD';
+  const range = rangeStart ? `${rangeStart}..${endTag}` : endTag;
 
   const log = execSync(`git log ${range} --pretty=format:"%s%n" --reverse`, { encoding: 'utf-8' });
-  const lines = log.split('\n').filter(Boolean);
+  // Release commits ("chore: release vX") belong to the tagging process,
+  // not the release content — post-tag regeneration would otherwise list
+  // every version under its own Other section.
+  const lines = log.split('\n').filter(Boolean).filter((l) => !/^chore:\s*release\s+v/i.test(l));
 
   interface ScopedEntry {
     scope: string | null;
@@ -227,7 +230,8 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
   const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
   // Render one section: unscoped bullets first, then single-entry scopes
-  // inline, then duplicate scopes grouped under `#### Scope` headers.
+  // inline (`- **scope**: ```msg```), then duplicate scopes as a labeled
+  // fenced block (`- scope:` + ``` list ```).
   function renderSection(entries: ScopedEntry[]): string {
     // Dedupe messages within each scope (plus the unscoped bucket) so
     // identical messages under different scopes don't eat each other.
@@ -249,17 +253,19 @@ function generateChangelog(next: string, baseTag?: string): { changelogEntry: st
     // 2. Single-entry scopes stay inline.
     for (const [scope, msgs] of deduped) {
       if (scope !== null && msgs.length === 1) {
-        lines.push(`- **${scope}**: ${msgs[0]}`);
+        lines.push(`- **${scope}**: \`\`\`${msgs[0]}\`\`\``);
       }
     }
-    // 3. Duplicate scopes grouped under subheaders.
+    // 3. Duplicate scopes grouped as a fenced block.
     for (const [scope, msgs] of deduped) {
       if (scope !== null && msgs.length > 1) {
         if (lines.length) lines.push('');
-        lines.push(`#### - ${capitalize(scope)}`);
+        lines.push(`- ${scope}:`);
+        lines.push('```');
         for (const msg of msgs) {
           lines.push(`- ${msg}`);
         }
+        lines.push('```');
       }
     }
     return lines.join('\n');
@@ -431,6 +437,7 @@ Flags:
 Changelog preview:
   changelog                      Preview changelog for current version
   changelog patch                Preview changelog for next patch
+  rechangelog                    Regenerate all changelogs/ + CHANGELOG.md from tags
 
 Examples:
   ./scripts/release.ts patch              # 25.05.3 -> 25.05.4
@@ -451,6 +458,66 @@ Examples:
 // Main
 // ---------------------------------------------------------------------------
 
+async function rechangelog(dryRun = false) {
+  const tags = execSync('git tag --list "v*" --sort=creatordate', { encoding: 'utf-8' })
+    .trim()
+    .split('\n')
+    .filter((t) => /^v\d{2}\.\d{1,2}\.\d+(-beta\.\d+)?$/.test(t));
+  if (!tags.length) fail('No version tags found.');
+
+  if (dryRun) {
+    console.log(`\n${YELLOW}DRY RUN${NC} — no changes will be made\n`);
+  }
+  console.log(`  tags    : ${tags.length} (${tags[0]}..${tags[tags.length - 1]})`);
+
+  // Preview the newest entry so a glance catches format regressions.
+  const newest = tags[tags.length - 1];
+  const newestVer = newest.replace(/^v/, '');
+  const { changelogEntry: preview } = generateChangelog(
+    newestVer,
+    tags.length > 1 ? tags[tags.length - 2] : undefined,
+    newest,
+  );
+  console.log(`\n${BLUE}=== Preview (${newest}) ===${NC}\n`);
+  console.log(preview);
+
+  if (!dryRun) {
+    const looksGood = await ask('\nRegenerate all per-version changelogs + CHANGELOG.md? (Y/n) ');
+    if (checkYesOrNo(looksGood)) {
+      console.log('Aborted.');
+      process.exit(0);
+    }
+  }
+
+  const built: { tag: string; ver: string; date: string; body: string }[] = [];
+  let prev = '';
+  for (const tag of tags) {
+    const ver = tag.replace(/^v/, '');
+    const date =
+      execSync(`git log -1 --format=%cs ${tag}`, { encoding: 'utf-8' }).trim() ||
+      new Date().toISOString().slice(0, 10);
+    const { releaseEntry } = generateChangelog(ver, prev || undefined, tag);
+    built.push({ tag, ver, date, body: releaseEntry });
+    if (!dryRun) {
+      if (!existsSync('changelogs')) mkdirSync('changelogs', { recursive: true });
+      writeFileSync(`changelogs/${tag}.md`, releaseEntry);
+    }
+    prev = tag;
+  }
+
+  if (!dryRun) {
+    const current = readFileSync('CHANGELOG.md', 'utf-8');
+    const marker = '\n## [';
+    const idx = current.indexOf(marker);
+    const preamble = (idx === -1 ? current : current.slice(0, idx)).trimEnd();
+    const entries = [...built]
+      .reverse()
+      .map((b) => `## [${b.ver}] - ${b.date}\n\n${b.body}`);
+    writeFileSync('CHANGELOG.md', `${preamble}\n\n${entries.join('\n\n')}\n`);
+  }
+  ok(dryRun ? 'Preview only — nothing written' : `Rewrote ${built.length} changelogs + CHANGELOG.md`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -465,6 +532,13 @@ async function main() {
   if (args.includes('--undo')) {
     const dryRun = args.includes('--dry-run');
     await undoRelease(dryRun);
+    rl.close();
+    process.exit(0);
+  }
+
+  // Regenerate every per-version changelog + CHANGELOG.md from tags
+  if (args[0] === 'rechangelog') {
+    await rechangelog(args.includes('--dry-run'));
     rl.close();
     process.exit(0);
   }
