@@ -1067,12 +1067,51 @@ fn local_download_file(
     None
 }
 
-/// Resolve one installed mod to its newer Nexus file and queue it.
-/// Network runs on a worker thread — the command returns at once and the
-/// result arrives as `update-resolved`, so Update clicks never stall the UI.
-/// Payload: `{ id, premium, row_id, version, file_id }` (`row_id == ""` when
-/// current) or `{ id, error }`. The finished download then flows through
-/// the normal offer-install path (labeled Update via version verdict).
+/// Build the `update-resolved` payload for a target: a local file on disk
+/// wins, then premium direct-enqueue, else a bare file reference for the
+/// browser flow. Emits the event; never touches the network.
+fn emit_update_target(
+    app: &tauri::AppHandle,
+    id: &str,
+    prem: bool,
+    nexus: &str,
+    t: &crate::nexus::UpdateTarget,
+    hist: Option<&std::path::PathBuf>,
+) {
+    use tauri::Emitter;
+    if let Some(local) = local_download_file(hist, nexus, t) {
+        log_line("rust", &format!("update_mod: using local {} for {nexus}", t.file_name));
+        let _ = app.emit(
+            "update-resolved",
+            serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local }),
+        );
+        return;
+    }
+    if prem {
+        let row_id = downloads::enqueue_resolved(nexus, t);
+        if let Some(h) = hist {
+            downloads::save_history(h);
+        }
+        log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
+        let _ = app.emit(
+            "update-resolved",
+            serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id }),
+        );
+    } else {
+        let _ = app.emit(
+            "update-resolved",
+            serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id }),
+        );
+    }
+}
+
+/// Resolve one installed mod's update without ever blocking the caller:
+/// the command snapshots state, returns at once, and the result arrives as
+/// `update-resolved` (`{ id, premium, row_id?, file_id?, version?, local_path? }`,
+/// `row_id == ""` when current or superseded by `local_path`; `{ id, error }`
+/// on failure). Premium is resolved in-thread when unknown, so Update clicks
+/// never await network. The finished download flows through the normal
+/// offer-install path (labeled Update via version verdict).
 #[tauri::command]
 fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key: String, premium: Option<bool>) -> Result<bool, String> {
     // Snapshot everything the worker needs; only owned data crosses threads.
@@ -1099,119 +1138,35 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
     if let Some(prem) = premium {
         if let Some(t) = crate::nexus::cached_target(&nexus) {
             if crate::nexus::version_is_newer(&t.version, &version) {
-                use tauri::Emitter;
-                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
-                    let _ = app.emit(
-                        "update-resolved",
-                        serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local }),
-                    );
-                    return Ok(true);
-                }
-                let row_id = downloads::enqueue_resolved(&nexus, &t);
-                if let Some(h) = hist.as_ref() {
-                    downloads::save_history(h);
-                }
-                let _ = app.emit(
-                    "update-resolved",
-                    serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id }),
-                );
+                emit_update_target(&app, &id, prem, &nexus, &t, hist.as_ref());
                 return Ok(true);
             }
         }
     }
     std::thread::spawn(move || {
-        use tauri::Emitter;
         let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
         // Cached target avoids the files.json fetch; otherwise resolve live.
         let resolved = match crate::nexus::cached_target(&nexus) {
             Some(t) if crate::nexus::version_is_newer(&t.version, &version) => Ok(Some(t)),
             _ => crate::nexus::resolve_update(&nexus, &version, &api_key),
         };
-        let payload = match resolved {
-            Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
-            Ok(None) => serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }),
-            Ok(Some(t)) => {
-                crate::nexus::store_target(&nexus, &t);
-                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
-                    log_line("rust", &format!("update_mod: using local {} for {nexus}", t.file_name));
-                    serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local })
-                } else {
-                    let row_id = downloads::enqueue_resolved(&nexus, &t);
-                    if let Some(h) = hist.as_ref() {
-                        downloads::save_history(h);
-                    }
-                    log_line("rust", &format!("update_mod: queued {nexus} -> {} ({})", t.file_id, t.version));
-                    serde_json::json!({ "id": id, "premium": prem, "row_id": row_id, "version": t.version, "file_id": t.file_id })
-                }
-            }
-        };
-        let _ = app.emit("update-resolved", payload);
-    });
-    Ok(true)
-}
-
-/// Resolve a mod's latest newer file without enqueuing (free-account
-/// browser links). Same background pattern as `update_mod`: the result
-/// arrives as `update-resolved` with `{ id, premium, file_id, version }`.
-#[tauri::command]
-fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key: String, premium: Option<bool>) -> Result<bool, String> {
-    let (nexus, version, hist): (String, String, Option<std::path::PathBuf>) = {
-        let g = lock_shared(&shared, "resolve_mod_update")?;
-        let m = g.as_ref().ok_or("open a game folder first")?;
-        let s = m.state.lock().map_err(|e| e.to_string())?;
-        let row = s.get(&id).cloned().ok_or("unknown mod")?;
-        let nid = if row.nexus.trim().is_empty() {
-            crate::nexus::extract_nexus_id(&row.name)
-        } else {
-            row.nexus.clone()
-        };
-        if nid.is_empty() {
-            return Err("no Nexus ID on this mod — set one in Edit…".into());
-        }
-        let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
-        let _ = std::fs::create_dir_all(&dir);
-        let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
-        (nid, row.version.clone(), Some(hist))
-    };
-    log_line("rust", &format!("resolve_mod_update: resolving {nexus} (installed {version})"));
-    // Zero-network fast path for known free accounts with a cached target.
-    if premium == Some(false) {
-        if let Some(t) = crate::nexus::cached_target(&nexus) {
-            if crate::nexus::version_is_newer(&t.version, &version) {
+        match resolved {
+            Err(e) => {
                 use tauri::Emitter;
-                let mut payload = serde_json::json!({ "id": id, "premium": false, "file_id": t.file_id, "version": t.version });
-                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
-                    payload["local_path"] = serde_json::Value::String(local);
-                }
-                let _ = app.emit("update-resolved", payload);
-                return Ok(true);
+                let _ = app.emit("update-resolved", serde_json::json!({ "id": id, "premium": prem, "error": e }));
             }
-        }
-    }
-    std::thread::spawn(move || {
-        use tauri::Emitter;
-        let prem = premium.unwrap_or_else(|| crate::nexus::is_premium(&api_key));
-        let resolved = match crate::nexus::cached_target(&nexus) {
-            Some(t) if crate::nexus::version_is_newer(&t.version, &version) => Ok(Some(t)),
-            _ => crate::nexus::resolve_update(&nexus, &version, &api_key),
-        };
-        let payload = match resolved {
-            Err(e) => serde_json::json!({ "id": id, "premium": prem, "error": e }),
-            Ok(None) => serde_json::json!({ "id": id, "premium": prem, "file_id": "", "version": version }),
+            Ok(None) => {
+                use tauri::Emitter;
+                let _ = app.emit("update-resolved", serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }));
+            }
             Ok(Some(t)) => {
                 crate::nexus::store_target(&nexus, &t);
-                let mut payload = serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version });
-                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
-                    payload["local_path"] = serde_json::Value::String(local);
-                }
-                payload
+                emit_update_target(&app, &id, prem, &nexus, &t, hist.as_ref());
             }
-        };
-        let _ = app.emit("update-resolved", payload);
+        }
     });
     Ok(true)
 }
-
 
 /// Start (or resume) a queued download on a worker thread and return
 /// immediately — the UI never blocks on network (original NexusDownload
@@ -1915,7 +1870,6 @@ pub fn run() {
             queue_pause,
             queue_start,
             update_mod,
-            resolve_mod_update,
             downloads_history,
             downloads_dir_path,
             settings_dir_path,

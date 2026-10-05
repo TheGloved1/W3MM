@@ -667,15 +667,10 @@
     await checkForUpdates([...selectedIds]);
   }
 
-  async function updateSelected(premium?: boolean) {
+  async function updateSelected(premium?: boolean | null) {
     const targets = hits.filter((h) => selectedIds.has(h.id));
     if (!targets.length) return;
-    const cfg = await loadConfigNative().catch(() => null);
-    const isPrem =
-      premium ??
-      premiumCache ??
-      (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
-    premiumCache = isPrem;
+    const isPrem = premium ?? premiumCache;
     let i = 0;
     for (const h of targets) {
       i++;
@@ -738,12 +733,11 @@
   async function requestUpdate(id: string, premium: boolean | null): Promise<UpdateResolution> {
     const cfg = await loadConfigNative();
     if (!cfg.nexusKey) throw new Error("Set Nexus API key in Settings first");
-    const cmd = premium === false ? "resolve_mod_update" : "update_mod";
     return new Promise<UpdateResolution>((resolve) => {
       const arr = pendingUpdates.get(id) ?? [];
       arr.push(resolve);
       pendingUpdates.set(id, arr);
-      invoke(cmd, { id, apiKey: cfg.nexusKey, premium }).catch((e) => {
+      invoke("update_mod", { id, apiKey: cfg.nexusKey, premium }).catch((e) => {
         // Synchronous validation failure (unknown mod / no Nexus ID):
         // drop our waiter so a later retry isn't double-settled.
         const cur = (pendingUpdates.get(id) ?? []).filter((w) => w !== resolve);
@@ -817,25 +811,16 @@
     }
   }
 
-  async function updateMod(id: string, premium?: boolean) {
+  async function updateMod(id: string, premium?: boolean | null) {
     ctx = null;
     error = "";
     if (updatingIds.has(id)) return;
-    // Instant feedback before any network round-trip so the click never
-    // feels dead while Nexus resolves in the background.
+    // Instant feedback; the resolve (including the premium lookup when still
+    // unknown) happens on a worker thread, so this never awaits network.
     updatingIds = new Set([...updatingIds, id]);
     flash(`Resolving update for ${modById(id)?.name ?? "mod"}…`);
     try {
-      const cfg = await loadConfigNative();
-      if (!cfg.nexusKey) {
-        error = "Set Nexus API key in Settings first";
-        return;
-      }
-      // Cache the premium lookup per session: one fewer blocking round-trip
-      // on every Update click.
-      const isPrem =
-        premium ?? premiumCache ?? (premiumCache = await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
-      const p = await requestUpdate(id, isPrem);
+      const p = await requestUpdate(id, premium ?? premiumCache);
       await finishUpdate(p);
     } catch (e) {
       console.error(`[w3mm] update failed: ${String(e)}`);
@@ -848,16 +833,12 @@
   async function updateAll() {
     menuOpen = false;
     if (!hits.length) return;
-    const cfg = await loadConfigNative().catch(() => null);
-    const premium =
-      premiumCache ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
-    premiumCache = premium;
     const total = hits.length;
     let i = 0;
     for (const h of [...hits]) {
       i++;
       flash(`Updating ${i}/${total}: ${h.name}…`);
-      await updateMod(h.id, premium);
+      await updateMod(h.id, premiumCache);
     }
   }
 
