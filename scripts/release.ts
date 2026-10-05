@@ -164,6 +164,7 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
   const addedRaw: ScopedEntry[] = [];
   const fixedRaw: ScopedEntry[] = [];
   const changedRaw: ScopedEntry[] = [];
+  const choreRaw: ScopedEntry[] = [];
   const otherRaw: ScopedEntry[] = [];
 
   const pattern = /^(\w+)(\(.*?\))?!?:\s(.+)$/;
@@ -220,12 +221,12 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
         // outside this range) is listed once under its own type.
         const norm = normalize(`${inner.entry.scope ?? ''} ${inner.entry.msg}`);
         reverted.push(norm);
-        const stillThere = [addedRaw, fixedRaw, changedRaw, otherRaw].some((list) =>
+        const stillThere = [addedRaw, fixedRaw, changedRaw, choreRaw, otherRaw].some((list) =>
           list.some((e) => normalize(`${e.scope ?? ''} ${e.msg}`) === norm),
         );
         if (!stillThere) {
           const entry = { scope: inner.entry.scope, msg: `Revert: ${inner.entry.msg}` };
-          (inner.type === 'feat' ? addedRaw : inner.type === 'fix' ? fixedRaw : 'refactor,perf,style'.includes(inner.type) ? changedRaw : otherRaw).push(entry);
+          (inner.type === 'feat' ? addedRaw : inner.type === 'fix' ? fixedRaw : inner.type === 'chore' ? choreRaw : 'refactor,perf,style'.includes(inner.type) ? changedRaw : otherRaw).push(entry);
         }
         continue;
       }
@@ -245,6 +246,9 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
         case 'style':
           changedRaw.push(entry);
           break;
+        case 'chore':
+          choreRaw.push(entry);
+          break;
         default:
           otherRaw.push(entry);
           break;
@@ -257,7 +261,7 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
 
   // Cancel reverted commits: drop originals wherever they landed. (Lone
   // reverts were already filed above as `Revert: …` and don't match.)
-  for (const list of [addedRaw, fixedRaw, changedRaw, otherRaw]) {
+  for (const list of [addedRaw, fixedRaw, changedRaw, choreRaw, otherRaw]) {
     for (let i = list.length - 1; i >= 0; i--) {
       if (reverted.includes(normalize(`${list[i].scope ?? ''} ${list[i].msg}`))) {
         list.splice(i, 1);
@@ -312,12 +316,14 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
   const added = renderSection(addedRaw);
   const fixed = renderSection(fixedRaw);
   const changed = renderSection(changedRaw);
+  const chores = renderSection(choreRaw);
   const other = renderSection(otherRaw);
 
   let body = '';
   if (added) body += '\n\n## Added\n\n' + added;
   if (fixed) body += '\n\n## Fixed\n\n' + fixed;
   if (changed) body += '\n\n## Changed\n\n' + changed;
+  if (chores) body += '\n\n## Chores\n\n' + chores;
   if (other) body += '\n\n## Other\n\n' + other;
   if (!body) body = '\n\nMaintenance release.';
 
