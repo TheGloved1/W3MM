@@ -167,6 +167,17 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
   const otherRaw: ScopedEntry[] = [];
 
   const pattern = /^(\w+)(\(.*?\))?!?:\s(.+)$/;
+  const revertPattern = /^[Rr]evert\s+"(.+)"$/;
+
+  // `Revert "subject"` lines quote the reverted commit: parse the inner
+  // subject and cancel the pair so a commit and its revert don't both show.
+  const reverted: string[] = [];
+  function parseEntry(line: string): { type: string; entry: ScopedEntry } | null {
+    const m = line.match(pattern);
+    if (!m) return null;
+    const [, type, scope, msg] = m;
+    return { type, entry: { scope: scope ? scope.slice(1, -1) : null, msg } };
+  }
 
   // Collapse near-duplicate messages ("Update README" x4, "fix typo" vs
   // "Fix typo."): normalize case/punctuation/whitespace, then within each
@@ -201,10 +212,27 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
   }
 
   for (const line of lines) {
-    const m = line.match(pattern);
-    if (m) {
-      const [, type, scope, msg] = m;
-      const entry: ScopedEntry = { scope: scope ? scope.slice(1, -1) : null, msg };
+    const rm = line.match(revertPattern);
+    if (rm) {
+      const inner = parseEntry(rm[1]);
+      if (inner) {
+        // Cancel the original wherever it landed; a lone revert (target
+        // outside this range) is listed once under its own type.
+        const norm = normalize(`${inner.entry.scope ?? ''} ${inner.entry.msg}`);
+        reverted.push(norm);
+        const stillThere = [addedRaw, fixedRaw, changedRaw, otherRaw].some((list) =>
+          list.some((e) => normalize(`${e.scope ?? ''} ${e.msg}`) === norm),
+        );
+        if (!stillThere) {
+          const entry = { scope: inner.entry.scope, msg: `Revert: ${inner.entry.msg}` };
+          (inner.type === 'feat' ? addedRaw : inner.type === 'fix' ? fixedRaw : 'refactor,perf,style'.includes(inner.type) ? changedRaw : otherRaw).push(entry);
+        }
+        continue;
+      }
+    }
+    const parsed = parseEntry(line);
+    if (parsed) {
+      const { type, entry } = parsed;
       switch (type) {
         case 'feat':
           addedRaw.push(entry);
@@ -224,6 +252,16 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
     } else {
       // Non-conventional commit: treat as Other
       otherRaw.push({ scope: null, msg: line });
+    }
+  }
+
+  // Cancel reverted commits: drop originals wherever they landed. (Lone
+  // reverts were already filed above as `Revert: …` and don't match.)
+  for (const list of [addedRaw, fixedRaw, changedRaw, otherRaw]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (reverted.includes(normalize(`${list[i].scope ?? ''} ${list[i].msg}`))) {
+        list.splice(i, 1);
+      }
     }
   }
 
