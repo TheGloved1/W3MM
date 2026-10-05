@@ -1663,6 +1663,9 @@
     <!-- One cell renderer per column. Declared before <DataList> so the
          `columns` array below can reference them. -->
     {#snippet cellPriority({ item: m }: { item: ModRow })}
+      <!-- A disabled mod keeps its place in the order, so it still shows its
+           number — as static text, since editing it would reorder a mod that
+           isn't taking part in the load order. -->
       {#if m.enabled}
         <input
           type="number"
@@ -1676,7 +1679,13 @@
           style="-moz-appearance:textfield;-webkit-appearance:none;"
         />
       {:else}
-        <span class="text-muted-foreground/50">–</span>
+        <!-- Mirrors the input's box exactly (w-40 + px-1 + py-3), so the digit
+             sits at the same offset whether the mod is enabled or not and the
+             column doesn't shift when one is toggled. -->
+        <span
+          class="block w-[40px] px-1 py-[3px] text-left text-[13px] font-semibold text-muted-foreground/50"
+          >{prioOf(m.id)}</span
+        >
       {/if}
     {/snippet}
     {#snippet cellName({ item: m }: { item: ModRow })}
