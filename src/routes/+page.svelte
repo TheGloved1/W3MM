@@ -1252,7 +1252,6 @@
     let unlistenMeta: (() => void) | undefined;
     let unlistenM: (() => void) | undefined;
     let unlistenU: (() => void) | undefined;
-    let unlistenUP: (() => void) | undefined;
     (async () => {
       try {
         queue = await invoke<QueueItem[]>("queue_list").catch(() => []);
@@ -1325,13 +1324,6 @@
           await refresh();
           await deploy(true);
         });
-        unlistenUP = await listen<{ done: number; total: number }>(
-          "updates-progress",
-          (e) => {
-            if (e.payload.total > 0)
-              busy = `Checking Nexus… ${e.payload.done}/${e.payload.total}`;
-          },
-        );
         unlistenU = await listen<{
           hits: typeof hits;
           ids?: string[];
@@ -1404,7 +1396,6 @@
       unlistenMeta?.();
       unlistenM?.();
       unlistenU?.();
-      unlistenUP?.();
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);
     };
