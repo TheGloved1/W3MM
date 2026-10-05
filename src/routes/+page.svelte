@@ -6,6 +6,7 @@
   import { loadConfigNative } from "$lib/config";
   import DataList from "$lib/components/data-list.svelte";
   import Button from "$lib/components/button.svelte";
+  import SelectionToolbar from "$lib/components/selection-toolbar.svelte";
   import * as Table from "$lib/components/ui/table/index.js";
   import {
     ArrowUp,
@@ -52,7 +53,8 @@
   let filter: string = $state("");
   let menuOpen: boolean = $state(false);
   let collapsed: Record<string, boolean> = $state({});
-  let selected: string | null = $state(null);
+  let selectedIds: Set<string> = $state(new Set());
+  let lastSelected: string | null = $state(null);
   let ctx: { id: string; x: number; y: number } | null = $state(null);
   let sepCtx: { id: string; x: number; y: number } | null = $state(null);
   let hoverTip: { id: string; x: number; y: number } | null = $state(null);
@@ -410,7 +412,77 @@
     const m = modById(id);
     if (!m || !confirm(`Uninstall “${m.name}” and its staged files?`)) return;
     await invoke("remove_mods", { ids: [id] });
-    if (selected === id) selected = null;
+    const n = new Set(selectedIds);
+    n.delete(id);
+    selectedIds = n;
+    if (lastSelected === id) lastSelected = null;
+    await refresh();
+    await deploy(true);
+  }
+
+  function clearSelection() {
+    selectedIds = new Set();
+    lastSelected = null;
+  }
+
+  /** NMM-style multi-select: plain = single, Ctrl = toggle, Shift = range. */
+  function handleSelect(id: string, e: MouseEvent | KeyboardEvent) {
+    if (!appState) return;
+    const row = appState.mods.find((m) => m.id === id);
+    if (!row || row.sep) return;
+    const isCtrl = (e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey;
+    const isShift = (e as MouseEvent).shiftKey;
+    // Range uses visible mod order (separators skipped, like NMM slice).
+    const order = appState.mods.filter((m) => !m.sep).map((m) => m.id);
+    if (isShift && lastSelected && order.includes(lastSelected)) {
+      const s = order.indexOf(lastSelected);
+      const t = order.indexOf(id);
+      if (s !== -1 && t !== -1) {
+        const [a, b] = s < t ? [s, t] : [t, s];
+        selectedIds = new Set(order.slice(a, b + 1));
+        return;
+      }
+    }
+    if (isCtrl) {
+      const n = new Set(selectedIds);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      selectedIds = n;
+      lastSelected = n.has(id) ? id : n.size ? [...n][n.size - 1] : null;
+      return;
+    }
+    if (selectedIds.has(id) && selectedIds.size === 1) {
+      selectedIds = new Set();
+      lastSelected = null;
+      return;
+    }
+    selectedIds = new Set([id]);
+    lastSelected = id;
+  }
+
+  async function enableSelected() {
+    if (!selectedIds.size) return;
+    error = "";
+    await invoke("set_enabled", { ids: [...selectedIds], on: true });
+    await refresh();
+    await deploy(true);
+  }
+
+  async function disableSelected() {
+    if (!selectedIds.size) return;
+    error = "";
+    await invoke("set_enabled", { ids: [...selectedIds], on: false });
+    await refresh();
+    await deploy(true);
+  }
+
+  async function removeSelected() {
+    if (!selectedIds.size) return;
+    const names = [...selectedIds].map((id) => modById(id)?.name ?? id);
+    const preview = names.slice(0, 5).join(", ") + (names.length > 5 ? ` (+${names.length - 5} more)` : "");
+    if (!confirm(`Uninstall ${names.length} mod${names.length === 1 ? "" : "s"} (${preview}) and their staged files?`)) return;
+    await invoke("remove_mods", { ids: [...selectedIds] });
+    clearSelection();
     await refresh();
     await deploy(true);
   }
@@ -818,7 +890,12 @@
   function onRowContext(id: string, ev: MouseEvent) {
     ev.preventDefault();
     ev.stopPropagation();
-    selected = id;
+    // Right-clicking inside the current selection keeps it (bulk menu target);
+    // otherwise select just this row.
+    if (!selectedIds.has(id)) {
+      selectedIds = new Set([id]);
+      lastSelected = id;
+    }
     sepCtx = null;
     ctx = { id, x: ev.clientX, y: ev.clientY };
   }
@@ -1169,7 +1246,7 @@
           },
         );
         unlistenM = await listen("mods-changed", async () => {
-          selected = null;
+          clearSelection();
           await refresh();
           await deploy(true);
         });
@@ -1368,18 +1445,18 @@
         ]}
         items={appState ? appState.mods : []}
         keyOf={(m) => m.id}
-        isSelected={(m) => selected === m.id}
+        isSelected={(m) => selectedIds.has(m.id)}
         sortKey={null}
         sortDir="asc"
         onSelect={(m, e) => {
-          selected = m.id;
+          handleSelect(m.id, e);
         }}
         onContextMenu={(m, e) => {
           if (m.sep) onSepContext(m.id, e);
           else onRowContext(m.id, e);
         }}
         onBackgroundClear={() => {
-          selected = null;
+          clearSelection();
         }}
         onActivate={(m) => openEdit(m.id)}
         isDraggable={(m) => !m.sep && !filtering}
@@ -1506,6 +1583,14 @@
         {/snippet}
       </DataList>
     </div>
+
+    <SelectionToolbar
+      count={selectedIds.size}
+      onEnable={enableSelected}
+      onDisable={disableSelected}
+      onUninstall={removeSelected}
+      onClear={clearSelection}
+    />
 
     <div class="flex items-center gap-2">
       <span
