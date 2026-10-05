@@ -1077,7 +1077,7 @@
       chips.push({
         text: "",
         icon: ArrowUp,
-        tip: `Update on Nexus: ${h.local} → ${h.remote}`,
+        tip: `${h.local} → ${h.remote}`,
         cls: nw,
       });
     return chips;
