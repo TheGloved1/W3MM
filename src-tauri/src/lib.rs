@@ -546,7 +546,7 @@ pub struct UpdateHit {
 }
 
 #[tauri::command]
-fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String) -> Result<(), String> {
+fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String, ids: Option<Vec<String>>) -> Result<(), String> {
     if api_key.trim().is_empty() {
         return Err("Set a Nexus API key first".into());
     }
@@ -556,6 +556,14 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String) 
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let v: Vec<state::ModRow> = s.mods_only().into_iter().cloned().collect();
         v
+    };
+    // Scoped re-checks (single mod / selection) only scan the given ids.
+    let wanted = ids.unwrap_or_default();
+    let scoped = !wanted.is_empty();
+    let mods: Vec<state::ModRow> = if scoped {
+        mods.into_iter().filter(|m| wanted.contains(&m.id)).collect()
+    } else {
+        mods
     };
     // Network work happens on a worker thread; the command returns at once and
     // the list refreshes from events (same shape as the download queue).
@@ -582,7 +590,7 @@ fn check_updates(app: tauri::AppHandle, shared: State<Shared>, api_key: String) 
             }
             let _ = app.emit("updates-progress", serde_json::json!({"done": i + 1, "total": total}));
         }
-        let _ = app.emit("updates-done", serde_json::json!({ "hits": hits }));
+        let _ = app.emit("updates-done", serde_json::json!({ "hits": hits, "ids": wanted, "partial": scoped }));
     });
     Ok(())
 }

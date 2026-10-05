@@ -47,6 +47,7 @@
   let error: string = $state("");
   let status: string = $state("");
   let busy: string = $state("");
+  let checkingIds: Set<string> = $state(new Set());
   let gameDir: string = $state("");
   let prefix: string = $state("");
   let nexusKey: string = $state("");
@@ -585,23 +586,48 @@
 
   async function checkOne(id: string) {
     ctx = null;
-    busy = "Checking Nexus…";
+    error = "";
+    const m = modById(id);
+    checkingIds = new Set([...checkingIds, id]);
+    flash(`Checking ${m?.name ?? "mod"}…`);
     try {
       const cfg = await loadConfigNative();
-      const all = await invoke<typeof hits>("check_updates", {
-        apiKey: cfg.nexusKey,
-      });
-      hits = all;
-      const h = all.find((x) => x.id === id);
-      flash(
-        h
-          ? `Update available: ${h.local} → ${h.remote}`
-          : "No update for this mod.",
-      );
+      // Scoped: backend only scans this mod; the result arrives on
+      // `updates-done` (partial) and is merged into `hits` there.
+      await invoke("check_updates", { apiKey: cfg.nexusKey, ids: [id] });
     } catch (e) {
+      checkingIds = new Set([...checkingIds].filter((x) => x !== id));
       error = String(e);
     }
-    busy = "";
+  }
+
+  async function checkSelected() {
+    if (!selectedIds.size) return;
+    error = "";
+    const ids = [...selectedIds];
+    checkingIds = new Set([...checkingIds, ...ids]);
+    flash(`Checking ${ids.length} mod${ids.length === 1 ? "" : "s"}…`);
+    try {
+      const cfg = await loadConfigNative();
+      await invoke("check_updates", { apiKey: cfg.nexusKey, ids });
+    } catch (e) {
+      checkingIds = new Set([...checkingIds].filter((x) => !selectedIds.has(x)));
+      error = String(e);
+    }
+  }
+
+  async function updateSelected(premium?: boolean) {
+    const targets = hits.filter((h) => selectedIds.has(h.id));
+    if (!targets.length) return;
+    const cfg = await loadConfigNative().catch(() => null);
+    const isPrem =
+      premium ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
+    let i = 0;
+    for (const h of targets) {
+      i++;
+      flash(`Updating ${i}/${targets.length}: ${h.name}…`);
+      await updateMod(h.id, isPrem);
+    }
   }
 
   async function reinstall(id: string) {
@@ -1257,16 +1283,48 @@
               busy = `Checking Nexus… ${e.payload.done}/${e.payload.total}`;
           },
         );
-        unlistenU = await listen<{ hits: typeof hits }>(
+        unlistenU = await listen<{
+          hits: typeof hits;
+          ids?: string[];
+          partial?: boolean;
+        }>(
           "updates-done",
           async (e) => {
-            hits = e.payload.hits;
-            busy = "";
-            flash(
-              hits.length
-                ? `${hits.length} update${hits.length === 1 ? "" : "s"} available`
-                : "All tracked mods are current",
-            );
+            if (e.payload.partial && e.payload.ids) {
+              // Scoped re-check: merge these ids into the existing banner.
+              const fresh = new Map(e.payload.hits.map((h) => [h.id, h]));
+              const checked = new Set(e.payload.ids);
+              hits = [
+                ...hits.filter((h) => !checked.has(h.id)),
+                ...[...checked].filter((id) => fresh.has(id)).map((id) => fresh.get(id)!),
+              ];
+              checkingIds = new Set([...checkingIds].filter((id) => !checked.has(id)));
+              if (e.payload.ids.length === 1) {
+                const id = e.payload.ids[0];
+                const h = fresh.get(id);
+                const m = modById(id);
+                flash(
+                  h
+                    ? `Update available for ${m?.name ?? "mod"}: ${h.local} → ${h.remote}`
+                    : `No update for ${m?.name ?? "this mod"}.`,
+                );
+              } else {
+                const n = e.payload.hits.length;
+                flash(
+                  n
+                    ? `${n} update${n === 1 ? "" : "s"} found in selection`
+                    : "No updates in selection.",
+                );
+              }
+            } else {
+              hits = e.payload.hits;
+              busy = "";
+              flash(
+                hits.length
+                  ? `${hits.length} update${hits.length === 1 ? "" : "s"} available`
+                  : "All tracked mods are current",
+              );
+            }
             const [qt] = await invoke<[string, string, number]>("quota").catch(
               () => ["", "", 0] as [string, string, number],
             );
@@ -1429,6 +1487,13 @@
           class="shrink-0 rounded-[7px] bg-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#1c2127] hover:brightness-110"
           >Update all</button
         >
+        {#if hits.some((h) => selectedIds.has(h.id))}
+          <button
+            onclick={() => updateSelected()}
+            class="shrink-0 rounded-[7px] border border-[#b5d95a] px-3 py-1 text-sm font-semibold text-[#b5d95a] hover:bg-[#b5d95a]/10"
+            >Update selected ({hits.filter((h) => selectedIds.has(h.id)).length})</button
+          >
+        {/if}
       </div>
     {/if}
 
@@ -1590,6 +1655,8 @@
       onDisable={disableSelected}
       onUninstall={removeSelected}
       onClear={clearSelection}
+      onCheckUpdates={checkSelected}
+      checkingUpdates={[...selectedIds].some((id) => checkingIds.has(id))}
     />
 
     <div class="flex items-center gap-2">
