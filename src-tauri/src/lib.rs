@@ -1019,15 +1019,52 @@ fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
     downloads::items()
 }
 
-/// Update file already sitting in the downloads dir (exact filename match):
-/// install straight from it instead of redownloading.
-fn local_download_file(hist: Option<&std::path::PathBuf>, file_name: &str) -> Option<String> {
-    if file_name.is_empty() {
-        return None;
+/// Update file already sitting in the downloads dir: exact filename first,
+/// then the finished queue row for this Nexus file (covers renames), then any
+/// archive in the folder stamped with the same mod id + version (covers
+/// browser downloads saved under a different name). Install straight from it
+/// instead of redownloading.
+fn local_download_file(
+    hist: Option<&std::path::PathBuf>,
+    nexus: &str,
+    target: &crate::nexus::UpdateTarget,
+) -> Option<String> {
+    let dir = hist?.parent()?;
+    let hit = |name: &str| -> Option<String> {
+        if name.is_empty() {
+            return None;
+        }
+        let p = dir.join(name);
+        p.is_file().then(|| p.to_string_lossy().to_string())
+    };
+    // 1. Exact filename from the Nexus file entry.
+    if let Some(p) = hit(&target.file_name) {
+        return Some(p);
     }
-    hist.and_then(|h| h.parent().map(|d| d.join(file_name)))
-        .filter(|p| p.is_file())
-        .map(|p| p.to_string_lossy().to_string())
+    // 2. Whatever finished download row matches this mod + file.
+    if let Some(name) = crate::downloads::finished_filename(nexus, &target.file_id) {
+        if let Some(p) = hit(&name) {
+            return Some(p);
+        }
+    }
+    // 3. Any archive in the folder stamped for this mod + version.
+    let want_ver = crate::nexus::version_tuple(&target.version);
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let low = name.to_lowercase();
+            if !crate::archive::ARCHIVE_EXTS.iter().any(|ext| low.ends_with(ext)) {
+                continue;
+            }
+            let (_, ver, nid) = crate::nexus::parse_archive_name(&name);
+            if nid == nexus && !ver.is_empty() && crate::nexus::version_tuple(&ver) == want_ver {
+                if let Some(p) = hit(&name) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Resolve one installed mod to its newer Nexus file and queue it.
@@ -1063,7 +1100,7 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
         if let Some(t) = crate::nexus::cached_target(&nexus) {
             if crate::nexus::version_is_newer(&t.version, &version) {
                 use tauri::Emitter;
-                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
                     let _ = app.emit(
                         "update-resolved",
                         serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local }),
@@ -1095,7 +1132,7 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
             Ok(None) => serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": version }),
             Ok(Some(t)) => {
                 crate::nexus::store_target(&nexus, &t);
-                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
                     log_line("rust", &format!("update_mod: using local {} for {nexus}", t.file_name));
                     serde_json::json!({ "id": id, "premium": prem, "row_id": "", "version": t.version, "file_id": t.file_id, "local_path": local })
                 } else {
@@ -1143,7 +1180,7 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
             if crate::nexus::version_is_newer(&t.version, &version) {
                 use tauri::Emitter;
                 let mut payload = serde_json::json!({ "id": id, "premium": false, "file_id": t.file_id, "version": t.version });
-                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
                     payload["local_path"] = serde_json::Value::String(local);
                 }
                 let _ = app.emit("update-resolved", payload);
@@ -1164,7 +1201,7 @@ fn resolve_mod_update(app: tauri::AppHandle, shared: State<Shared>, id: String, 
             Ok(Some(t)) => {
                 crate::nexus::store_target(&nexus, &t);
                 let mut payload = serde_json::json!({ "id": id, "premium": prem, "file_id": t.file_id, "version": t.version });
-                if let Some(local) = local_download_file(hist.as_ref(), &t.file_name) {
+                if let Some(local) = local_download_file(hist.as_ref(), &nexus, &t) {
                     payload["local_path"] = serde_json::Value::String(local);
                 }
                 payload

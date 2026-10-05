@@ -136,6 +136,14 @@ pub fn enqueue_resolved(mod_id: &str, target: &crate::nexus::UpdateTarget) -> St
     id
 }
 
+/// Filename of a finished queue row for this exact Nexus file, if any.
+pub fn finished_filename(mod_id: &str, file_id: &str) -> Option<String> {
+    qlock()
+        .values()
+        .find(|i| i.mod_id == mod_id && i.file_id == file_id && i.status == "done" && !i.filename.is_empty())
+        .map(|i| i.filename.clone())
+}
+
 /// Claim a row for a worker thread. False when already running.
 pub fn try_begin(id: &str) -> bool {
     if let Some(it) = qlock().get_mut(id) {
