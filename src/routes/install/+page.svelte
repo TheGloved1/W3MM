@@ -71,14 +71,17 @@
     }
     busy = true; warn = '';
     try {
+      // Replacement installs are atomic in the backend: the replaced rows'
+      // list position (load order) is kept for the new row.
+      let replaceIds: string[] = [];
       if (replace && collisions.length) {
         const st = await invoke<{ mods: { id: string }[] }>('list_mods');
-        const ids = st.mods.filter((m) => collisions.includes(m.id)).map((m) => m.id);
-        if (ids.length) await invoke('remove_mods', { ids });
+        replaceIds = st.mods.filter((m) => collisions.includes(m.id)).map((m) => m.id);
       }
       await invoke<string>('install_roots', {
         path: archPath, name: name.trim(), version, nexusId: nexus, section,
         roots: roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
+        replaceIds,
       });
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});

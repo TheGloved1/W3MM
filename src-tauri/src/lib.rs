@@ -1506,6 +1506,10 @@ fn install_preview(path: String) -> Result<InstallPreview, String> {
 }
 
 /// Install with per-root kind/folder mapping from the dialog's table.
+/// When `replace_ids` is non-empty the replaced rows are removed and the new
+/// row takes the first replaced row's list position (and section, unless the
+/// dialog picked one), so updates/reinstalls keep their load-order spot
+/// instead of dropping to the end of the list.
 #[tauri::command]
 fn install_roots(
     shared: State<Shared>,
@@ -1515,6 +1519,7 @@ fn install_roots(
     nexus_id: String,
     section: String,
     roots: Vec<PlanRoot>,
+    replace_ids: Vec<String>,
 ) -> Result<String, String> {
     let tmp = std::env::temp_dir().join(format!("w3mm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -1575,6 +1580,14 @@ fn install_roots(
             crate::log_line("rust", &format!("install_roots: planned move src='{}' -> rel='{}'", src, rel));
         }
         let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
+        // Replacement installs clean the old staged folders lock-free first
+        // (same pattern as remove_mods), then swap rows atomically below.
+        for rid in &replace_ids {
+            let dir = staging.join(rid);
+            if dir.is_dir() {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
         {
             let g = lock_shared(&shared, "install_roots")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
@@ -1582,12 +1595,32 @@ fn install_roots(
             // same non-reentrant mutex and would deadlock this thread forever.
             {
                 let mut s = m.state.lock().map_err(|e| e.to_string())?;
-                s.mods.push(state::ModRow {
+                // Replacement installs (update / reinstall / replace) keep
+                // the first replaced row's position so load order survives.
+                let at = replace_ids.iter()
+                    .filter_map(|rid| s.mods.iter().position(|r| r.id == *rid && !r.sep))
+                    .min();
+                let keep_section = at
+                    .and_then(|i| s.mods.get(i))
+                    .map(|r| r.section.clone())
+                    .unwrap_or_default();
+                if !replace_ids.is_empty() {
+                    s.remove_rows(&replace_ids);
+                }
+                let row_section = if section.is_empty() { keep_section } else { section.clone() };
+                let row = state::ModRow {
                     id: id.clone(), sep: false, name: name.clone(), enabled: true,
                     version: version.clone(), nexus: nexus_id.clone(), archive: path.clone(),
-                    section: section.clone(), updated: chrono::Utc::now().timestamp(),
+                    section: row_section, updated: chrono::Utc::now().timestamp(),
                     collapsed: false, targets: targets.clone(), nexus_cat: String::new(), main_of: String::new(),
-                });
+                };
+                match at {
+                    Some(i) => {
+                        let len = s.mods.len();
+                        s.mods.insert(i.min(len), row);
+                    }
+                    None => s.mods.push(row),
+                }
                 s.priority_ids();
             }
             m.save()?;

@@ -330,6 +330,15 @@
   async function refresh() {
     console.debug(`[w3mm] refresh: start`);
     appState = await invoke<AppState>("list_mods");
+    // Drop selections for rows that no longer exist (uninstall / replace).
+    if (selectedIds.size && appState) {
+      const live = new Set(appState.mods.map((m) => m.id));
+      const kept = new Set([...selectedIds].filter((id) => live.has(id)));
+      if (kept.size !== selectedIds.size) {
+        selectedIds = kept;
+        if (lastSelected && !kept.has(lastSelected)) lastSelected = null;
+      }
+    }
     queue = await invoke<QueueItem[]>("downloads_history").catch(() => queue);
     clashMap = await invoke<Record<string, string[]>>("clashes").catch(
       () => ({}),
@@ -356,7 +365,27 @@
     );
     void qtip;
     quotaText = qt;
+    pruneHits();
     console.debug(`[w3mm] refresh: done`);
+  }
+
+  /** Drop update hits that no longer apply after install/change/update:
+   *  mod gone, or installed version caught up to the remote version. */
+  function pruneHits() {
+    if (!hits.length || !appState) return;
+    const before = hits.length;
+    hits = hits.filter((h) => {
+      const m = appState!.mods.find((x) => x.id === h.id && !x.sep);
+      if (!m) return false;
+      return verVerdict(h.remote, m.version) === "newer";
+    });
+    if (hits.length !== before) {
+      flash(
+        hits.length
+          ? `${hits.length} update${hits.length === 1 ? "" : "s"} available`
+          : "All tracked mods are current",
+      );
+    }
   }
 
   function flash(msg: string) {
