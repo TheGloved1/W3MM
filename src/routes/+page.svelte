@@ -1988,21 +1988,8 @@
         {@const rows = group.rows}
         {@const nested = rows.length > 1}
         {@const collapsed =
-          // Deterministic on startup: only groups needing attention start
-          // expanded (in-progress, failed, or awaiting retry). Finished rows
-          // — installed or not — start collapsed; updates surface via the
-          // banner and list chips instead.
           dlCollapsed[group.key] ??
-          !rows.some(
-            (r) =>
-              r.status === "active" ||
-              r.status === "starting" ||
-              r.status === "queued" ||
-              r.status === "paused" ||
-              r.status === "error" ||
-              r.status === "failed" ||
-              r.status === "cancelled",
-          )}
+          rows.every((r) => r.status === "done" && dlSameFile(r))}
         {@const single = rows.length === 1 ? rows[0] : null}
         {@const running = rows.some(
           (r) =>
