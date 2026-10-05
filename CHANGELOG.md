@@ -1,3 +1,14 @@
+# [26.10.11] - 2026-10-05
+
+## Fixed
+
+- install:
+```
+- honor edited root kind and route game dirs to the game folder
+- live file preview and folder-free rows for game dir kinds
+- derive dialog row prefix from path so kind edits apply
+```
+
 # [26.10.10] - 2026-10-05
 
 ## Fixed
