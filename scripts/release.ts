@@ -507,9 +507,9 @@ async function rechangelog(dryRun = false) {
 
   if (!dryRun) {
     const current = readFileSync('CHANGELOG.md', 'utf-8');
-    const marker = '\n# [';
-    const idx = current.indexOf(marker);
-    const preamble = (idx === -1 ? current : current.slice(0, idx)).trimEnd();
+    // Match `# [` or legacy `## [` version headers.
+    const at = current.search(/^#{1,2} \[/m);
+    const preamble = (at === -1 ? current : current.slice(0, at)).trimEnd();
     const entries = [...built]
       .reverse()
       .map((b) => `# [${b.ver}] - ${b.date}\n\n${b.body}`);
@@ -741,12 +741,12 @@ async function main() {
         if (changelog.startsWith('# [')) {
           writeFileSync(changelogPath, changelogEntry + '\n\n' + changelog);
         } else {
-          const marker = '\n# [';
-          const idx = changelog.indexOf(marker);
-          if (idx !== -1) {
-            const before = changelog.slice(0, idx);
-            const after = changelog.slice(idx);
-            writeFileSync(changelogPath, before + '\n\n' + changelogEntry + '\n' + after);
+          // Match `# [` or legacy `## [` version headers.
+          const at = changelog.search(/^#{1,2} \[/m);
+          if (at !== -1) {
+            const before = changelog.slice(0, at);
+            const after = changelog.slice(at);
+            writeFileSync(changelogPath, before.trimEnd() + '\n\n' + changelogEntry + '\n\n' + after);
           } else {
             writeFileSync(changelogPath, changelog.trimEnd() + '\n\n' + changelogEntry + '\n');
           }
