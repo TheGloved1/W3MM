@@ -284,7 +284,7 @@ function generateChangelog(next: string, baseTag?: string, endTag = 'HEAD'): { c
   if (!body) body = '\n\nMaintenance release.';
 
   const today = new Date().toISOString().slice(0, 10);
-  const changelogEntry = `## [${next}] - ${today}${body}`;
+  const changelogEntry = `# [${next}] - ${today}${body}`;
   const releaseEntry = body.trimStart();
 
   return { changelogEntry, releaseEntry };
@@ -507,12 +507,12 @@ async function rechangelog(dryRun = false) {
 
   if (!dryRun) {
     const current = readFileSync('CHANGELOG.md', 'utf-8');
-    const marker = '\n## [';
+    const marker = '\n# [';
     const idx = current.indexOf(marker);
     const preamble = (idx === -1 ? current : current.slice(0, idx)).trimEnd();
     const entries = [...built]
       .reverse()
-      .map((b) => `## [${b.ver}] - ${b.date}\n\n${b.body}`);
+      .map((b) => `# [${b.ver}] - ${b.date}\n\n${b.body}`);
     writeFileSync('CHANGELOG.md', `${preamble}\n\n${entries.join('\n\n')}\n`);
   }
   ok(dryRun ? 'Preview only — nothing written' : `Rewrote ${built.length} changelogs + CHANGELOG.md`);
@@ -738,10 +738,10 @@ async function main() {
       const changelogPath = 'CHANGELOG.md';
       if (existsSync(changelogPath)) {
         const changelog = readFileSync(changelogPath, 'utf-8');
-        if (changelog.startsWith('## [')) {
+        if (changelog.startsWith('# [')) {
           writeFileSync(changelogPath, changelogEntry + '\n\n' + changelog);
         } else {
-          const marker = '\n## [';
+          const marker = '\n# [';
           const idx = changelog.indexOf(marker);
           if (idx !== -1) {
             const before = changelog.slice(0, idx);
