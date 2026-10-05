@@ -48,6 +48,8 @@
   let status: string = $state("");
   let busy: string = $state("");
   let checkingIds: Set<string> = $state(new Set());
+  let updatingIds: Set<string> = $state(new Set());
+  let premiumCache: boolean | null = $state(null);
   let gameDir: string = $state("");
   let prefix: string = $state("");
   let nexusKey: string = $state("");
@@ -621,7 +623,10 @@
     if (!targets.length) return;
     const cfg = await loadConfigNative().catch(() => null);
     const isPrem =
-      premium ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
+      premium ??
+      premiumCache ??
+      (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
+    premiumCache = isPrem;
     let i = 0;
     for (const h of targets) {
       i++;
@@ -671,13 +676,20 @@
   async function updateMod(id: string, premium?: boolean) {
     ctx = null;
     error = "";
+    // Instant feedback before any network round-trip so the click never
+    // feels dead while Nexus resolves.
+    updatingIds = new Set([...updatingIds, id]);
+    flash(`Resolving update for ${modById(id)?.name ?? "mod"}…`);
     try {
       const cfg = await loadConfigNative();
       if (!cfg.nexusKey) {
         error = "Set Nexus API key in Settings first";
         return;
       }
-      const isPrem = premium ?? (await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
+      // Cache the premium lookup per session: one fewer blocking round-trip
+      // on every Update click.
+      const isPrem =
+        premium ?? premiumCache ?? (premiumCache = await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }));
       if (!isPrem) {
         // Free accounts: resolve file_id first so we can open the exact file.
         const res = await invoke<{ file_id: string; version: string }>("resolve_mod_update", { id, apiKey: cfg.nexusKey });
@@ -712,6 +724,8 @@
     } catch (e) {
       console.error(`[w3mm] update failed: ${String(e)}`);
       error = String(e);
+    } finally {
+      updatingIds = new Set([...updatingIds].filter((x) => x !== id));
     }
   }
 
@@ -719,8 +733,14 @@
     menuOpen = false;
     if (!hits.length) return;
     const cfg = await loadConfigNative().catch(() => null);
-    const premium = cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true;
+    const premium =
+      premiumCache ?? (cfg?.nexusKey ? await invoke<boolean>("nexus_premium", { apiKey: cfg.nexusKey }).catch(() => true) : true);
+    premiumCache = premium;
+    const total = hits.length;
+    let i = 0;
     for (const h of [...hits]) {
+      i++;
+      flash(`Updating ${i}/${total}: ${h.name}…`);
       await updateMod(h.id, premium);
     }
   }
