@@ -217,7 +217,7 @@
   function dlStatus(qq: QueueItem): { text: string; color: string } {
     if (qq.status === "done")
       return {
-        text: `Downloaded  ·  ${humanSize(qq.total || qq.done)}`,
+        text: `${dlSameFile(qq) ? "Installed" : "Downloaded"}  ·  ${humanSize(qq.total || qq.done)}`,
         color: "#7fbf8a",
       };
     if (qq.status === "error" || qq.status === "failed")
