@@ -122,9 +122,13 @@
      space on a long list. */
   padding: 9px 8px;
 }
-/* No vertical-padding reset on the priority input: it must keep the same box
-   as the muted span shown for disabled mods, or the two states measure to
-   different row heights and the list jumps when a mod is toggled. */
+/* ---- Overlay stacking ----------------------------------------------------
+   @svgrid/grid paints its sticky header at z-index 35 and its custom
+   scrollbar at 40 (see .sv-grid-head / .sv-grid-scrollbar in its stylesheet).
+   Both live in the page's root stacking context, so any dropdown, popover or
+   tooltip that overlaps the mod list must sit above 40 or the header will
+   paint over it. Overlays in this app use z-50: the "..." menu, the row and
+   section context menus, and the "installs to" hover tip. */
 
 /* Selection here is per-ROW, so the grid's per-cell affordances are suppressed:
    the accent ring on the active cell (set on every pointerdown, independent of

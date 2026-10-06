@@ -1514,7 +1514,7 @@
           <div
             role="menu"
             tabindex="-1"
-            class="absolute right-0 z-30 mt-1 w-56 rounded-[7px] border border-border bg-popover py-1 shadow-xl"
+            class="absolute right-0 z-50 mt-1 w-56 rounded-[7px] border border-border bg-popover py-1 shadow-xl"
             onclick={(e) => e.stopPropagation()}
             onkeydown={(e) => e.stopPropagation()}
           >
