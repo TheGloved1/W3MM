@@ -1,3 +1,9 @@
+# [26.10.13] - 2026-10-06
+
+## Fixed
+
+- **ui**: ```lift the "..." menu above the mod list header```
+
 # [26.10.12] - 2026-10-05
 
 ## Fixed
