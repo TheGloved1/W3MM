@@ -1,3 +1,9 @@
+# [26.10.14] - 2026-10-06
+
+## Fixed
+
+- **deploy**: ```reconcile orphans lost by deployed map, prune filelists```
+
 # [26.10.13] - 2026-10-06
 
 ## Fixed
