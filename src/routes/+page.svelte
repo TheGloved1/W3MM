@@ -427,10 +427,16 @@
         busy = "";
         return;
       }
-      const files = await invoke<string[]>("deploy");
-      console.debug(`[w3mm] deploy: done ${files.length} files`);
+      const res = await invoke<string[] | { deployed: string[]; removed: string[] }>("deploy");
+      const files = Array.isArray(res) ? res : res.deployed;
+      const removed = Array.isArray(res) ? [] : (res.removed ?? []);
+      console.debug(`[w3mm] deploy: done ${files.length} files, ${removed.length} removed`);
       busy = "";
-      flash(`Deployed ${files.length} file${files.length === 1 ? "" : "s"}`);
+      flash(
+        removed.length
+          ? `Deployed ${files.length} file${files.length === 1 ? "" : "s"}, removed ${removed.length} orphan${removed.length === 1 ? "" : "s"}`
+          : `Deployed ${files.length} file${files.length === 1 ? "" : "s"}`,
+      );
       await refresh();
       try {
         const { sendNotification } = await import(
@@ -438,7 +444,9 @@
         );
         sendNotification({
           title: "W3MM",
-          body: `Deployed ${files.length} files`,
+          body: removed.length
+            ? `Deployed ${files.length} files, removed ${removed.length} orphans`
+            : `Deployed ${files.length} files`,
         });
       } catch {}
     } catch (e) {

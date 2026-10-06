@@ -121,19 +121,10 @@ impl AppState {
         self.priority = self.mods_only().iter().map(|m| m.id.clone()).collect();
     }
 
-    pub fn state_deployed(&mut self, written: Vec<String>, ranked: &[ModRow]) {
-        // last-writer-wins: ranked is priority order, so later entries overwrite.
-        let mut by_path: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-        let _ = &written;
-        for m in ranked {
-            let _ = m;
-        }
-        // Caller passes flat `written` without per-mod split; keep counts only.
-        // Detailed per-file map is rebuilt on next deploy scan.
-        for w in written {
-            by_path.insert(w, ranked.last().map(|r| r.id.clone()).unwrap_or_default());
-        }
-        self.deployed = by_path;
+    pub fn state_deployed(&mut self, written_by: &std::collections::BTreeMap<String, String>) {
+        // Per-file writer: the caller passes path -> winning mod id in rank
+        // order, so shared files attribute to the highest-priority owner.
+        self.deployed = written_by.clone();
     }
 
     pub fn add_separator(&mut self, index: usize, name: &str) -> ModRow {

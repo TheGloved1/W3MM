@@ -142,40 +142,108 @@ pub fn write_mods_settings(settings_path: &Path, enabled_in_priority: &[String])
     Ok(())
 }
 
-/// Register menu xmls into dx11/dx12filelist.txt (append-only, dedup).
-pub fn update_filelists(game: &Path, xmls: &[String]) -> std::io::Result<()> {
+/// Register menu xmls into dx11/dx12filelist.txt (dedup) and prune entries
+/// belonging to known mod xmls that are no longer wanted. Lines that no
+/// known mod claims (vanilla entries) are always kept.
+pub fn update_filelists(
+    game: &Path,
+    xmls: &[String],
+    known_xmls_lower: &std::collections::HashSet<String>,
+) -> std::io::Result<()> {
+    let want_lower: std::collections::HashSet<String> =
+        xmls.iter().map(|x| x.trim().to_lowercase()).collect();
     for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
         let path = game.join(list);
-        let mut have: BTreeSet<String> = std::fs::read_to_string(&path)
-            .unwrap_or_default()
-            .lines()
-            .map(|l| l.trim().to_lowercase())
-            .filter(|l| !l.is_empty())
-            .collect();
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        // Prune stale mod entries; keep vanilla lines and still-wanted xmls.
+        // Compare case-insensitively; preserve the on-disk spelling of kept lines.
+        let mut kept: Vec<String> = Vec::new();
+        let mut have: BTreeSet<String> = BTreeSet::new();
+        for line in existing.lines() {
+            let k = line.trim().to_lowercase();
+            if k.is_empty() {
+                continue;
+            }
+            if known_xmls_lower.contains(&k) && !want_lower.contains(&k) {
+                continue; // orphan entry from a disabled/removed mod
+            }
+            if have.insert(k) {
+                kept.push(line.trim().to_string());
+            }
+        }
         let mut extra = Vec::new();
         for x in xmls {
             let k = x.trim().to_lowercase();
             if !k.is_empty() && !have.contains(&k) {
-                have.insert(k.clone());
+                have.insert(k);
                 extra.push(x.clone());
             }
         }
-        if !extra.is_empty() {
-            if let Some(p) = path.parent() {
-                std::fs::create_dir_all(p)?;
-            }
-            let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            for x in extra {
-                text.push_str(&x);
-                text.push('\n');
-            }
-            std::fs::write(&path, text)?;
+        if extra.is_empty() && kept.len() == existing.lines().filter(|l| !l.trim().is_empty()).count() {
+            continue; // nothing to add or prune
         }
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let mut text = kept.join("\n");
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        for x in extra {
+            text.push_str(&x);
+            text.push('\n');
+        }
+        std::fs::write(&path, text)?;
     }
     Ok(())
+}
+
+/// Managed top folder for a rel: `mods/<name>` / `dlc/<name>`, lowercased.
+/// `bin/` and `content/` are shared vanilla space and have no owner folder.
+fn managed_folder(lower_rel: &str) -> Option<String> {
+    let mut segs = lower_rel.split('/');
+    match segs.next()? {
+        "mods" | "dlc" => segs.next().map(|n| format!("{}/{}", &lower_rel[..lower_rel.find('/').unwrap()], n)),
+        _ => None,
+    }
+}
+
+/// Find game files the deployed-map diff missed: anything under a managed
+/// `mods/<name>` / `dlc/<name>` folder that isn't wanted anymore. Unmanaged
+/// folders (no known mod claims them) are left alone for the import banner.
+/// Symlinks are never touched. `bin/`/`content/` orphans are handled by the
+/// caller via exact known-target checks (vanilla space is never scanned).
+pub fn scan_tree_orphans(
+    game: &Path,
+    want_lower: &std::collections::HashSet<String>,
+    managed_folders: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut orphans = Vec::new();
+    for top in ["mods", "dlc"] {
+        let base = game.join(top);
+        if !base.is_dir() {
+            continue;
+        }
+        for e in WalkDir::new(&base).into_iter().flatten() {
+            if e.file_type().is_symlink() || !e.file_type().is_file() {
+                continue;
+            }
+            let rel = match e.path().strip_prefix(game) {
+                Ok(r) => r.to_string_lossy().replace('\\', "/"),
+                Err(_) => continue,
+            };
+            let low = rel.to_lowercase();
+            if want_lower.contains(&low) {
+                continue;
+            }
+            match managed_folder(&low) {
+                Some(f) if managed_folders.contains(&f) => orphans.push(rel),
+                _ => {}
+            }
+        }
+    }
+    orphans.sort();
+    orphans
 }
 
 /// Restore backups for paths no longer wanted; drop empty dirs up to game root.
@@ -281,5 +349,68 @@ mod tests {
         restore_paths(&game, &backup, &["mods/modFoo/content/a.ws".to_string()]).unwrap();
         assert_eq!(std::fs::read(game.join("mods/modFoo/content/a.ws")).unwrap(), b"vanilla");
         let _ = std::fs::remove_dir_all(game.parent().unwrap());
+    }
+
+    #[test]
+    fn reconcile_finds_orphans_lost_by_deployed_map() {
+        // Two mods deployed, then the deployed map is wiped (simulating the
+        // tracking loss seen in the wild) and one mod disabled: the scan must
+        // still find the disabled mod's files via managed-folder ownership.
+        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-reconcile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let game = base.join("game");
+        let backup = base.join("backup");
+        for (moddir, file) in [("modFoo", "a.ws"), ("modBar", "b.ws")] {
+            let p = base.join("staging").join(moddir).join(format!("mods/{moddir}/content/{file}"));
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+        }
+        let stage_foo = base.join("staging").join("modFoo");
+        let stage_bar = base.join("staging").join("modBar");
+        let rels_foo = mod_files(&stage_foo);
+        let rels_bar = mod_files(&stage_bar);
+        deploy_mod(&game, &stage_foo, &rels_foo, &backup).unwrap();
+        deploy_mod(&game, &stage_bar, &rels_bar, &backup).unwrap();
+        // Only modFoo stays wanted; deployed map knows nothing (wiped).
+        let want: std::collections::HashSet<String> = rels_foo
+            .iter()
+            .map(|r| r.to_string_lossy().to_lowercase())
+            .collect();
+        let managed: std::collections::HashSet<String> =
+            ["mods/modfoo", "mods/modbar"].iter().map(|s| s.to_string()).collect();
+        // An unmanaged user folder must be ignored.
+        std::fs::create_dir_all(game.join("mods/modMine/content")).unwrap();
+        std::fs::write(game.join("mods/modMine/content/c.ws"), b"mine").unwrap();
+        let orphans = scan_tree_orphans(&game, &want, &managed);
+        assert_eq!(orphans, vec!["mods/modBar/content/b.ws".to_string()]);
+        restore_paths(&game, &backup, &orphans).unwrap();
+        assert!(!game.join("mods/modBar").exists(), "orphan folder must be pruned");
+        assert!(game.join("mods/modFoo/content/a.ws").is_file(), "wanted file must survive");
+        assert!(game.join("mods/modMine/content/c.ws").is_file(), "unmanaged content must survive");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn filelists_prune_removed_xmls_but_keep_vanilla() {
+        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("bin")).unwrap();
+        let stale_xml = "bin/r4game/user_config_matrix/pc/modOld.xml".to_string();
+        let kept_xml = "bin/r4game/user_config_matrix/pc/modNew.xml".to_string();
+        let vanilla = "bin/config/r4game/user_config_matrix/pc/gameplay.xml".to_string();
+        for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
+            std::fs::write(game.join(list), format!("{vanilla}\n{stale_xml}\n")).unwrap();
+        }
+        let known: std::collections::HashSet<String> =
+            [stale_xml.to_lowercase(), kept_xml.to_lowercase()].into_iter().collect();
+        update_filelists(&game, std::slice::from_ref(&kept_xml), &known).unwrap();
+        for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
+            let text = std::fs::read_to_string(game.join(list)).unwrap();
+            assert!(text.contains(&vanilla), "vanilla entry must be kept in {list}");
+            assert!(text.contains(&kept_xml), "wanted entry must be present in {list}");
+            assert!(!text.contains(&stale_xml), "removed mod entry must be pruned from {list}");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

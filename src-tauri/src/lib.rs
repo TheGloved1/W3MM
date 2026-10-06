@@ -188,8 +188,14 @@ fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> 
     Ok(true)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeployReport {
+    pub deployed: Vec<String>,
+    pub removed: Vec<String>,
+}
+
 #[tauri::command]
-fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
+fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     if steam::game_running() {
         return Err("Close the game before deploying".to_string());
     }
@@ -213,6 +219,9 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     let t0 = std::time::Instant::now();
     log_line("rust", &format!("deploy: start, {} ranked mods", ranked.len()));
     let mut all_written: Vec<String> = vec![];
+    // Per-file on-disk winner: deploy order is rank order with later writes
+    // overwriting, so last insert is what is actually on disk.
+    let mut written_by: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let mut menu_xmls: Vec<String> = vec![];
     for r in &ranked {
         let stage = home.staging.join(&r.id);
@@ -228,23 +237,102 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
                 menu_xmls.push(w.clone());
             }
         }
-        all_written.extend(written);
+        for w in written {
+            written_by.insert(w.clone(), r.id.clone());
+            all_written.push(w);
+        }
     }
     // Anything previously deployed but no longer wanted (disabled/removed
     // mods, or files a mod update dropped) goes back to backup/vanilla.
     // Commit phase: snapshot what to restore/write, do it lock-free, then
-    // persist state under a fresh lock.
-    let (stale, kept): (Vec<String>, Vec<(String, String)>) = {
+    // persist state under a fresh lock. Also snapshot every known target so
+    // orphans the deployed map lost can still be reconciled.
+    let (stale, kept, known_targets, managed_folders, known_xmls): (
+        Vec<String>,
+        Vec<(String, String)>,
+        Vec<String>,
+        std::collections::HashSet<String>,
+        std::collections::HashSet<String>,
+    ) = {
         let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
         let want: std::collections::HashSet<String> = all_written.iter().cloned().collect();
         let stale = s.deployed.keys().filter(|k| !want.contains(*k)).cloned().collect();
         let kept = s.merge_kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        (stale, kept)
+        let mut known_targets = vec![];
+        let mut managed_folders = std::collections::HashSet::new();
+        let mut known_xmls = std::collections::HashSet::new();
+        for row in s.mods_only() {
+            for t in &row.targets {
+                known_targets.push(t.clone());
+                let low = t.to_lowercase();
+                if low.ends_with(".xml") && low.contains("bin/") {
+                    known_xmls.insert(low.clone());
+                }
+                if let Some(slash) = low.find('/') {
+                    let first = &low[..slash];
+                    if first == "mods" || first == "dlc" {
+                        if let Some(rest) = low[slash + 1..].split('/').next() {
+                            managed_folders.insert(format!("{first}/{rest}"));
+                        }
+                    }
+                }
+            }
+        }
+        (stale, kept, known_targets, managed_folders, known_xmls)
     };
-    if !stale.is_empty() {
-        deploy::restore_paths(&home.game, &home.backup, &stale).map_err(|e| e.to_string())?;
+    // Reconcile orphans the deployed map lost: files under managed
+    // mods/<name>/ dlc/<name>/ folders that nothing wanted, plus known
+    // bin/content targets with no backup-tracked stale entry. Kept merges
+    // count as wanted so they are never swept up here.
+    let mut want_lower: std::collections::HashSet<String> =
+        all_written.iter().map(|w| w.to_lowercase()).collect();
+    for (rel, _) in &kept {
+        want_lower.insert(rel.to_lowercase());
+    }
+    let mut orphans = deploy::scan_tree_orphans(&home.game, &want_lower, &managed_folders);
+    for t in &known_targets {
+        let low = t.to_lowercase();
+        let first = low.split('/').next().unwrap_or("");
+        if first != "bin" && first != "content" {
+            continue;
+        }
+        if want_lower.contains(&low) {
+            continue;
+        }
+        if home.game.join(t).is_file() && !orphans.iter().any(|o| o.to_lowercase() == low) {
+            orphans.push(t.clone());
+        }
+    }
+    orphans.sort();
+    orphans.dedup();
+    // Merge with the deployed-map stale set; track which removals came only
+    // from reconciliation for the report.
+    let stale_set: std::collections::HashSet<String> = stale.into_iter().collect();
+    let mut to_restore: Vec<String> = stale_set.iter().cloned().collect();
+    let mut reconciled: Vec<String> = vec![];
+    for o in orphans {
+        if !stale_set.contains(&o) && !stale_set.contains(&o.to_lowercase()) {
+            // Case-insensitive dedupe against stale (stale keys are exact-case
+            // from a previous deploy; orphans are disk-exact).
+            let low = o.to_lowercase();
+            if stale_set.iter().any(|s| s.to_lowercase() == low) {
+                continue;
+            }
+            reconciled.push(o.clone());
+        }
+        if !to_restore.iter().any(|s| s.to_lowercase() == o.to_lowercase()) {
+            to_restore.push(o);
+        }
+    }
+    to_restore.sort();
+    if !to_restore.is_empty() {
+        deploy::restore_paths(&home.game, &home.backup, &to_restore).map_err(|e| e.to_string())?;
+        log_line(
+            "rust",
+            &format!("deploy: removed {} stale files ({} reconciled orphans)", to_restore.len(), reconciled.len()),
+        );
     }
     // Kept merges win over every staged copy: write them over the deployed file.
     let mut merged_count = 0;
@@ -273,18 +361,18 @@ fn deploy(shared: State<Shared>) -> Result<Vec<String>, String> {
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
     let settings = home.prefix.join("drive_c/users/steamuser/Documents/The Witcher 3").join("mods.settings");
     deploy::write_mods_settings(&settings, &names).map_err(|e| e.to_string())?;
-    deploy::update_filelists(&home.game, &menu_xmls).map_err(|e| e.to_string())?;
-    // Persist deployed map (path -> mod id, last-writer-wins in rank order reversed).
+    deploy::update_filelists(&home.game, &menu_xmls, &known_xmls).map_err(|e| e.to_string())?;
+    // Persist deployed map (path -> winning mod id in deploy order).
     {
         let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
-        s.state_deployed(all_written.clone(), &ranked);
+        s.state_deployed(&written_by);
         let snapshot = s.clone();
         crate::state::save_state(&m.home.state_file, &snapshot)?;
     }
     log_line("rust", &format!("deploy: done, {} files in {:.1}s", all_written.len(), t0.elapsed().as_secs_f32()));
-    Ok(all_written)
+    Ok(DeployReport { deployed: all_written, removed: reconciled })
 }
 
 #[tauri::command]
