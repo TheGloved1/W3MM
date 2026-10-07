@@ -1,3 +1,10 @@
+# [26.10.15] - 2026-10-07
+
+## Fixed
+
+- **install**: ```preserve genuine bin/content trees, normalize top-dir case```
+- **deploy**: ```track filelist entries and prune on removal```
+
 # [26.10.14] - 2026-10-06
 
 ## Fixed

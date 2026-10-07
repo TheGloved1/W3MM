@@ -1,6 +1,6 @@
 [package]
 name = "w3mm"
-version = "26.10.14"
+version = "26.10.15"
 description = "Witcher 3 Mod Manager for Linux"
 authors = ["W3MM Contributors"]
 license = "MIT"
