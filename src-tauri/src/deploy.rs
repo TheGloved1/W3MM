@@ -50,13 +50,19 @@ pub fn mod_files(staging_mod: &Path) -> Vec<PathBuf> {
 /// mod folder wrongly survives. Content equality is observationally equivalent
 /// (restoring would put back identical bytes) and also heals copies.
 fn is_ours(src: &Path, dst: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
     let (sm, dm) = match (std::fs::metadata(src), std::fs::metadata(dst)) {
         (Ok(s), Ok(d)) => (s, d),
         _ => return false,
     };
-    if sm.dev() == dm.dev() && sm.ino() == dm.ino() {
-        return true;
+    // Same file (hardlink): exact inode check where the platform exposes it;
+    // elsewhere fall through to the byte comparison below (same verdict,
+    // slightly more I/O on first deploy).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if sm.dev() == dm.dev() && sm.ino() == dm.ino() {
+            return true;
+        }
     }
     if sm.len() != dm.len() {
         return false;

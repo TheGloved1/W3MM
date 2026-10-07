@@ -21,10 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows/macOS builds disabled: not supported yet (see v26.10.1 Windows failure).
-          # - os: windows-latest
-          #   platform: windows-x86_64
-          #   bundles: nsis msi
+          # Windows re-enabled for the windows-compat port (native paths,
+          # Steam detection, separator canonicalization all cfg-gated).
+          - os: windows-latest
+            platform: windows-x86_64
+            bundles: nsis msi
           - os: ubuntu-latest
             platform: linux-x86_64
             bundles: deb appimage rpm
