@@ -3,10 +3,10 @@
 //! `setting_role`, `merger_config`, `merger_path_check`
 //! (`w3modmanager.py:7453-7669`).
 //!
-//! The merger itself stays external (a .NET exe run under Proton); this
-//! module reads its config, compares stored paths with what the prefix
-//! needs, and writes fixes back — the UI surfaces them instead of failing
-//! deploys later.
+//! The merger itself stays external (a .NET exe run under Proton on Linux,
+//! natively on Windows); this module reads its config, compares stored paths
+//! with what the prefix needs, and writes fixes back — the UI surfaces them
+//! instead of failing deploys later.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -100,24 +100,38 @@ fn merger_config_file(exe_path: &Path) -> Option<PathBuf> {
 }
 
 fn from_windows_path(prefix: &str, win: &str) -> Option<PathBuf> {
-    crate::steam::wine_drives(prefix);
-    // C:\... -> prefix/drive_c/...
-    let t = win.trim();
-    if t.len() >= 3 && t.as_bytes()[1] == b':' && (t.as_bytes()[2] == b'\\' || t.as_bytes()[2] == b'/') {
-        let drive = t[..1].to_lowercase();
-        let rest = t[3..].replace('\\', "/");
-        if drive == "c" {
-            return Some(Path::new(prefix).join("drive_c").join(rest));
+    // Native Windows runs the merger directly: its stored paths already name
+    // real filesystem locations, so the mapping is the identity.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = prefix;
+        let t = win.trim();
+        if t.len() >= 3 && t.as_bytes()[1] == b':' && (t.as_bytes()[2] == b'\\' || t.as_bytes()[2] == b'/') {
+            return Some(PathBuf::from(t));
         }
-        let dd = Path::new(prefix).join("dosdevices").join(format!("{drive}:"));
-        let target = std::fs::read_link(&dd).unwrap_or(dd);
-        return Some(target.join(rest));
+        return None;
     }
-    // Z:\... commonly maps to / in Wine
-    if t.to_lowercase().starts_with("z:\\") || t.to_lowercase().starts_with("z:/") {
-        return Some(PathBuf::from(format!("/{}", t[3..].replace('\\', "/"))));
+    #[cfg(not(target_os = "windows"))]
+    {
+        crate::steam::wine_drives(prefix);
+        // C:\... -> prefix/drive_c/...
+        let t = win.trim();
+        if t.len() >= 3 && t.as_bytes()[1] == b':' && (t.as_bytes()[2] == b'\\' || t.as_bytes()[2] == b'/') {
+            let drive = t[..1].to_lowercase();
+            let rest = t[3..].replace('\\', "/");
+            if drive == "c" {
+                return Some(Path::new(prefix).join("drive_c").join(rest));
+            }
+            let dd = Path::new(prefix).join("dosdevices").join(format!("{drive}:"));
+            let target = std::fs::read_link(&dd).unwrap_or(dd);
+            return Some(target.join(rest));
+        }
+        // Z:\... commonly maps to / in Wine
+        if t.to_lowercase().starts_with("z:\\") || t.to_lowercase().starts_with("z:/") {
+            return Some(PathBuf::from(format!("/{}", t[3..].replace('\\', "/"))));
+        }
+        None
     }
-    None
 }
 
 /// Compare stored merger paths with what this prefix needs.
@@ -129,6 +143,12 @@ pub fn merger_path_check(prefix: &str, game_dir: &str, exe_path: &str) -> Result
     let game = PathBuf::from(game_dir);
     let mods = game.join("mods");
     let scripts = game.join("content/content0/scripts");
+    // What the merger's stored paths should look like: reachable Windows
+    // paths through the prefix on Linux, native paths on Windows where the
+    // merger runs directly.
+    #[cfg(target_os = "windows")]
+    let want_win = |p: &PathBuf| Some(p.to_string_lossy().to_string());
+    #[cfg(not(target_os = "windows"))]
     let want_win = |p: &PathBuf| crate::steam::to_windows_path(prefix, &p.to_string_lossy());
     let windows = [
         ("game", want_win(&game)),
@@ -194,5 +214,17 @@ mod tests {
         assert_eq!(setting_role("ModsDirectory"), Some("mods"));
         assert_eq!(setting_role("Scripts"), Some("scripts"));
         assert_eq!(setting_role("Theme"), None);
+    }
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn proton_drive_c_mapping() {
+        // C:\... inside a fake prefix resolves under drive_c.
+        let base = std::env::temp_dir().join(format!("w3mm-merger-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("drive_c/Games")).unwrap();
+        let got = from_windows_path(&base.to_string_lossy(), "C:\\Games\\Witcher3").unwrap();
+        assert_eq!(got, base.join("drive_c/Games/Witcher3"));
+        assert!(from_windows_path(&base.to_string_lossy(), "relative\\path").is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
