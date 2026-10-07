@@ -62,6 +62,8 @@
   /** Staging lives on another filesystem than the game: deploys copy. */
   let storageSplit: boolean = $state(false);
   let stagingDismissed: boolean = $state(false);
+  /** A split-drive decision dialog is already awaiting an answer. */
+  let splitAskInFlight: boolean = $state(false);
   let filter: string = $state("");
   let menuOpen: boolean = $state(false);
   let collapsed: Record<string, boolean> = $state({});
@@ -347,6 +349,54 @@
     } catch {}
   }
 
+  /**
+   * Split-drive decision dialog: staging on another filesystem than the
+   * game means every deploy copies instead of hardlinking. The user must
+   * pick: move staging next to the game, or explicitly keep the slow path.
+   * Cancelling either prompt counts as keeping (re-armed by changing the
+   * staging setting); picking a still-split folder loops back here.
+   */
+  async function maybeSplitDialog() {
+    let go = false;
+    try {
+      const { confirm } = await import("@tauri-apps/plugin-dialog");
+      go = await confirm(
+        "Staging is on a different drive (filesystem) than the game, so installs copy instead of hardlinking — slower, and twice the disk. Move staging next to the game?",
+        { title: "W3MM", okLabel: "Choose folder…", cancelLabel: "Keep current", kind: "warning" },
+      );
+    } catch {
+      return;
+    }
+    if (!go) {
+      await dismissStagingNotice();
+      return;
+    }
+    let sel: string | string[] | null = null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const seed = gameDir.replace(/[/\\]+$/, "").replace(/[/\\][^/\\]+$/, "") + "/W3MM-staging";
+      sel = await open({ directory: true, multiple: false, defaultPath: seed });
+    } catch {
+      return;
+    }
+    if (!sel || Array.isArray(sel)) {
+      await dismissStagingNotice();
+      return;
+    }
+    stagingDir = sel;
+    try {
+      const cfg = await loadConfigNative();
+      cfg.stagingDir = stagingDir;
+      cfg.stagingNoticeDismissed = false;
+      await saveConfigNative(cfg);
+      // Re-open migrates staged contents to the new home; the refresh
+      // inside re-checks the split and loops back if still divided.
+      await open();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   async function refresh() {
     console.debug(`[w3mm] refresh: start`);
     appState = await invoke<AppState>("list_mods");
@@ -375,6 +425,14 @@
       storageSplit = rep.sameDevice === false;
     } catch {
       storageSplit = false;
+    }
+    if (storageSplit && !stagingDismissed && !splitAskInFlight) {
+      // A cross-drive staging choice needs an explicit answer — fire and
+      // forget so the refresh itself isn't held hostage by the modal.
+      splitAskInFlight = true;
+      maybeSplitDialog().finally(() => {
+        splitAskInFlight = false;
+      });
     }
     madeMap = {};
     if (appState) {
@@ -1629,27 +1687,6 @@
           onclick={importThem}
           class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
           >Import them</button
-        >
-      </div>
-    {/if}
-    {#if storageSplit && !stagingDismissed}
-      <div
-        class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm"
-      >
-        <span class="flex-1"
-          >Staging is on a different drive than the game — installs copy
-          instead of hardlinking (slower, twice the disk). Move it next to
-          the game in Settings.</span
-        >
-        <button
-          onclick={() => openSettings()}
-          class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
-          >Change…</button
-        >
-        <button
-          onclick={dismissStagingNotice}
-          class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
-          >Dismiss</button
         >
       </div>
     {/if}
