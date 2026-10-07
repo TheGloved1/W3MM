@@ -194,6 +194,17 @@ pub struct DeployReport {
     pub removed: Vec<String>,
 }
 
+/// Snapshot taken under lock for one deploy's commit phase: stale deployed
+/// paths, kept merges, every known target, managed top folders, and the
+/// filelist entries previously added.
+type DeploySnapshot = (
+    Vec<String>,
+    Vec<(String, String)>,
+    Vec<String>,
+    std::collections::HashSet<String>,
+    std::collections::BTreeMap<String, Vec<String>>,
+);
+
 #[tauri::command]
 fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     if steam::game_running() {
@@ -247,13 +258,7 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     // Commit phase: snapshot what to restore/write, do it lock-free, then
     // persist state under a fresh lock. Also snapshot every known target so
     // orphans the deployed map lost can still be reconciled.
-    let (stale, kept, known_targets, managed_folders, known_xmls): (
-        Vec<String>,
-        Vec<(String, String)>,
-        Vec<String>,
-        std::collections::HashSet<String>,
-        std::collections::HashSet<String>,
-    ) = {
+    let (stale, kept, known_targets, managed_folders, filelist_added): DeploySnapshot = {
         let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let s = m.state.lock().map_err(|e| e.to_string())?;
@@ -262,14 +267,10 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
         let kept = s.merge_kept.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let mut known_targets = vec![];
         let mut managed_folders = std::collections::HashSet::new();
-        let mut known_xmls = std::collections::HashSet::new();
         for row in s.mods_only() {
             for t in &row.targets {
                 known_targets.push(t.clone());
                 let low = t.to_lowercase();
-                if low.ends_with(".xml") && low.contains("bin/") {
-                    known_xmls.insert(low.clone());
-                }
                 if let Some(slash) = low.find('/') {
                     let first = &low[..slash];
                     if first == "mods" || first == "dlc" {
@@ -280,7 +281,7 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
                 }
             }
         }
-        (stale, kept, known_targets, managed_folders, known_xmls)
+        (stale, kept, known_targets, managed_folders, s.filelist_added.clone())
     };
     // Reconcile orphans the deployed map lost: files under managed
     // mods/<name>/ dlc/<name>/ folders that nothing wanted, plus known
@@ -327,6 +328,13 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
         }
     }
     to_restore.sort();
+    // Menu xmls swept this deploy that predate entry tracking: pruned from
+    // the filelists even though no recorded entry claims them.
+    let stale_xmls_lower: std::collections::HashSet<String> = to_restore
+        .iter()
+        .map(|r| r.to_lowercase())
+        .filter(|l| l.ends_with(".xml") && l.contains("bin/"))
+        .collect();
     if !to_restore.is_empty() {
         deploy::restore_paths(&home.game, &home.backup, &to_restore).map_err(|e| e.to_string())?;
         log_line(
@@ -361,12 +369,16 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
     let settings = home.prefix.join("drive_c/users/steamuser/Documents/The Witcher 3").join("mods.settings");
     deploy::write_mods_settings(&settings, &names).map_err(|e| e.to_string())?;
-    deploy::update_filelists(&home.game, &menu_xmls, &known_xmls).map_err(|e| e.to_string())?;
-    // Persist deployed map (path -> winning mod id in deploy order).
+    let filelist_added =
+        deploy::update_filelists(&home.game, &menu_xmls, &stale_xmls_lower, &filelist_added)
+            .map_err(|e| e.to_string())?;
+    // Persist deployed map (path -> winning mod id in deploy order) plus the
+    // filelist entries we added (powers pruning after row removal/replace).
     {
         let g = lock_shared(&shared, "deploy")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
         let mut s = m.state.lock().map_err(|e| e.to_string())?;
+        s.filelist_added = filelist_added;
         s.state_deployed(&written_by);
         let snapshot = s.clone();
         crate::state::save_state(&m.home.state_file, &snapshot)?;

@@ -142,45 +142,89 @@ pub fn write_mods_settings(settings_path: &Path, enabled_in_priority: &[String])
     Ok(())
 }
 
-/// Register menu xmls into dx11/dx12filelist.txt (dedup) and prune entries
-/// belonging to known mod xmls that are no longer wanted. Lines that no
-/// known mod claims (vanilla entries) are always kept.
+/// Normalize a filelist line for comparison: trim, drop a trailing `;`
+/// (the original manager's entry format), compare case-insensitively.
+fn norm_filelist_line(l: &str) -> String {
+    l.trim().trim_end_matches(';').trim().to_lowercase()
+}
+
+/// Register menu xmls into dx11/dx12filelist.txt: add missing wanted entries
+/// and prune entries that are no longer managed. Like the original
+/// (`_update_filelists`), what *we* added is tracked per file in `added` so a
+/// removed mod's entries are dropped even after its row (and targets) are
+/// gone; `stale_xmls` additionally covers paths swept this deploy that were
+/// never recorded. Foreign lines (vanilla entries, hand edits) are kept.
 pub fn update_filelists(
     game: &Path,
     xmls: &[String],
-    known_xmls_lower: &std::collections::HashSet<String>,
-) -> std::io::Result<()> {
+    stale_xmls_lower: &std::collections::HashSet<String>,
+    added: &std::collections::BTreeMap<String, Vec<String>>,
+) -> std::io::Result<std::collections::BTreeMap<String, Vec<String>>> {
     let want_lower: std::collections::HashSet<String> =
-        xmls.iter().map(|x| x.trim().to_lowercase()).collect();
+        xmls.iter().map(|x| norm_filelist_line(x)).filter(|x| !x.is_empty()).collect();
+    // Original-case spellings for the record, keyed by normalized form.
+    let mut spell: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    for x in xmls {
+        spell.entry(norm_filelist_line(x)).or_insert(x.trim());
+    }
+    let mut out_added = added.clone();
     for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
         let path = game.join(list);
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        // Prune stale mod entries; keep vanilla lines and still-wanted xmls.
-        // Compare case-insensitively; preserve the on-disk spelling of kept lines.
+        let recorded: std::collections::HashSet<String> = added
+            .get(list)
+            .map(|v| v.iter().map(|x| norm_filelist_line(x)).collect())
+            .unwrap_or_default();
+        // Entries we added that nothing wants anymore, plus swept paths that
+        // predate tracking. Never drop a wanted entry.
+        let drop: std::collections::HashSet<String> = recorded
+            .iter()
+            .filter(|x| !want_lower.contains(*x))
+            .cloned()
+            .chain(stale_xmls_lower.iter().filter(|x| !want_lower.contains(*x)).cloned())
+            .collect();
+        // Preserve the on-disk spelling of kept lines; collapse dupes.
         let mut kept: Vec<String> = Vec::new();
         let mut have: BTreeSet<String> = BTreeSet::new();
+        let mut pruned = false;
         for line in existing.lines() {
-            let k = line.trim().to_lowercase();
+            let k = norm_filelist_line(line);
             if k.is_empty() {
                 continue;
             }
-            if known_xmls_lower.contains(&k) && !want_lower.contains(&k) {
-                continue; // orphan entry from a disabled/removed mod
+            if drop.contains(&k) {
+                pruned = true;
+                continue;
             }
             if have.insert(k) {
                 kept.push(line.trim().to_string());
+            } else {
+                pruned = true; // collapsed a duplicate
             }
         }
         let mut extra = Vec::new();
         for x in xmls {
-            let k = x.trim().to_lowercase();
+            let k = norm_filelist_line(x);
             if !k.is_empty() && !have.contains(&k) {
                 have.insert(k);
-                extra.push(x.clone());
+                extra.push(x.trim().to_string());
             }
         }
-        if extra.is_empty() && kept.len() == existing.lines().filter(|l| !l.trim().is_empty()).count() {
-            continue; // nothing to add or prune
+        // Record the managed set for this file: after this run it holds
+        // exactly the wanted entries (+foreign lines), so recording `want`
+        // is both accurate and self-healing. This also bootstraps the record
+        // for entries added before tracking existed (the append-only era),
+        // which add-only tracking would never capture: such entries are
+        // present but unrecorded, so a removal would leave them behind.
+        let mut managed: Vec<String> = want_lower
+            .iter()
+            .filter_map(|k| spell.get(k))
+            .map(|s| s.to_string())
+            .collect();
+        managed.sort();
+        out_added.insert(list.to_string(), managed);
+        if extra.is_empty() && !pruned {
+            continue;
         }
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
@@ -195,7 +239,7 @@ pub fn update_filelists(
         }
         std::fs::write(&path, text)?;
     }
-    Ok(())
+    Ok(out_added)
 }
 
 /// Managed top folder for a rel: `mods/<name>` / `dlc/<name>`, lowercased.
@@ -391,26 +435,77 @@ mod tests {
     }
 
     #[test]
-    fn filelists_prune_removed_xmls_but_keep_vanilla() {
+    fn filelists_prune_recorded_and_swept_xmls_but_keep_vanilla() {
         let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         std::fs::create_dir_all(game.join("bin")).unwrap();
-        let stale_xml = "bin/r4game/user_config_matrix/pc/modOld.xml".to_string();
+        let stale_recorded = "bin/r4game/user_config_matrix/pc/modOld.xml".to_string();
+        let stale_swept = "bin/r4game/user_config_matrix/pc/modGone.xml".to_string();
         let kept_xml = "bin/r4game/user_config_matrix/pc/modNew.xml".to_string();
         let vanilla = "bin/config/r4game/user_config_matrix/pc/gameplay.xml".to_string();
         for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
-            std::fs::write(game.join(list), format!("{vanilla}\n{stale_xml}\n")).unwrap();
+            std::fs::write(game.join(list), format!("{vanilla}\n{stale_recorded}\n{stale_swept}\n")).unwrap();
         }
-        let known: std::collections::HashSet<String> =
-            [stale_xml.to_lowercase(), kept_xml.to_lowercase()].into_iter().collect();
-        update_filelists(&game, std::slice::from_ref(&kept_xml), &known).unwrap();
+        // modOld was recorded when added; modGone predates tracking but was
+        // swept this deploy (its file is gone from the game).
+        let mut added: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
+            added.insert(list.to_string(), vec![stale_recorded.clone(), kept_xml.clone()]);
+        }
+        let swept: std::collections::HashSet<String> =
+            [stale_swept.to_lowercase()].into_iter().collect();
+        let out = update_filelists(&game, std::slice::from_ref(&kept_xml), &swept, &added).unwrap();
         for list in ["bin/dx11filelist.txt", "bin/dx12filelist.txt"] {
             let text = std::fs::read_to_string(game.join(list)).unwrap();
             assert!(text.contains(&vanilla), "vanilla entry must be kept in {list}");
             assert!(text.contains(&kept_xml), "wanted entry must be present in {list}");
-            assert!(!text.contains(&stale_xml), "removed mod entry must be pruned from {list}");
+            assert!(!text.contains(&stale_recorded), "recorded-but-unwanted entry must be pruned from {list}");
+            assert!(!text.contains(&stale_swept), "swept-but-untracked entry must be pruned from {list}");
+            // The record follows: dropped entries forgotten, kept one retained.
+            assert_eq!(out.get(list), Some(&vec![kept_xml.clone()]), "record must track {list}");
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn filelists_bootstrap_record_for_pretracking_entries() {
+        // Entries added before tracking existed are present but unrecorded;
+        // the record must still capture them, or their later removal would
+        // leave the lines behind.
+        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-boot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("bin")).unwrap();
+        let xml = "bin/r4game/user_config_matrix/pc/modOld.xml".to_string();
+        std::fs::write(game.join("bin/dx11filelist.txt"), format!("{xml}\n")).unwrap();
+        let empty: std::collections::HashSet<String> = Default::default();
+        let added: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        let out = update_filelists(&game, std::slice::from_ref(&xml), &empty, &added).unwrap();
+        let text = std::fs::read_to_string(game.join("bin/dx11filelist.txt")).unwrap();
+        assert!(text.contains(&xml), "present wanted entry must stay");
+        assert_eq!(out.get("bin/dx11filelist.txt"), Some(&vec![xml]), "record must bootstrap");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn filelists_never_drop_wanted_entries() {
+        // A wanted xml is kept even if it also appears in the swept set
+        // (e.g. reinstalled at the same path it was just swept from), and a
+        // tracked entry that is still wanted stays tracked.
+        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-want-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("bin")).unwrap();
+        let xml = "bin/r4game/user_config_matrix/pc/modSame.xml".to_string();
+        std::fs::write(game.join("bin/dx11filelist.txt"), format!("{xml}\n")).unwrap();
+        let swept: std::collections::HashSet<String> = [xml.to_lowercase()].into_iter().collect();
+        let mut added: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        added.insert("bin/dx11filelist.txt".to_string(), vec![xml.clone()]);
+        let out = update_filelists(&game, std::slice::from_ref(&xml), &swept, &added).unwrap();
+        let text = std::fs::read_to_string(game.join("bin/dx11filelist.txt")).unwrap();
+        assert!(text.contains(&xml), "wanted entry must survive its own sweep");
+        assert_eq!(out.get("bin/dx11filelist.txt"), Some(&vec![xml]), "tracked wanted entry stays tracked");
         let _ = std::fs::remove_dir_all(&base);
     }
 }
