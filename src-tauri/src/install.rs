@@ -266,6 +266,15 @@ pub fn remap_target(rel: &str, roots: &[RootChoice], mod_folder: &str) -> String
     }
     let dir = kind_dir(&row.kind);
     if !needs_folder {
+        // Already a genuine game-dir path (`bin/x64_dx12/y.dll` kept as Bin,
+        // `content/scripts/x.ws` as Content): the "folder" segment is a real
+        // subdirectory, not a mod wrapper, so there is nothing to strip.
+        // Stripping only applies when re-homing across top dirs
+        // (`mods/modFoo/bin/x.dll` as Bin -> `bin/x.dll`). The original
+        // manager staged `bin/` verbatim; this restores that parity.
+        if first.as_str() == dir {
+            return rel.to_string();
+        }
         // Drop the source's own wrapper (content/, dlc/, …) too, or we'd get
         // content/modFoo/content/x — inert.
         if rest.first().map(|s| is_game_dir(s)).unwrap_or(false) {
@@ -298,6 +307,17 @@ pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Resu
             rel_trim.to_string()
         } else {
             format!("mods/{mod_folder}/{}", rel_trim)
+        };
+        // Normalize the top game-dir segment (`Mods/` from Windows zips):
+        // the deploy scan matches literal lowercase dirs and Linux is
+        // case-sensitive, so an unnormalized top dir would stage files the
+        // deployer never sees. Deeper segments keep their case — mod folder
+        // names are identity.
+        let target_rel = match target_rel.split_once('/') {
+            Some((top, rest)) if ["mods", "dlc", "bin", "content"].contains(&top.to_lowercase().as_str()) => {
+                format!("{}/{}", top.to_lowercase(), rest)
+            }
+            _ => target_rel,
         };
         let dst = stage.join(&target_rel);
         crate::log_line("rust", &format!("build_staging: copy src='{}' rel='{}' target_rel='{}' dst='{}'", src, rel, target_rel, dst.display()));
@@ -374,6 +394,97 @@ mod tests {
             remap_target("mods/modAxiiDelusion/bin/a.dll", &roots, "Axii Delusion"),
             "bin/a.dll"
         );
+    }
+
+    #[test]
+    fn remap_genuine_bin_layout_preserves_subdirs() {
+        // A real `bin/` tree (ASI loader, redscript tooling, …) keeps its
+        // full subpath: the "folder" segment is a genuine directory, not a
+        // mod wrapper. Dropping it strands files in `bin/` root.
+        let roots = [choice("Bin", "x64_dx12", "bin/x64_dx12")];
+        assert_eq!(
+            remap_target("bin/x64_dx12/winmm.dll", &roots, "Grass"),
+            "bin/x64_dx12/winmm.dll"
+        );
+        assert_eq!(
+            remap_target("bin/x64_dx12/plugins/W3GrassWaves.asi", &roots, "Grass"),
+            "bin/x64_dx12/plugins/W3GrassWaves.asi"
+        );
+    }
+
+    #[test]
+    fn remap_genuine_bin_menu_xml_keeps_config() {
+        // `bin/config/r4game/…xml` as Bin must not lose the `config/` level.
+        let roots = [choice("Bin", "config", "bin/config")];
+        assert_eq!(
+            remap_target("bin/config/r4game/user_config_matrix/pc/modFoo.xml", &roots, "Foo"),
+            "bin/config/r4game/user_config_matrix/pc/modFoo.xml"
+        );
+    }
+
+    #[test]
+    fn remap_genuine_content_stays_put() {
+        let roots = [choice("Content", "scripts", "content/scripts")];
+        assert_eq!(
+            remap_target("content/scripts/x.ws", &roots, "Loose"),
+            "content/scripts/x.ws"
+        );
+    }
+
+    #[test]
+    fn build_staging_normalizes_top_dir_case() {
+        // `Mods/` from a Windows zip must stage under lowercase `mods/`,
+        // or the deploy scan (literal dir match, case-sensitive fs) misses it.
+        let tmp = tmpdir("top-case");
+        write(&tmp.join("src/a.ws"), "x");
+        let plan = InstallPlan {
+            moves: vec![(tmp.join("src/a.ws").to_string_lossy().to_string(), "Mods/modFoo/content/a.ws".to_string())],
+            docs: vec![],
+        };
+        let stage = tmp.join("stage");
+        let (targets, _) = build_staging(&plan, &stage, "whatever").unwrap();
+        assert_eq!(targets, vec!["mods/modFoo/content/a.ws"]);
+        assert!(stage.join("mods/modFoo/content/a.ws").is_file());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn grass_layout_end_to_end_mixed_roots() {
+        // Dynamic Grass Overhaul shape: capital-`Mods` mod folder plus a
+        // genuine `bin/x64_dx12` tree. Mod rows normalize the top dir;
+        // the Bin tree passes through with subdirs intact.
+        let tmp = tmpdir("grass-layout");
+        write(&tmp.join("Mods/mod0000_W3GrassCleanup/content/blob0.bundle"), "x");
+        write(&tmp.join("bin/x64_dx12/winmm.dll"), "y");
+        write(&tmp.join("bin/x64_dx12/plugins/W3GrassWaves.asi"), "z");
+        let plan = analyze(&tmp);
+        let mut groups: std::collections::BTreeMap<(String, String), (usize, String)> = Default::default();
+        for (_src, rel) in &plan.moves {
+            let (first, folder, _rest) = split_rel(rel);
+            let kind = match first.as_str() {
+                "dlc" => "DLC",
+                "bin" => "Bin",
+                "content" => "Content",
+                _ => "Mod",
+            };
+            let e = groups.entry((kind.to_string(), folder)).or_insert((0, String::new()));
+            e.0 += 1;
+            e.1 = src_prefix(rel);
+        }
+        let rows: Vec<RootChoice> = groups
+            .into_iter()
+            .map(|((kind, folder), (files, prefix))| RootChoice { prefix, kind, folder, files })
+            .collect();
+        let out: Vec<String> = plan.moves.iter().map(|(_, r)| remap_target(r, &rows, "Grass")).collect();
+        for o in &out {
+            if o.contains("W3GrassCleanup") {
+                assert!(o.starts_with("mods/mod0000_W3GrassCleanup/content/"), "mod tree kept: {o}");
+            } else {
+                assert!(o.starts_with("bin/x64_dx12/"), "bin tree intact: {o}");
+            }
+        }
+        assert_eq!(out.len(), 3);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
