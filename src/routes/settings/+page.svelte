@@ -24,6 +24,10 @@
    *  %USERPROFILE%\Documents, so the prefix field stays hidden there. */
   let isWindows: boolean = $state(false);
   let initialStaging: string = $state('');
+  /** What's shown in the staging field: the override, or the backend's
+   *  default staging dir when no override is set. */
+  let stagingShown: string = $state('');
+  let defaultStaging: string = $state('');
 
   type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
 
@@ -35,6 +39,11 @@
       isWindows = (await import('@tauri-apps/plugin-os').then((m) => m.platform()).catch(() => '')) === 'windows';
       config = await loadConfigNative();
       initialStaging = config.stagingDir ?? '';
+      try {
+        const rep = await invoke<{ default_staging: string }>('storage_report');
+        defaultStaging = rep.default_staging ?? '';
+      } catch {}
+      stagingShown = config.stagingDir || defaultStaging;
       console.debug("[w3mm] settings config loaded", config);
       if (!config.gameDir) detect(true);
       else checkGame();
@@ -154,9 +163,9 @@
     </LabeledField>
     {/if}
     <LabeledField label="Staging">
-      <FormInput bind:value={config.stagingDir} mono placeholder="optional — same drive as the game is fastest" class="min-w-0 flex-1" />
-      <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).stagingDir, 'Select the staging folder', 'stagingDir')}>Browse…</Button>
-      {#if config.stagingDir}<Button variant="secondary" size="md" onclick={() => { if (config) config.stagingDir = ''; }}>Reset</Button>{/if}
+      <FormInput bind:value={stagingShown} mono placeholder="same drive as the game is fastest" class="min-w-0 flex-1" oninput={() => { if (config) config.stagingDir = stagingShown; }} />
+      <Button variant="secondary" size="md" onclick={async () => { await pickDir(stagingShown, 'Select the staging folder', 'stagingDir'); if (config) stagingShown = config.stagingDir || defaultStaging; }}>Browse…</Button>
+      {#if config.stagingDir}<Button variant="secondary" size="md" onclick={() => { if (config) { config.stagingDir = ''; stagingShown = defaultStaging; } }}>Reset</Button>{/if}
     </LabeledField>
     <LabeledField label="Nexus API key">
       <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
