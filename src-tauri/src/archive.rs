@@ -130,6 +130,12 @@ fn extract_rar(archive: &Path, dest: &Path) -> Result<(), ArchiveError> {
 }
 
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), ArchiveError> {
+    // Fail fast with a message the UI can show as-is: reinstall rows often
+    // point at downloads that were moved, renamed, or never migrated from
+    // the legacy manager, and the raw IO error below would just confuse.
+    if !archive.is_file() {
+        return Err(ArchiveError::Other(format!("Archive not found: {}", archive.display())));
+    }
     std::fs::create_dir_all(dest).map_err(|e| ArchiveError::Io(e.to_string()))?;
     let low = archive.to_string_lossy().to_lowercase();
     if low.ends_with(".zip") {
@@ -180,6 +186,20 @@ mod tests {
     fn doc_names() {
         assert!(is_doc_name("readme.txt"));
         assert!(!is_doc_name("mods/modFoo/content/a.ws"));
+    }
+    #[test]
+    fn missing_archive_is_friendly() {
+        // Reinstall rows pointing at moved/deleted downloads must fail with
+        // a message fit to show, not a raw OS error.
+        let dir = std::env::temp_dir().join(format!("w3mm-missing-test-{}", std::process::id()));
+        let err = extract_archive(
+            std::path::Path::new("/definitely/not/here-12345.zip"),
+            &dir,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Archive not found"), "got: {err}");
+        assert!(err.contains("here-12345.zip"), "got: {err}");
     }
     #[test]
     fn rar_fixture_lists() {

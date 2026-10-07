@@ -15,6 +15,7 @@
   import PageHeader from '$lib/components/page-header.svelte';
   import WarningBanner from '$lib/components/warning-banner.svelte';
   import CollisionNotice from '$lib/components/collision-notice.svelte';
+  import Button from '$lib/components/button.svelte';
 
   type Root = { prefix: string; kind: string; folder: string; files: number };
 
@@ -34,13 +35,23 @@
   let rawFiles: string[] = $state([]);
   let warn: string = $state('');
   let busy: boolean = $state(false);
+  /** The recorded archive is gone (moved/renamed download, legacy import):
+   *  offer to locate the file instead of dead-ending on the error. */
+  let missing: string = $state('');
 
   const kinds = ['Mod', 'DLC', 'Bin', 'Content'];
 
-  onMount(async () => {
+  onMount(() => {
     archPath = page.url.searchParams.get('path') ?? '';
     if (!archPath) { warn = 'No archive given.'; return; }
     stem = archPath.split('/').pop() ?? archPath;
+    load();
+  });
+
+  /** Preview the archive; missing files detour to the locate flow. */
+  async function load() {
+    warn = '';
+    missing = '';
     try {
       const [n, v, nx] = await invoke<[string, string, string]>('parse_archive_name', { filename: stem });
       // Defaults from the download that fetched this file win over filename
@@ -58,8 +69,41 @@
       collisions = managed;
       const st = await invoke<{ mods: { sep: boolean; id: string; name: string }[] }>('list_mods');
       sections = st.mods.filter((m) => m.sep).map((m) => ({ id: m.id, name: m.name }));
-    } catch (e) { warn = String(e); }
-  });
+    } catch (e) {
+      const msg = String(e);
+      // install_preview runs extraction: a stale recorded path (moved or
+      // deleted download, legacy `_ModManager` import) lands here. The
+      // backend phrases it as "Archive not found"; older builds leak the raw
+      // OS error, so match both.
+      if (/archive not found|no such file|could not find|not_found/i.test(msg)) {
+        missing = archPath;
+        warn = `Archive not found — it may have been moved, renamed, or deleted. Locate the file to continue; installing from the new location also repairs the mod's recorded path.`;
+      } else {
+        warn = msg;
+      }
+    }
+  }
+
+  /** Pick a replacement archive and re-run the preview from it. */
+  async function locate() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const sel = await open({
+        multiple: false,
+        filters: [{ name: 'Mod archive', extensions: ['zip', '7z', 'rar', 'tar', 'gz', 'tgz'] }],
+      });
+      if (!sel || Array.isArray(sel)) return;
+      archPath = sel as string;
+      stem = archPath.split('/').pop() ?? archPath;
+      roots = [];
+      rawFiles = [];
+      addedFiles = [];
+      collisions = [];
+      await load();
+    } catch (e) {
+      warn = String(e);
+    }
+  }
 
   function rootLabel(r: Root): string {
     if (!r.folder) return '(loose files)';
@@ -157,6 +201,12 @@
   <FilesSection open={addedOpen} label="Added to the game folder" paths={addedFiles} maxHeight="16rem" onToggle={(o)=> addedOpen = o} />
 
   <WarningBanner message={warn} />
+  {#if missing}
+    <div class="flex items-center gap-2">
+      <Button variant="secondary" size="md" onclick={locate}>Locate archive…</Button>
+      <span class="truncate font-mono text-[12px] text-muted-foreground">{missing}</span>
+    </div>
+  {/if}
   <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel={busy ? 'Installing…' : 'Install'} onPrimary={install} primaryDisabled={busy || !roots.length} primaryClass="px-[18px] py-2 text-sm">
     {#snippet cancelIcon()}<X class="inline size-4" />{/snippet}
   </FormActions>
