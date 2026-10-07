@@ -474,6 +474,18 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
+        // Manually picked archives live wherever the user left them: move
+        // the file into our downloads first so the row's recorded path stays
+        // valid for reinstalls and updates.
+        let game: std::path::PathBuf = {
+            let g = lock_shared(&shared, "install_archive")?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
+            m.home.game.clone()
+        };
+        let dl = game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+        let path = downloads::ensure_in_downloads(std::path::Path::new(&path), &dl)?
+            .to_string_lossy()
+            .to_string();
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| e.to_string())?;
         let plan = install::analyze(&tmp);
         let staging: std::path::PathBuf = {
@@ -2006,6 +2018,18 @@ fn install_roots(
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
+        // Manually picked archives live wherever the user left them: move
+        // the file into our downloads first so the row's recorded path stays
+        // valid for reinstalls and updates.
+        let game: std::path::PathBuf = {
+            let g = lock_shared(&shared, "install_roots")?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
+            m.home.game.clone()
+        };
+        let dl = game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+        let path = downloads::ensure_in_downloads(std::path::Path::new(&path), &dl)?
+            .to_string_lossy()
+            .to_string();
         log_line("rust", &format!("install_roots: extracting {path}"));
         archive::extract_archive(std::path::Path::new(&path), &tmp).map_err(|e| {
             log_line("rust", &format!("install_roots: extract_archive failed: {}", e));

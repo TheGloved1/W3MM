@@ -510,3 +510,117 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     }
     Ok(done)
 }
+
+/// Move a manually picked archive into the manager's downloads dir so the
+/// mod row's recorded path stays valid (reinstalls, updates). Already-inside
+/// files are returned as-is; name collisions get a `name (n).ext` suffix so
+/// nothing already stored is ever overwritten. Falls back to copy+delete
+/// when the source lives on another filesystem. Errors when the source is
+/// missing so callers can show the locate flow instead of a raw OS error.
+pub fn ensure_in_downloads(src: &std::path::Path, dl_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if !src.is_file() {
+        return Err(format!("Archive not found: {}", src.display()));
+    }
+    std::fs::create_dir_all(dl_dir).map_err(|e| e.to_string())?;
+    let same_dir = src
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .zip(dl_dir.canonicalize().ok())
+        .map(|(a, b)| a == b)
+        .unwrap_or(false);
+    if same_dir {
+        return Ok(src.to_path_buf());
+    }
+    let name = src
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| format!("Archive not found: {}", src.display()))?;
+    let mut dst = dl_dir.join(&name);
+    if dst.exists() {
+        let (stem, ext) = match name.rfind('.') {
+            Some(i) => (&name[..i], &name[i..]),
+            None => (name.as_str(), ""),
+        };
+        let mut n = 1;
+        loop {
+            let cand = dl_dir.join(format!("{stem} ({n}){ext}"));
+            if !cand.exists() {
+                dst = cand;
+                break;
+            }
+            n += 1;
+        }
+    }
+    match std::fs::rename(src, &dst) {
+        Ok(()) => Ok(dst),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            std::fs::copy(src, &dst).map_err(|e| e.to_string())?;
+            std::fs::remove_file(src).map_err(|e| e.to_string())?;
+            Ok(dst)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("w3mm-dl-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn moves_outside_archives_in() {
+        let base = tmpdir("move-in");
+        let dl = base.join("downloads");
+        let src = base.join("pick").join("mod.zip");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, b"zip").unwrap();
+        let got = ensure_in_downloads(&src, &dl).unwrap();
+        assert_eq!(got, dl.join("mod.zip"));
+        assert!(got.is_file());
+        assert!(!src.exists(), "source must be moved, not copied");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn inside_files_are_untouched() {
+        let base = tmpdir("noop");
+        let dl = base.join("downloads");
+        std::fs::create_dir_all(&dl).unwrap();
+        let src = dl.join("mod.zip");
+        std::fs::write(&src, b"zip").unwrap();
+        assert_eq!(ensure_in_downloads(&src, &dl).unwrap(), src);
+        assert!(src.is_file());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn collisions_get_suffixed() {
+        let base = tmpdir("suffix");
+        let dl = base.join("downloads");
+        std::fs::create_dir_all(&dl).unwrap();
+        std::fs::write(dl.join("mod.zip"), b"old").unwrap();
+        let src = base.join("pick").join("mod.zip");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, b"new").unwrap();
+        let got = ensure_in_downloads(&src, &dl).unwrap();
+        assert_eq!(got, dl.join("mod (1).zip"));
+        assert_eq!(std::fs::read(&got).unwrap(), b"new");
+        assert_eq!(std::fs::read(dl.join("mod.zip")).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn missing_source_is_friendly() {
+        let base = tmpdir("missing");
+        let err = ensure_in_downloads(&base.join("nope.zip"), &base.join("downloads")).unwrap_err();
+        assert!(err.contains("Archive not found"), "got: {err}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
