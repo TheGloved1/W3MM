@@ -396,22 +396,9 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     }
     // Kept merges win over every staged copy: write them over the deployed file.
     let mut merged_count = 0;
-    for (rel, text) in kept {
-        let dst = home.game.join(&rel);
-        let bytes = text.replace('\n', "\r\n").into_bytes();
-        if dst.is_file() {
-            let bdst = home.backup.join(&rel);
-            if !bdst.exists() {
-                if let Some(p) = bdst.parent() {
-                    std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-                }
-                std::fs::copy(&dst, &bdst).map_err(|e| e.to_string())?;
-            }
-        } else if let Some(p) = dst.parent() {
-            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&dst, bytes).map_err(|e| e.to_string())?;
-        if !all_written.contains(&rel) {
+    for (rel, text) in &kept {
+        deploy::apply_merge(&home.game, &home.backup, rel, text).map_err(|e| e.to_string())?;
+        if !all_written.contains(rel) {
             all_written.push(rel.clone());
         }
         merged_count += 1;

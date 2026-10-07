@@ -13,11 +13,37 @@ fn link_or_copy(src: &Path, dst: &Path) -> std::io::Result<()> {
     let _ = std::fs::remove_file(dst);
     match std::fs::hard_link(src, dst) {
         Ok(()) => Ok(()),
-        Err(_) => {
-            std::fs::copy(src, dst)?;
-            Ok(())
+        Err(_) => link_fallback(src, dst),
+    }
+}
+
+/// Hardlink failed (usually a cross-device staging/game split): symlink on
+/// unix — same zero-copy, single-source semantics, and symlinks cross
+/// filesystems. Plain copy elsewhere (Windows symlinks need privileges).
+/// Absolute link target so the game never depends on our cwd.
+fn link_fallback(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    #[cfg(unix)]
+    {
+        let target = std::path::absolute(src).unwrap_or_else(|_| src.to_path_buf());
+        if std::os::unix::fs::symlink(&target, dst).is_ok() {
+            return Ok(());
         }
     }
+    std::fs::copy(src, dst)?;
+    Ok(())
+}
+
+/// True when `dst` is a symlink (dangling or not): the deployer is the only
+/// writer of managed paths, so a link there is ours. Removing a link never
+/// destroys content — the target file survives wherever it lives — hence no
+/// backup is taken for links, only for real files we are about to clobber.
+fn dst_is_link(dst: &Path) -> bool {
+    std::fs::symlink_metadata(dst)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 pub fn mod_files(staging_mod: &Path) -> Vec<PathBuf> {
@@ -100,7 +126,12 @@ pub fn deploy_mod(game: &Path, staging_mod: &Path, rels: &[PathBuf], backup: &Pa
         let dst = game.join(rel);
         // Back up anything we'd overwrite exactly once — but never our own
         // output (see is_ours): that isn't an original worth restoring.
-        if dst.is_file() && !is_ours(&src, &dst) {
+        // Symlink destinations are ours by construction (see dst_is_link):
+        // drop the link with no backup instead of snapshotting our own
+        // staged content as if it were a vanilla original.
+        if dst_is_link(&dst) {
+            std::fs::remove_file(&dst)?;
+        } else if dst.is_file() && !is_ours(&src, &dst) {
             let bdst = backup.join(rel);
             if !bdst.exists() {
                 if let Some(p) = bdst.parent() {
@@ -298,6 +329,30 @@ pub fn scan_tree_orphans(
     }
     orphans.sort();
     orphans
+}
+
+/// Write a kept merge over the deployed file, backing up a genuine original
+/// exactly once. A symlink destination is ours by construction: drop the
+/// link with no backup (removing a link never destroys content) instead of
+/// snapshotting our own staged bytes — and, critically, instead of writing
+/// the merged bytes *through* the link into the mod's stored copy.
+pub fn apply_merge(game: &Path, backup: &Path, rel: &str, text: &str) -> std::io::Result<()> {
+    let dst = game.join(rel);
+    let bytes = text.replace('\n', "\r\n").into_bytes();
+    if dst_is_link(&dst) {
+        std::fs::remove_file(&dst)?;
+    } else if dst.is_file() {
+        let bdst = backup.join(rel);
+        if !bdst.exists() {
+            if let Some(p) = bdst.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::copy(&dst, &bdst)?;
+        }
+    } else if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    std::fs::write(&dst, bytes)
 }
 
 /// Restore backups for paths no longer wanted; drop empty dirs up to game root.
@@ -516,6 +571,81 @@ mod tests {
         let text = std::fs::read_to_string(game.join("bin/dx11filelist.txt")).unwrap();
         assert!(text.contains(&xml), "wanted entry must survive its own sweep");
         assert_eq!(out.get("bin/dx11filelist.txt"), Some(&vec![xml]), "tracked wanted entry stays tracked");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod link_tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("w3mm-link-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn link_fallback_symlinks() {
+        // The cross-device fallback: a link, not a copy — content reads
+        // through to staging and no extra disk is used.
+        let base = tmpdir("fallback");
+        let src = base.join("stage").join("a.ws");
+        std::fs::create_dir_all(src.parent().unwrap()).unwrap();
+        std::fs::write(&src, b"x").unwrap();
+        let dst = base.join("game").join("a.ws");
+        link_fallback(&src, &dst).unwrap();
+        assert!(std::fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"x");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn symlink_dst_replaced_without_backup() {
+        // Previously deployed as a link (cross-device era) pointing at
+        // *different* bytes than the new staged copy: redeploying must drop
+        // the link and never snapshot the old staged bytes as vanilla (the
+        // old code copied the link target into backup/).
+        let base = tmpdir("redeploy");
+        let game = base.join("game");
+        let backup = base.join("backup");
+        let stage = base.join("stage");
+        std::fs::create_dir_all(game.join("mods/mA/content")).unwrap();
+        std::fs::create_dir_all(stage.join("mods/mA/content")).unwrap();
+        let old_target = base.join("old-target.ws");
+        std::fs::write(&old_target, b"v1").unwrap();
+        std::os::unix::fs::symlink(&old_target, game.join("mods/mA/content/old.ws")).unwrap();
+        std::fs::write(stage.join("mods/mA/content/old.ws"), b"v2").unwrap();
+        let rels = mod_files(&stage);
+        assert_eq!(rels.len(), 1);
+        deploy_mod(&game, &stage, &rels, &backup).unwrap();
+        assert_eq!(std::fs::read(game.join("mods/mA/content/old.ws")).unwrap(), b"v2");
+        assert_eq!(std::fs::read(&old_target).unwrap(), b"v1", "link target must survive");
+        assert!(
+            !backup.join("mods/mA/content/old.ws").exists(),
+            "linked output is ours: no backup may be taken"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn apply_merge_over_symlink_writes_through_nothing() {
+        // A merge landing on a linked file must replace the link with a
+        // regular file — writing through would corrupt the staged copy.
+        let base = tmpdir("merge");
+        let game = base.join("game");
+        let backup = base.join("backup");
+        let target = base.join("stage").join("s.ws");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"staged").unwrap();
+        let dst = game.join("mods/mA/content/s.ws");
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &dst).unwrap();
+        apply_merge(&game, &backup, "mods/mA/content/s.ws", "merged\n").unwrap();
+        assert!(!std::fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), b"staged", "stored copy must be untouched");
+        assert!(!backup.join("mods/mA/content/s.ws").exists(), "no backup for linked output");
         let _ = std::fs::remove_dir_all(&base);
     }
 }
