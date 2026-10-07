@@ -9,7 +9,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub fn open(game_dir: &str, prefix: &str) -> Result<Self, String> {
+    pub fn open(game_dir: &str, prefix: &str, staging_override: &str) -> Result<Self, String> {
         // One-time move from the old data dir name; keeps state/downloads/backups.
         let game = std::path::PathBuf::from(game_dir);
         let legacy = game.join("_W3LMN");
@@ -19,7 +19,7 @@ impl Manager {
                 .map_err(|e| format!("could not migrate _W3LMN data: {e}"))?;
             eprintln!("[w3mm] migrated game data _W3LMN -> {}", MANAGER_DIRNAME);
         }
-        let home = Home::new(game_dir, prefix);
+        let home = Home::new(game_dir, prefix, staging_override);
         // Relocate `<game>/_W3MM/` into the platform data dir on first run.
         // Merge-missing covers an interrupted previous attempt; once the
         // state file is over, the in-game dir is superseded and removed.
@@ -32,7 +32,25 @@ impl Manager {
             }
         }
         home.ensure_dirs().map_err(|e| e.to_string())?;
-        let state = load_state(&home.state_file)?;
+        let mut state = load_state(&home.state_file)?;
+        // Staging override changed (set or cleared in Settings): move staged
+        // mods between the effective dirs so nothing is orphaned, then
+        // persist the new override with the state it belongs to.
+        {
+            let prev = effective_staging(&home, &state.staging_override);
+            let next = effective_staging(&home, staging_override);
+            if prev != next {
+                if prev.exists() {
+                    migrate_dir_contents(&prev, &next)?;
+                    crate::log_line(
+                        "rust",
+                        &format!("moved staging {} -> {}", prev.display(), next.display()),
+                    );
+                }
+                state.staging_override = staging_override.trim().to_string();
+                crate::state::save_state(&home.state_file, &state)?;
+            }
+        }
         Ok(Self { home, state: Mutex::new(state) })
     }
 
@@ -46,6 +64,16 @@ impl Manager {
     /// `%USERPROFILE%\Documents\The Witcher 3` on Windows (no prefix).
     pub fn settings_dir(&self) -> std::path::PathBuf {
         settings_dir_for(&self.home.prefix)
+    }
+}
+
+/// Effective staging dir for an override value: the override itself, or the
+/// default under the data root when empty.
+fn effective_staging(home: &Home, staging_override: &str) -> std::path::PathBuf {
+    if staging_override.trim().is_empty() {
+        home.default_staging()
+    } else {
+        std::path::PathBuf::from(staging_override.trim())
     }
 }
 
@@ -171,5 +199,21 @@ mod tests {
         assert_eq!(std::fs::read(dst.join("state.json")).unwrap(), b"new");
         assert!(dst.join("staging/f.ws").is_file());
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod effective_tests {
+    use super::*;
+
+    #[test]
+    fn override_wins_blank_falls_back() {
+        let home = Home::new("/games/w3", "", "");
+        assert_eq!(effective_staging(&home, ""), home.default_staging());
+        assert_eq!(effective_staging(&home, "   "), home.default_staging());
+        assert_eq!(
+            effective_staging(&home, "/mnt/fast/staging"),
+            std::path::PathBuf::from("/mnt/fast/staging")
+        );
     }
 }

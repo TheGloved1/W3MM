@@ -108,12 +108,17 @@ fn data_base_dir() -> PathBuf {
 }
 
 impl Home {
-    pub fn new(game_dir: &str, prefix: &str) -> Self {
+    pub fn new(game_dir: &str, prefix: &str, staging_override: &str) -> Self {
         let game = PathBuf::from(game_dir);
         let prefix = normalize_prefix(prefix);
         let root = data_root_for(game_dir);
+        let staging = if staging_override.trim().is_empty() {
+            root.join(STAGING_DIR)
+        } else {
+            PathBuf::from(staging_override.trim())
+        };
         Self {
-            staging: root.join(STAGING_DIR),
+            staging,
             backup: root.join(BACKUP_DIR),
             tmp: root.join(TMP_DIR),
             downloads: root.join(DOWNLOADS_DIR),
@@ -122,6 +127,11 @@ impl Home {
             game,
             prefix,
         }
+    }
+
+    /// Default staging dir for this data root (ignores any override).
+    pub fn default_staging(&self) -> PathBuf {
+        self.data.join(STAGING_DIR)
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -151,6 +161,27 @@ pub fn normalize_prefix(prefix: &str) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// Whether two dirs live on the same filesystem (hardlinks possible between
+/// them). Read-only metadata comparison — no probe files. `None` when either
+/// side can't be stated or the platform exposes no volume identity.
+pub fn same_filesystem(a: &Path, b: &Path) -> Option<bool> {
+    let (ma, mb) = (std::fs::metadata(a).ok()?, std::fs::metadata(b).ok()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(ma.dev() == mb.dev())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+        Some(ma.volume_serial_number() == mb.volume_serial_number())
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = (ma, mb);
+        None
+    }
+}
 /// Mirrors python `is_game_dir`: content dir + launcher or exe present.
 pub fn is_game_dir(path: &str) -> bool {
     let base = Path::new(path);
@@ -173,6 +204,19 @@ mod tests {
         let b = slug_for("/other/steamapps/common/The Witcher 3", "The Witcher 3");
         assert_ne!(a, b, "distinct installs must not share a data dir");
         assert!(a.len() > 13 && !a.contains('/'), "slug must be a single dir name: {a}");
+    }
+
+    #[test]
+    fn same_filesystem_tmp() {
+        // Two fresh tmp dirs share a filesystem; a bogus path yields None.
+        let a = std::env::temp_dir().join(format!("w3mm-fs-a-{}", std::process::id()));
+        let b = std::env::temp_dir().join(format!("w3mm-fs-b-{}", std::process::id()));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        assert_eq!(same_filesystem(&a, &b), Some(true));
+        assert_eq!(same_filesystem(&a, &std::path::PathBuf::from("/definitely/not/here-12345")), None);
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
     }
 
     #[test]

@@ -42,6 +42,10 @@ pub struct AppState {
     /// Top-priority first (python `state["priority"]`).
     #[serde(default)]
     pub priority: Vec<String>,
+    /// User staging-dir override (empty = default under the data root).
+    /// Applied to `Home` on open; moving contents happens there too.
+    #[serde(default)]
+    pub staging_override: String,
     #[serde(default)]
     pub deployed: std::collections::BTreeMap<String, String>,
     #[serde(default)]

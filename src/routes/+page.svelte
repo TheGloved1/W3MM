@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import type { AppState, MadeFor, ModRow, QueueItem } from "$lib/types";
-  import { loadConfigNative } from "$lib/config";
+  import { loadConfigNative, saveConfigNative } from "$lib/config";
   import DataList, {
     type ClickModifiers,
   } from "$lib/components/data-list.svelte";
@@ -57,7 +57,11 @@
   let updatesBanner: HTMLDivElement | null = $state(null);
   let gameDir: string = $state("");
   let prefix: string = $state("");
+  let stagingDir: string = $state("");
   let nexusKey: string = $state("");
+  /** Staging lives on another filesystem than the game: deploys copy. */
+  let storageSplit: boolean = $state(false);
+  let stagingDismissed: boolean = $state(false);
   let filter: string = $state("");
   let menuOpen: boolean = $state(false);
   let collapsed: Record<string, boolean> = $state({});
@@ -302,6 +306,8 @@
       const cfg = await loadConfigNative();
       gameDir = cfg.gameDir;
       prefix = cfg.prefix;
+      stagingDir = cfg.stagingDir;
+      stagingDismissed = cfg.stagingNoticeDismissed;
       nexusKey = cfg.nexusKey;
       if (!gameDir) {
         const found = await invoke<string | null>("detect_game").catch(
@@ -325,11 +331,20 @@
   async function open() {
     error = "";
     try {
-      await invoke("open_manager", { gameDir, prefix });
+      await invoke("open_manager", { gameDir, prefix, stagingDir });
       await refresh();
     } catch (e) {
       error = String(e);
     }
+  }
+
+  async function dismissStagingNotice() {
+    stagingDismissed = true;
+    try {
+      const cfg = await loadConfigNative();
+      cfg.stagingNoticeDismissed = true;
+      await saveConfigNative(cfg);
+    } catch {}
   }
 
   async function refresh() {
@@ -355,6 +370,12 @@
       () => ({}),
     );
     unmanaged = await invoke<string[]>("unmanaged_mods").catch(() => []);
+    try {
+      const rep = await invoke<{ sameDevice: boolean | null }>("storage_report");
+      storageSplit = rep.sameDevice === false;
+    } catch {
+      storageSplit = false;
+    }
     madeMap = {};
     if (appState) {
       for (const m of appState.mods.filter((x) => !x.sep)) {
@@ -1608,6 +1629,27 @@
           onclick={importThem}
           class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
           >Import them</button
+        >
+      </div>
+    {/if}
+    {#if storageSplit && !stagingDismissed}
+      <div
+        class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm"
+      >
+        <span class="flex-1"
+          >Staging is on a different drive than the game — installs copy
+          instead of hardlinking (slower, twice the disk). Move it next to
+          the game in Settings.</span
+        >
+        <button
+          onclick={() => openSettings()}
+          class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
+          >Change…</button
+        >
+        <button
+          onclick={dismissStagingNotice}
+          class="rounded-[7px] border border-border bg-popover px-3 py-1 text-sm hover:bg-accent"
+          >Dismiss</button
         >
       </div>
     {/if}

@@ -124,12 +124,38 @@ fn lock_shared<'a>(shared: &'a State<Shared>, ctx: &str) -> Result<std::sync::Mu
 }
 
 #[tauri::command]
-fn open_manager(shared: State<Shared>, game_dir: String, prefix: String) -> Result<bool, String> {
-    let m = Manager::open(&game_dir, &prefix)?;
+fn open_manager(shared: State<Shared>, game_dir: String, prefix: String, staging_dir: Option<String>) -> Result<bool, String> {
+    let m = Manager::open(&game_dir, &prefix, staging_dir.as_deref().unwrap_or(""))?;
     crate::nexus::load_version_cache(std::path::Path::new(&game_dir));
     log_launch_env();
     *lock_shared(&shared, "open_manager")? = Some(m);
     Ok(true)
+}
+
+/// Storage layout report: where staging lives vs the game, and whether the
+/// two share a filesystem (hardlinks work) or not (deploys silently fall
+/// back to full copies: slower, 2x disk). Powers the move-staging nudge.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StorageReport {
+    pub game: String,
+    pub staging: String,
+    pub default_staging: String,
+    pub same_device: Option<bool>,
+}
+
+#[tauri::command]
+fn storage_report(shared: State<Shared>) -> Result<StorageReport, String> {
+    let g = lock_shared(&shared, "storage_report")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    // Ensure both sides exist so metadata comparison never answers None
+    // just because staging hasn't been created yet.
+    let _ = std::fs::create_dir_all(&m.home.staging);
+    Ok(StorageReport {
+        game: m.home.game.to_string_lossy().to_string(),
+        staging: m.home.staging.to_string_lossy().to_string(),
+        default_staging: m.home.default_staging().to_string_lossy().to_string(),
+        same_device: crate::home::same_filesystem(&m.home.game, &m.home.staging),
+    })
 }
 
 #[tauri::command]
@@ -2243,6 +2269,7 @@ pub fn run() {
             downloads_history,
             downloads_dir_path,
             settings_dir_path,
+            storage_report,
             open_tool_window,
             merger_apply,
             merge_inputs,

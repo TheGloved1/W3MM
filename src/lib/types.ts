@@ -3,6 +3,8 @@ export interface AppConfig {
   font: string;
   gameDir: string;
   prefix: string;
+  stagingDir: string;
+  stagingNoticeDismissed: boolean;
   nexusKey: string;
   codeFont: string;
   codeSize: number;

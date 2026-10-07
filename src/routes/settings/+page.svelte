@@ -23,6 +23,7 @@
   /** Native Windows runs need no Proton/Wine prefix: settings live in
    *  %USERPROFILE%\Documents, so the prefix field stays hidden there. */
   let isWindows: boolean = $state(false);
+  let initialStaging: string = $state('');
 
   type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
 
@@ -33,6 +34,7 @@
     try {
       isWindows = (await import('@tauri-apps/plugin-os').then((m) => m.platform()).catch(() => '')) === 'windows';
       config = await loadConfigNative();
+      initialStaging = config.stagingDir ?? '';
       console.debug("[w3mm] settings config loaded", config);
       if (!config.gameDir) detect(true);
       else checkGame();
@@ -43,7 +45,7 @@
     }
   });
 
-  async function pickDir(current: string, title: string, into: 'gameDir' | 'prefix') {
+  async function pickDir(current: string, title: string, into: 'gameDir' | 'prefix' | 'stagingDir') {
     if (!config) return;
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
@@ -118,9 +120,13 @@
     if (!config) return;
     const ok = await invoke<boolean>('is_game_dir', { path: config.gameDir }).catch(() => false);
     if (!ok) { warn = 'Pick the Witcher 3 folder first (it holds content/ and bin/).'; return; }
+    if ((config.stagingDir ?? '') !== initialStaging) {
+      // New staging home: re-show the split-drive notice until dismissed.
+      config.stagingNoticeDismissed = false;
+    }
     await saveConfigNative(config);
     try {
-      await invoke('open_manager', { gameDir: config.gameDir, prefix: config.prefix });
+      await invoke('open_manager', { gameDir: config.gameDir, prefix: config.prefix, stagingDir: config.stagingDir ?? '' });
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
     } catch {}
@@ -147,6 +153,11 @@
       <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</Button>
     </LabeledField>
     {/if}
+    <LabeledField label="Staging">
+      <FormInput bind:value={config.stagingDir} mono placeholder="optional — same drive as the game is fastest" class="min-w-0 flex-1" />
+      <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).stagingDir, 'Select the staging folder', 'stagingDir')}>Browse…</Button>
+      {#if config.stagingDir}<Button variant="secondary" size="md" onclick={() => { if (config) config.stagingDir = ''; }}>Reset</Button>{/if}
+    </LabeledField>
     <LabeledField label="Nexus API key">
       <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
       <Button variant="secondary" size="md" onclick={() => (showKey = !showKey)}>{showKey ? 'Hide' : 'Show'}</Button>
