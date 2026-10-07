@@ -428,7 +428,13 @@ async function undoRelease(dryRun = false) {
   ok(`Deleted local tag ${log.tag}`);
 
   step('Deleting remote tag');
-  if (!dryRun) execSync(`git push origin :refs/tags/${log.tag}`, { stdio: 'ignore', encoding: 'utf-8' });
+  if (!dryRun) {
+    try {
+      execSync(`git push origin :refs/tags/${log.tag}`, { stdio: 'ignore', encoding: 'utf-8' });
+    } catch {
+      console.log(`  ${YELLOW}warning${NC} Could not delete remote tag (it may never have been pushed).`);
+    }
+  }
   ok(`Deleted remote tag ${log.tag}`);
 
   step('Deleting GitHub release');
@@ -890,7 +896,28 @@ and re-run: ./scripts/release.ts ${bump}${betaModifier ? ' beta' : ''} ${noPush 
   }
   ok('Tagged');
 
-  // Push to remote
+  // Push to remote. A failed push leaves local state (commit + tag) intact;
+  // never let a remote-side failure dump a stack trace. Diagnose remote
+  // vs local failures and print the exact recovery steps instead.
+  const pushRecovery = (out: string) => {
+    const remoteDown = /internal server error|remote rejected|http 5\d\d|rpc failed|service unavailable|bad gateway|gateway timeout/i.test(out);
+    console.error(`\n${RED}Push to origin/${branch} failed.${NC}`);
+    if (remoteDown) {
+      console.error('  The remote rejected the push (GitHub-side error, not your repo).');
+      console.error('  Local commit and tag are intact — nothing was lost.');
+    } else {
+      console.error('  Push output:');
+      for (const line of out.split('\n').slice(0, 8)) {
+        if (line.trim()) console.error(`    ${line.trim()}`);
+      }
+    }
+    console.error('\n  To retry once GitHub recovers:');
+    console.error(`    git push origin ${branch} --tags`);
+    console.error('  Or skip pushing and do it later:');
+    console.error('    ./scripts/release.ts --help  # see --no-push');
+    console.error('  To throw this release away entirely:');
+    console.error('    ./scripts/release.ts --undo');
+  };
   if (noPush) {
     console.log(`\n${YELLOW}SKIP — push disabled by --no-push${NC}`);
     console.log(`${DIM}To push manually:${NC}`);
@@ -898,7 +925,14 @@ and re-run: ./scripts/release.ts ${bump}${betaModifier ? ' beta' : ''} ${noPush 
   } else {
     step(`Pushing to origin/${branch}`);
     if (!dryRun) {
-      execSync(`git push origin ${branch} --tags`, { encoding: 'utf-8' });
+      try {
+        execSync(`git push origin ${branch} --tags`, { encoding: 'utf-8' });
+      } catch (e) {
+        const out = (e as { stderr?: unknown; stdout?: unknown; message?: unknown });
+        const text = [out.stderr, out.stdout, out.message].map((x) => String(x ?? '')).join('\n');
+        pushRecovery(text);
+        process.exit(1);
+      }
     }
     ok('Pushed');
   }
