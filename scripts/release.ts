@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
 import { execSync } from 'node:child_process';
-import { existsSync, fstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, fstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline/promises';
 
@@ -348,7 +347,7 @@ interface UndoLog {
   created: string[];
 }
 
-const UNDO_DIR = '.release-undo';
+const UNDO_FILE = '.release-undo.json';
 
 function captureFileSnapshot(files: string[]): Record<string, string | null> {
   const snapshot: Record<string, string | null> = {};
@@ -359,45 +358,35 @@ function captureFileSnapshot(files: string[]): Record<string, string | null> {
 }
 
 function saveUndoLog(log: UndoLog) {
-  if (!existsSync(UNDO_DIR)) mkdirSync(UNDO_DIR, { recursive: true });
-  writeFileSync(join(UNDO_DIR, `v${log.version.to}.json`), JSON.stringify(log, null, 2) + '\n');
+  // One slot only: each release overwrites the previous log, so undo always
+  // targets the most recent release and there is never a menu to pick from.
+  writeFileSync(UNDO_FILE, JSON.stringify(log, null, 2) + '\n');
 }
 
-function listUndoLogs(): { version: string; path: string }[] {
-  if (!existsSync(UNDO_DIR)) return [];
-  return readdirSync(UNDO_DIR)
-    .filter((f: string) => f.endsWith('.json'))
-    .map((f: string) => ({ version: f.replace(/^v/, '').replace(/\.json$/, ''), path: join(UNDO_DIR, f) }))
-    .sort((a: { version: string }, b: { version: string }) => {
-      const pa = tryParseVersion(a.version);
-      const pb = tryParseVersion(b.version);
-      if (pa && pb) {
-        const base = pb.year - pa.year || pb.month - pa.month || pb.patch - pa.patch;
-        if (base !== 0) return base;
-        if (pa.prerelease && !pb.prerelease) return 1;
-        if (!pa.prerelease && pb.prerelease) return -1;
-        if (pa.prerelease && pb.prerelease) {
-          if (pa.prerelease !== pb.prerelease) return pa.prerelease.localeCompare(pb.prerelease);
-          return pb.prereleaseNum - pa.prereleaseNum;
-        }
-        return 0;
-      }
-      return b.version.localeCompare(a.version);
-    });
+function loadUndoLog(): UndoLog | null {
+  if (!existsSync(UNDO_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(UNDO_FILE, 'utf-8')) as UndoLog;
+  } catch {
+    return null;
+  }
 }
 
-async function undoRelease(dryRun = false) {
-  const logs = listUndoLogs();
-  if (logs.length === 0) fail('No undo logs found.');
+async function undoRelease(dryRun = false, force = false) {
+  const log = loadUndoLog();
+  if (log === null) fail('No undo log found — nothing to undo.');
 
-  console.log(`${BLUE}Available undo logs:${NC}`);
-  logs.forEach((log, i) => console.log(`  ${i + 1}. v${log.version}`));
-
-  const choice = (await ask(`\nSelect version to undo (1-${logs.length}) [1]: `)) || '1';
-  const idx = Math.max(0, Math.min(logs.length - 1, parseInt(choice, 10) - 1)) || 0;
-  const selected = logs[idx];
-
-  const log: UndoLog = JSON.parse(readFileSync(selected.path, 'utf-8'));
+  // Undo targets the release commit itself: refuse when later work sits on
+  // top, otherwise rewinding (or reasoning about) the release is ambiguous.
+  // --force skips this check (tags/release are still only deleted, never
+  // history rewritten, so later work is never destroyed).
+  const headRev = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+  if (headRev !== log.commit && !force) {
+    fail(
+      `HEAD (${headRev.substring(0, 7)}) is past the release commit (${log.commit.substring(0, 7)}). ` +
+        'Undo only works with nothing committed after the release (or pass --force).',
+    );
+  }
   console.log(`\nWill undo release v${log.version.to}:`);
   console.log(`  commit : ${log.commit.substring(0, 7)}`);
   console.log(`  tag    : ${log.tag}`);
@@ -448,9 +437,9 @@ async function undoRelease(dryRun = false) {
   ok('GitHub release deleted');
 
   if (!dryRun) {
-    rmSync(selected.path);
+    rmSync(UNDO_FILE);
   }
-  ok(`Cleaned up ${selected.path}`);
+  ok(`Cleaned up ${UNDO_FILE}`);
 
   console.log(`\n${GREEN}${'='.repeat(40)}${NC}`);
   console.log(`${GREEN}  Undid release v${log.version.to}${NC}`);
@@ -477,7 +466,8 @@ Bump commands:
 Flags:
   --no-changelog     Skip changelog generation
   --no-push          Commit and tag locally, skip git push
-  --undo             Revert the most recent release
+  --undo             Revert the most recent release (also: \`undo\`)
+  --force, -f        With undo: skip the no-commits-after-release check
   --dry-run          Show what would be done without making changes
   --help, -h, help   Show this help
 
@@ -496,7 +486,7 @@ Examples:
   ./scripts/release.ts                    # 25.05.4-beta.2 -> 25.05.4 (stable)
   ./scripts/release.ts 25.05.4            # exact version
   ./scripts/release.ts changelog patch    # preview changelog for next patch
-  ./scripts/release.ts --undo             # revert the most recent release
+  ./scripts/release.ts --undo             # revert the most recent release ('undo' works too)
    ./scripts/release.ts patch --no-push    # bump locally without pushing
    ./scripts/release.ts --dry-run          # dry run the next release
    ./scripts/release.ts patch --dry-run    # dry run a patch bump
@@ -578,10 +568,11 @@ async function main() {
     process.exit(0);
   }
 
-  // Undo
-  if (args.includes('--undo')) {
+  // Undo (`--undo` or bare `undo`)
+  if (args.includes('--undo') || args[0] === 'undo') {
     const dryRun = args.includes('--dry-run');
-    await undoRelease(dryRun);
+    const force = args.includes('--force') || args.includes('-f');
+    await undoRelease(dryRun, force);
     rl.close();
     process.exit(0);
   }
