@@ -1,3 +1,10 @@
+# [26.10.17] - 2026-10-07
+
+## Fixed
+
+- **install**: ```move picked archives into downloads before installing```
+- **release**: ```handle push failures without a stack dump```
+
 # [26.10.16] - 2026-10-07
 
 ## Fixed
