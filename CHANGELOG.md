@@ -1,3 +1,9 @@
+# [26.10.16] - 2026-10-07
+
+## Fixed
+
+- **install**: ```recover when the recorded archive is gone```
+
 # [26.10.15] - 2026-10-07
 
 ## Fixed
