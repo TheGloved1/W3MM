@@ -31,8 +31,27 @@ impl Manager {
     }
 
     /// Proton `.../pfx/drive_c/users/steamuser/Documents/The Witcher 3/gamesaves/..`
-    /// parent — where `mods.settings` / `input.settings` live.
+    /// parent — where `mods.settings` / `input.settings` live. Native
+    /// `%USERPROFILE%\Documents\The Witcher 3` on Windows (no prefix).
     pub fn settings_dir(&self) -> std::path::PathBuf {
-        self.home.prefix.join("drive_c/users/steamuser/Documents/The Witcher 3")
+        settings_dir_for(&self.home.prefix)
+    }
+}
+
+/// Where the game keeps `mods.settings` / `input.settings` for a prefix.
+/// Centralized so deploy and settings writers agree; platform split lives
+/// here instead of scattered `drive_c` joins.
+pub fn settings_dir_for(prefix: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = prefix;
+        let home = std::env::var_os("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        home.join("Documents/The Witcher 3")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        prefix.join("drive_c/users/steamuser/Documents/The Witcher 3")
     }
 }

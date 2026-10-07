@@ -129,6 +129,7 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
             } else {
                 rel
             };
+            let rel = canonical_rel(&rel);
             let first = rel.split(['/', '\\']).next().unwrap_or("").to_lowercase();
             if ["mods", "dlc", "bin"].contains(&first.as_str()) {
                 moves.push((e.path().to_string_lossy().to_string(), rel));
@@ -146,6 +147,23 @@ pub fn analyze(extracted: &Path) -> InstallPlan {
     moves.sort();
     docs.sort();
     InstallPlan { moves, docs }
+}
+
+/// Canonical rel form: `/` separators on every platform. Only Windows
+/// produces `\`-separated rels from the filesystem walk; elsewhere a
+/// backslash is a legal (if absurd) filename character and must survive, so
+/// normalization is a Windows-only step. Every downstream consumer
+/// (`split_rel`, `remap_target`, deploy's deployed-key matching) splits on
+/// `/` and relies on this.
+pub(crate) fn canonical_rel(rel: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        rel.replace('\\', "/")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        rel.to_string()
+    }
 }
 
 /// A row of the Install window's archive-contents table: one archive root the
@@ -301,7 +319,7 @@ pub fn build_staging(plan: &InstallPlan, stage: &Path, mod_folder: &str) -> Resu
     let mut targets = vec![];
     crate::log_line("rust", &format!("build_staging: stage={} mod_folder={} moves={}", stage.display(), mod_folder, plan.moves.len()));
     for (src, rel) in &plan.moves {
-        let rel_trim = rel.trim_end_matches('/').trim_end_matches('\\');
+        let rel_trim = canonical_rel(rel.trim_end_matches('/').trim_end_matches('\\'));
         let first = rel_trim.split('/').next().unwrap_or("").to_lowercase();
         let target_rel = if ["mods", "dlc", "bin", "content"].contains(&first.as_str()) {
             rel_trim.to_string()
@@ -366,6 +384,18 @@ mod tests {
         }
     }
     const AXII: &str = "mods/modAxiiDelusion";
+
+    #[test]
+    fn canonical_rel_keeps_slashes_everywhere() {
+        // Windows-only normalization: elsewhere a backslash is a legal
+        // filename character and must survive untouched.
+        let got = canonical_rel("mods\\modFoo\\content/a.ws");
+        #[cfg(target_os = "windows")]
+        assert_eq!(got, "mods/modFoo/content/a.ws");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(got, "mods\\modFoo\\content/a.ws");
+        assert_eq!(canonical_rel("bin/x64_dx12/winmm.dll"), "bin/x64_dx12/winmm.dll");
+    }
 
     #[test]
     fn remap_default_mod_keeps_folder() {

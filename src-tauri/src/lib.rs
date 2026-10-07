@@ -31,19 +31,45 @@ use std::io::Write;
 use std::path::PathBuf;
 use tauri::State;
 
-/// XDG state dir log file (e.g. ~/.local/state/w3mm/w3mm.log).
+/// Platform state dir log file (`~/.local/state/w3mm/w3mm.log` on Linux,
+/// `%LOCALAPPDATA%/w3mm/w3mm.log` on Windows).
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Writable per-user state base dir, with platform fallbacks so a missing
+/// `HOME` (Windows services, odd containers) still resolves somewhere.
+fn state_base_dir() -> PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_STATE_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        if !local.is_empty() {
+            return PathBuf::from(local);
+        }
+    }
+    for var in ["HOME", "USERPROFILE"] {
+        if let Some(home) = std::env::var_os(var) {
+            if !home.is_empty() {
+                let mut p = PathBuf::from(home);
+                #[cfg(target_os = "windows")]
+                return p;
+                #[cfg(not(target_os = "windows"))]
+                {
+                    p.push(".local");
+                    p.push("state");
+                    return p;
+                }
+            }
+        }
+    }
+    PathBuf::from(".")
+}
 
 fn log_path() -> &'static PathBuf {
     LOG_PATH.get_or_init(|| {
-        let base = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let mut p = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-                p.push(".local");
-                p.push("state");
-                p
-            });
+        let base = state_base_dir();
         let mut dir = base;
         dir.push("w3mm");
         let _ = std::fs::create_dir_all(&dir);
@@ -367,7 +393,7 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
     let _ = merged_count;
     // mods.settings in priority order, names as deployed folder names.
     let names: Vec<String> = ranked.iter().map(|r| state::ensure_mod_prefix(&r.name)).collect();
-    let settings = home.prefix.join("drive_c/users/steamuser/Documents/The Witcher 3").join("mods.settings");
+    let settings = crate::manager::settings_dir_for(&home.prefix).join("mods.settings");
     deploy::write_mods_settings(&settings, &names).map_err(|e| e.to_string())?;
     let filelist_added =
         deploy::update_filelists(&home.game, &menu_xmls, &stale_xmls_lower, &filelist_added)

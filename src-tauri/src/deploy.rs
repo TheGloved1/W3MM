@@ -29,8 +29,12 @@ pub fn mod_files(staging_mod: &Path) -> Vec<PathBuf> {
         }
         for e in WalkDir::new(&base).into_iter().flatten() {
             if e.file_type().is_file() {
+                // Canonical `/` rels: deployed keys, want-sets, and folder
+                // matching all split on `/` (see install::canonical_rel).
                 if let Ok(rel) = e.path().strip_prefix(staging_mod) {
-                    out.push(rel.to_path_buf());
+                    out.push(std::path::PathBuf::from(crate::install::canonical_rel(
+                        &rel.to_string_lossy(),
+                    )));
                 }
             }
         }
