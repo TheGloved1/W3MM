@@ -20,6 +20,9 @@
   let mergerOpen: boolean = $state(false);
   let mergerState: string = $state('');
   let mergerRep: MergerRep | null = $state(null);
+  /** Native Windows runs need no Proton/Wine prefix: settings live in
+   *  %USERPROFILE%\Documents, so the prefix field stays hidden there. */
+  let isWindows: boolean = $state(false);
 
   type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
 
@@ -28,6 +31,7 @@
   onMount(async () => {
     console.debug("[w3mm] settings window mounted");
     try {
+      isWindows = (await import('@tauri-apps/plugin-os').then((m) => m.platform()).catch(() => '')) === 'windows';
       config = await loadConfigNative();
       console.debug("[w3mm] settings config loaded", config);
       if (!config.gameDir) detect(true);
@@ -129,7 +133,7 @@
 </script>
 
 <div class="mx-auto flex h-full max-w-[680px] flex-col gap-3 overflow-y-auto px-[22px] py-5">
-  <PageHeader title="Settings" description="Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied." />
+  <PageHeader title="Settings" description={isWindows ? "Pick your Witcher 3 folder. Settings live in your Documents folder — no prefix needed on Windows." : "Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied."} />
 
   {#if config}
     <LabeledField label="Game folder">
@@ -137,10 +141,12 @@
       <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).gameDir, 'Select The Witcher 3 folder', 'gameDir')}>Browse…</Button>
     </LabeledField>
     {#if gameOk}<div class="pl-[122px] text-[12px] text-[#e3735f]">{gameOk}</div>{/if}
+    {#if !isWindows}
     <LabeledField label="Prefix">
       <FormInput bind:value={config.prefix} mono placeholder="e.g. …/steamapps/compatdata/292030/pfx" class="min-w-0 flex-1" />
       <Button variant="secondary" size="md" onclick={() => pickDir((config as AppConfig).prefix, 'Select the Wine/Proton prefix', 'prefix')}>Browse…</Button>
     </LabeledField>
+    {/if}
     <LabeledField label="Nexus API key">
       <FormInput bind:value={config.nexusKey} type={showKey ? 'text' : 'password'} mono placeholder="optional — for update checks and Nexus downloads" class="min-w-0 flex-1" />
       <Button variant="secondary" size="md" onclick={() => (showKey = !showKey)}>{showKey ? 'Hide' : 'Show'}</Button>
