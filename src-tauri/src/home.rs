@@ -1,38 +1,124 @@
-//! New-app home layout (clean break from `_ModManager`).
+//! App home layout: game dir + platform data dir.
 //!
-//! Python original (`w3modmanager.py`): `CONFIG_NAME`, `MANAGER_DIRNAME`,
-//! `_runtime_dir`, `load_config/save_config`, `home_for`.
-//! Here the home is `<game>/_W3MM/` so users can switch back and forth
-//! without the two apps touching each other's staging/backups/state.
+//! The manager used to keep everything in `<game>/_W3MM/`; app data now lives
+//! in the platform data dir (`$XDG_DATA_HOME/w3mm/<slug>/`,
+//! `%LOCALAPPDATA%/w3mm/<slug>/`), keyed per game install so multiple copies
+//! of the game stay isolated. A first-run migration moves an existing
+//! `<game>/_W3MM/` over (see `manager.rs`).
 
 use std::path::{Path, PathBuf};
 
+/// Legacy in-game data dir, kept as the migration source.
 pub const MANAGER_DIRNAME: &str = "_W3MM";
 pub const STATE_FILE: &str = "state.json";
 pub const STAGING_DIR: &str = "staging";
 pub const BACKUP_DIR: &str = "backup";
 pub const TMP_DIR: &str = "tmp";
+pub const DOWNLOADS_DIR: &str = "downloads";
 
 #[derive(Debug, Clone)]
 pub struct Home {
     pub game: PathBuf,
     pub prefix: PathBuf,
+    /// Platform data root for this game install (`.../w3mm/<slug>/`).
+    pub data: PathBuf,
     pub staging: PathBuf,
     pub backup: PathBuf,
     pub tmp: PathBuf,
+    pub downloads: PathBuf,
     pub state_file: PathBuf,
+}
+
+/// Stable, filesystem-safe identity for one game install: hash + readable
+/// tail. Windows canonical paths are case-insensitive (`C:\…` vs `c:\…`)
+/// and carry `\\?\` prefixes, so normalize those before hashing or one game
+/// yields two data dirs depending on how the folder was picked.
+fn slug_for(canonical: &str, tail: &str) -> String {
+    #[cfg(target_os = "windows")]
+    let canonical = {
+        let mut c = canonical.to_string();
+        if let Some(stripped) = c.strip_prefix(r"\\?\") {
+            c = stripped.to_string();
+        }
+        c.to_lowercase()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let canonical = canonical.to_string();
+    let hex = {
+        use sha1::Digest;
+        let mut h = sha1::Sha1::new();
+        h.update(canonical.as_bytes());
+        hex::encode(h.finalize())
+    };
+    let safe: String = tail
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(32)
+        .collect();
+    let safe = if safe.is_empty() { "game".to_string() } else { safe };
+    format!("{}-{safe}", &hex[..12])
+}
+
+/// Data root for a game install, creating nothing.
+pub fn data_root_for(game_dir: &str) -> PathBuf {
+    let game = PathBuf::from(game_dir);
+    // Canonicalize for a stable slug; fall back to the raw path (e.g. the
+    // folder was picked but not yet validated to exist).
+    let (canonical, tail) = match game.canonicalize() {
+        Ok(p) => (
+            p.to_string_lossy().to_string(),
+            p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        ),
+        Err(_) => (
+            game.to_string_lossy().to_string(),
+            game.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        ),
+    };
+    data_base_dir().join("w3mm").join(slug_for(&canonical, &tail))
+}
+
+/// Platform data base dir (`$XDG_DATA_HOME` → `~/.local/share`,
+/// `%LOCALAPPDATA%` → `%USERPROFILE%\AppData\Local`).
+fn data_base_dir() -> PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            if !local.is_empty() {
+                return PathBuf::from(local);
+            }
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            if !home.is_empty() {
+                return PathBuf::from(home).join("AppData").join("Local");
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".local").join("share");
+        }
+    }
+    PathBuf::from(".")
 }
 
 impl Home {
     pub fn new(game_dir: &str, prefix: &str) -> Self {
         let game = PathBuf::from(game_dir);
         let prefix = normalize_prefix(prefix);
-        let root = game.join(MANAGER_DIRNAME);
+        let root = data_root_for(game_dir);
         Self {
             staging: root.join(STAGING_DIR),
             backup: root.join(BACKUP_DIR),
             tmp: root.join(TMP_DIR),
+            downloads: root.join(DOWNLOADS_DIR),
             state_file: root.join(STATE_FILE),
+            data: root,
             game,
             prefix,
         }
@@ -74,4 +160,36 @@ pub fn is_game_dir(path: &str) -> bool {
     let has_content = base.join("content").is_dir();
     let has_bin = base.join("bin").is_dir();
     has_content && has_bin
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slug_stable_and_unique() {
+        let a = slug_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3", "The Witcher 3");
+        assert_eq!(a, slug_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3", "The Witcher 3"));
+        let b = slug_for("/other/steamapps/common/The Witcher 3", "The Witcher 3");
+        assert_ne!(a, b, "distinct installs must not share a data dir");
+        assert!(a.len() > 13 && !a.contains('/'), "slug must be a single dir name: {a}");
+    }
+
+    #[test]
+    fn slug_windows_case_folding() {
+        // Drive-letter case and \\?\ prefixes must not fork the data dir.
+        // These assertions hold on every platform: the folding itself is
+        // cfg-gated, so spell out both expectations.
+        let lower = slug_for("c:\\games\\witcher 3", "game");
+        let upper = slug_for("C:\\Games\\Witcher 3", "game");
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(lower, upper);
+            assert_eq!(lower, slug_for("\\\\?\\C:\\Games\\Witcher 3", "game"));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_ne!(lower, upper, "case-sensitive filesystems keep exact paths");
+        }
+    }
 }

@@ -503,12 +503,11 @@ fn install_archive(shared: State<Shared>, path: String, name: String, version: S
         // Manually picked archives live wherever the user left them: move
         // the file into our downloads first so the row's recorded path stays
         // valid for reinstalls and updates.
-        let game: std::path::PathBuf = {
+        let dl: std::path::PathBuf = {
             let g = lock_shared(&shared, "install_archive")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
-            m.home.game.clone()
+            m.home.downloads.clone()
         };
-        let dl = game.join(crate::home::MANAGER_DIRNAME).join("downloads");
         let path = downloads::ensure_in_downloads(std::path::Path::new(&path), &dl)?
             .to_string_lossy()
             .to_string();
@@ -1352,9 +1351,9 @@ fn queue_list() -> Vec<downloads::QueueItem> {
 fn dl_paths(shared: &State<Shared>) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let g = lock_shared(&shared, "dl_paths").ok()?;
     let m = g.as_ref()?;
-    let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+    let dir = m.home.downloads.clone();
     let _ = std::fs::create_dir_all(&dir);
-    let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
+    let hist = m.home.data.join("downloads.json");
     Some((dir, hist))
 }
 
@@ -1522,9 +1521,9 @@ fn update_mod(app: tauri::AppHandle, shared: State<Shared>, id: String, api_key:
         if nid.is_empty() {
             return Err("no Nexus ID on this mod — set one in Edit…".into());
         }
-        let dir = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+        let dir = m.home.downloads.clone();
         let _ = std::fs::create_dir_all(&dir);
-        let hist = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads.json");
+        let hist = m.home.data.join("downloads.json");
         (nid, row.version.clone(), Some(hist))
     };
     log_line("rust", &format!("update_mod: resolving {nexus} (installed {version})"));
@@ -1628,12 +1627,12 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
     Ok(true)
 }
 
-/// Absolute downloads-dir path (<game>/_W3MM/downloads).
+/// Absolute downloads-dir path (platform data dir).
 #[tauri::command]
 fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
     let g = lock_shared(&shared, "downloads_dir_path")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
-    let d = m.home.game.join(crate::home::MANAGER_DIRNAME).join("downloads");
+    let d = m.home.downloads.clone();
     let _ = std::fs::create_dir_all(&d);
     Ok(d.to_string_lossy().to_string())
 }
@@ -2047,12 +2046,11 @@ fn install_roots(
         // Manually picked archives live wherever the user left them: move
         // the file into our downloads first so the row's recorded path stays
         // valid for reinstalls and updates.
-        let game: std::path::PathBuf = {
+        let dl: std::path::PathBuf = {
             let g = lock_shared(&shared, "install_roots")?;
             let m = g.as_ref().ok_or("open a game folder first")?;
-            m.home.game.clone()
+            m.home.downloads.clone()
         };
-        let dl = game.join(crate::home::MANAGER_DIRNAME).join("downloads");
         let path = downloads::ensure_in_downloads(std::path::Path::new(&path), &dl)?
             .to_string_lossy()
             .to_string();
