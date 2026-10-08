@@ -15,7 +15,7 @@
     offerInstall,
   } from '$lib/downloads.svelte';
   import type { AppState } from '$lib/types';
-  import { Download, Layers, Settings } from 'lucide-svelte';
+  import { Download, Layers, Settings, Users } from 'lucide-svelte';
   let { children } = $props();
 
   const appVersion = __APP_VERSION__;
@@ -196,6 +196,10 @@
       <a href="/" title="Mods" class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
         <Layers class="size-4 shrink-0" />
         {#if !collapsed}<span>Mods</span>{/if}
+      </a>
+      <a href="/profiles" title="Profiles" class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/profiles') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
+        <Users class="size-4 shrink-0" />
+        {#if !collapsed}<span>Profiles</span>{/if}
       </a>
       <a href="/downloads" title="Downloads" class="relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/downloads') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
         <Download class="size-4 shrink-0" />

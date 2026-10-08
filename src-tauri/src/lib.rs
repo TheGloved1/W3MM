@@ -206,6 +206,64 @@ fn set_enabled(shared: State<Shared>, ids: Vec<String>, on: bool) -> Result<bool
     Ok(true)
 }
 
+/// Snapshot the currently enabled mods as a named profile.
+#[tauri::command]
+fn save_profile(shared: State<Shared>, name: String) -> Result<state::Profile, String> {
+    if name.trim().is_empty() {
+        return Err("name the profile first".into());
+    }
+    let g = lock_shared(&shared, "save_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let p = {
+        m.state.lock().map_err(|e| e.to_string())?.save_profile(&name)
+    };
+    m.save()?;
+    Ok(p)
+}
+
+/// Exact restore of a profile's saved selection (frontend redeploys after).
+#[tauri::command]
+fn apply_profile(shared: State<Shared>, id: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "apply_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let ok = {
+        m.state.lock().map_err(|e| e.to_string())?.apply_profile(&id)
+    };
+    if !ok {
+        return Err("profile not found".into());
+    }
+    m.save()?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn delete_profile(shared: State<Shared>, id: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "delete_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let ok = {
+        m.state.lock().map_err(|e| e.to_string())?.delete_profile(&id)
+    };
+    if !ok {
+        return Err("profile not found".into());
+    }
+    m.save()?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn rename_profile(shared: State<Shared>, id: String, name: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "rename_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let ok = {
+        m.state.lock().map_err(|e| e.to_string())?.rename_profile(&id, &name)
+    };
+    if !ok {
+        return Err("profile not found (or blank name)".into());
+    }
+    m.save()?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn set_priority(shared: State<Shared>, id: String, number: usize) -> Result<bool, String> {
     let g = lock_shared(&shared, "set_priority")?;
@@ -2214,6 +2272,10 @@ pub fn run() {
             is_game_dir,
             list_mods,
             set_enabled,
+            save_profile,
+            apply_profile,
+            delete_profile,
+            rename_profile,
             set_priority,
             rename_mod,
             remove_mods,

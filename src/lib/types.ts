@@ -34,6 +34,15 @@ export interface AppState {
   filelist_added: Record<string, string[]>;
   resolutions: Record<string, number[]>;
   merge_kept: Record<string, string>;
+  profiles: Profile[];
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  /** Enabled mod ids snapshot. */
+  enabled: string[];
+  updated: number;
 }
 
 export interface InstallPlan {

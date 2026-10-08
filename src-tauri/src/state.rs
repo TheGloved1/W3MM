@@ -35,11 +35,26 @@ pub struct ModRow {
     pub main_of: String,
 }
 
+/// A saved selection of activated mods. Snapshots which mods are enabled;
+// order and sections live on (they belong to the mod list, not the profile).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    /// Enabled mod ids at save time.
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    #[serde(default)]
+    pub updated: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppState {
     #[serde(default)]
     pub mods: Vec<ModRow>,
-    /// Top-priority first (python `state["priority"]`).
+    /// Saved enable-selections.
+    #[serde(default)]
+    pub profiles: Vec<Profile>,    /// Top-priority first (python `state["priority"]`).
     #[serde(default)]
     pub priority: Vec<String>,
     /// User staging-dir override (empty = default under the data root).
@@ -191,6 +206,54 @@ impl AppState {
     pub fn save_resolutions(&mut self, key: &str, answers: Vec<usize>) {
         self.resolutions.insert(key.to_string(), answers);
     }
+
+    /// Snapshot the currently enabled mods as a new profile.
+    pub fn save_profile(&mut self, name: &str) -> Profile {
+        let p = Profile {
+            id: format!("prof{}", uuid::Uuid::new_v4().simple()),
+            name: name.trim().to_string(),
+            enabled: self.mods_only().iter().filter(|m| m.enabled).map(|m| m.id.clone()).collect(),
+            updated: chrono::Local::now().timestamp(),
+        };
+        self.profiles.push(p.clone());
+        p
+    }
+
+    /// Exact restore: enable exactly the profile's still-installed mods,
+    /// disable everything else. Unknown ids (uninstalled since) are ignored.
+    /// Returns false when the profile doesn't exist.
+    pub fn apply_profile(&mut self, id: &str) -> bool {
+        let Some(p) = self.profiles.iter().find(|p| p.id == id) else {
+            return false;
+        };
+        let want: std::collections::BTreeSet<&str> =
+            p.enabled.iter().map(|s| s.as_str()).collect();
+        for m in self.mods.iter_mut().filter(|r| !r.sep) {
+            m.enabled = want.contains(m.id.as_str());
+        }
+        true
+    }
+
+    pub fn delete_profile(&mut self, id: &str) -> bool {
+        let n = self.profiles.len();
+        self.profiles.retain(|p| p.id != id);
+        self.profiles.len() != n
+    }
+
+    /// Returns false for unknown ids and blank names.
+    pub fn rename_profile(&mut self, id: &str, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        match self.profiles.iter_mut().find(|p| p.id == id) {
+            Some(p) => {
+                p.name = name.to_string();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 pub fn load_state(path: &PathBuf) -> Result<AppState, String> {
@@ -282,5 +345,32 @@ mod tests {
         s.mods = vec![row("a", "A"), row("b", "B"), row("c", "C")];
         s.priority = vec!["c".to_string(), "a".to_string(), "b".to_string()];
         assert_eq!(s.priority_ids(), vec!["a", "b", "c"]);
+    }
+    #[test]
+    fn profiles_save_apply_delete_rename() {
+        let mut s = AppState::default();
+        s.mods = vec![row("a", "A"), row("b", "B"), row("c", "C")];
+        s.set_enabled(&["b".to_string()], false);
+        let p = s.save_profile("  questing  ");
+        assert_eq!(p.name, "questing", "names are trimmed");
+        assert_eq!(p.enabled, vec!["a".to_string(), "c".to_string()]);
+        // Diverge, then exact-restore.
+        s.set_enabled(&["a".to_string(), "b".to_string(), "c".to_string()], true);
+        assert!(s.apply_profile(&p.id));
+        assert!(s.get("a").unwrap().enabled);
+        assert!(!s.get("b").unwrap().enabled);
+        assert!(s.get("c").unwrap().enabled);
+        // Unknown ids (uninstalled since saving) are ignored, not enabled.
+        s.profiles[0].enabled.push("ghost".to_string());
+        assert!(s.apply_profile(&p.id));
+        assert!(!s.get("b").unwrap().enabled);
+        assert!(!s.apply_profile("nope"));
+        assert!(s.rename_profile(&p.id, "boss fight"));
+        assert_eq!(s.profiles[0].name, "boss fight");
+        assert!(!s.rename_profile(&p.id, "   "));
+        assert!(!s.rename_profile("nope", "x"));
+        assert!(s.delete_profile(&p.id));
+        assert!(!s.delete_profile(&p.id));
+        assert!(s.profiles.is_empty());
     }
 }
