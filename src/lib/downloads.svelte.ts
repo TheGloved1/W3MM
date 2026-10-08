@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { goto } from '$app/navigation';
 import { loadConfigNative } from '$lib/config';
 import type { AppState, QueueItem } from '$lib/types';
 
@@ -193,6 +194,8 @@ export async function dlNxm(url: string): Promise<string> {
   if (row && row.status === 'done') return id; // caller decides install
   await invoke('queue_start', { id, destDir: await downloadsDir(), apiKey: cfg.nexusKey });
   await refreshQueue();
+  // A download just started — take the user to the Downloads page.
+  goto('/downloads').catch(() => {});
   return id;
 }
 
@@ -220,6 +223,8 @@ export async function dlMain(mods: AppState['mods'] | undefined, qq: QueueItem):
       apiKey: (await loadConfigNative()).nexusKey,
     });
     await refreshQueue();
+    // Retry started a download — take the user to the Downloads page.
+    goto('/downloads').catch(() => {});
     return;
   }
   if (qq.status === 'done') {
