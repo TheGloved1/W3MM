@@ -254,6 +254,26 @@ impl AppState {
             None => false,
         }
     }
+
+    /// Guarantee the list starts with a Default profile: seed one snapshotting
+    /// the currently enabled mods when the list is empty. The id is fixed
+    /// (`"default"`, not a uuid) so repeated runs converge instead of
+    /// duplicating. Note this also re-seeds after the user deletes their last
+    /// profile — an empty list always means "no profiles yet".
+    /// Returns true when a profile was created.
+    pub fn ensure_default_profile(&mut self) -> bool {
+        if !self.profiles.is_empty() {
+            return false;
+        }
+        let p = Profile {
+            id: "default".to_string(),
+            name: "Default".to_string(),
+            enabled: self.mods_only().iter().filter(|m| m.enabled).map(|m| m.id.clone()).collect(),
+            updated: chrono::Local::now().timestamp(),
+        };
+        self.profiles.push(p);
+        true
+    }
 }
 
 pub fn load_state(path: &PathBuf) -> Result<AppState, String> {
@@ -372,5 +392,25 @@ mod tests {
         assert!(s.delete_profile(&p.id));
         assert!(!s.delete_profile(&p.id));
         assert!(s.profiles.is_empty());
+    }
+    #[test]
+    fn default_profile_seeds_once() {
+        let mut s = AppState::default();
+        s.mods = vec![row("a", "A"), row("b", "B")];
+        s.set_enabled(&["b".to_string()], false);
+        assert!(s.ensure_default_profile());
+        assert_eq!(s.profiles.len(), 1);
+        assert_eq!(s.profiles[0].id, "default");
+        assert_eq!(s.profiles[0].name, "Default");
+        assert_eq!(s.profiles[0].enabled, vec!["a".to_string()]);
+        // Second call converges: no duplicate.
+        assert!(!s.ensure_default_profile());
+        assert_eq!(s.profiles.len(), 1);
+        // An existing list (even without Default) is left alone.
+        let mut t = AppState::default();
+        t.mods = vec![row("a", "A")];
+        t.save_profile("mine");
+        assert!(!t.ensure_default_profile());
+        assert_eq!(t.profiles.len(), 1);
     }
 }

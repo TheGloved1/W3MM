@@ -31,6 +31,11 @@ impl Manager {
         }
         home.ensure_dirs().map_err(|e| e.to_string())?;
         let mut state = load_state(&home.state_file)?;
+        // Every install starts with a Default profile (snapshot of the
+        // current selection, possibly empty on a fresh install).
+        if state.ensure_default_profile() {
+            crate::state::save_state(&home.state_file, &state)?;
+        }
         // Staging override changed (set or cleared in Settings): move staged
         // mods between the effective dirs so nothing is orphaned, then
         // persist the new override with the state it belongs to.
