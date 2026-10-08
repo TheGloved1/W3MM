@@ -18,6 +18,13 @@ else
   IMG="convert"
 fi
 
+# Rasterize the SVG. -background none must precede the input: without it
+# ImageMagick fills the transparent rounded corners white.
+render() {
+  # usage: render <size> <output>
+  "$IMG" -background none "$SVG" -resize "${1}x${1}" "$2"
+}
+
 # --- Tauri PNG set -------------------------------------------------------
 declare -A SIZES=(
   ["Square107x107Logo.png"]=107
@@ -42,12 +49,12 @@ echo "Generating logos from $SVG"
 for file in "${!SIZES[@]}"; do
   size=${SIZES[$file]}
   echo "  $file ${size}x${size} -> $ICON_DIR/$file"
-  "$IMG" "$SVG" -resize "${size}x${size}" "$ICON_DIR/$file"
+  render "$size" "$ICON_DIR/$file"
 done
 
 # favicon
 echo "  favicon.png 32x32 -> $STATIC_DIR/favicon.png"
-"$IMG" "$SVG" -resize 32x32 "$STATIC_DIR/favicon.png"
+render 32 "$STATIC_DIR/favicon.png"
 
 # --- Windows icon (.ico, PNG-compressed entries) --------------------------
 echo "  icon.ico (16..256) -> $ICON_DIR/icon.ico"
@@ -59,14 +66,14 @@ echo "  icon.ico (16..256) -> $ICON_DIR/icon.ico"
 echo "  icon.icns -> $ICON_DIR/icon.icns"
 TMP_ICNS="$(mktemp -d)"
 trap 'rm -rf "$TMP_ICNS"' EXIT
-"$IMG" "$SVG" -resize 32x32 "$TMP_ICNS/ic11.png"
-"$IMG" "$SVG" -resize 64x64 "$TMP_ICNS/ic12.png"
-"$IMG" "$SVG" -resize 128x128 "$TMP_ICNS/ic07.png"
-"$IMG" "$SVG" -resize 256x256 "$TMP_ICNS/ic08.png"
-"$IMG" "$SVG" -resize 512x512 "$TMP_ICNS/ic09.png"
-"$IMG" "$SVG" -resize 512x512 "$TMP_ICNS/ic13.png"
-"$IMG" "$SVG" -resize 1024x1024 "$TMP_ICNS/ic10.png"
-"$IMG" "$SVG" -resize 1024x1024 "$TMP_ICNS/ic14.png"
+render 32 "$TMP_ICNS/ic11.png"
+render 64 "$TMP_ICNS/ic12.png"
+render 128 "$TMP_ICNS/ic07.png"
+render 256 "$TMP_ICNS/ic08.png"
+render 512 "$TMP_ICNS/ic09.png"
+render 512 "$TMP_ICNS/ic13.png"
+render 1024 "$TMP_ICNS/ic10.png"
+render 1024 "$TMP_ICNS/ic14.png"
 ICON_DIR="$ICON_DIR" TMP_ICNS="$TMP_ICNS" python3 - <<'EOF'
 import os, struct
 icon_dir = os.environ["ICON_DIR"]
@@ -96,13 +103,13 @@ for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   size=${DENS[$density]}
   fg=$((size * 108 / 48))
   dir="$ICON_DIR/android/mipmap-$density"
-  "$IMG" "$SVG" -resize "${size}x${size}" "$dir/ic_launcher.png"
+  render "$size" "$dir/ic_launcher.png"
   # round launcher: same art, inscribed-circle alpha mask
   half=$((size / 2))
-  "$IMG" "$SVG" -resize "${size}x${size}" \
+  "$IMG" -background none "$SVG" -resize "${size}x${size}" \
     \( +clone -alpha transparent -fill white -draw "circle $half,$half $half,0" \) \
     -compose copyopacity -composite "$dir/ic_launcher_round.png"
-  "$IMG" "$SVG" -resize "${fg}x${fg}" "$dir/ic_launcher_foreground.png"
+  render "$fg" "$dir/ic_launcher_foreground.png"
   echo "  mipmap-$density: launcher ${size}, foreground ${fg}"
 done
 
@@ -120,7 +127,7 @@ w, scale = float(m.group(1)), float(m.group(2) or 1)
 print(int(w * scale))
 ")"
   echo "  $base -> ${size}x${size}"
-  "$IMG" "$SVG" -resize "${size}x${size}" "$src"
+  render "$size" "$src"
 done
 
 echo "Done."
