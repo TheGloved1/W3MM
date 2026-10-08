@@ -2,6 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { assets } from '$app/paths';
   import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
@@ -183,7 +184,7 @@
 <div class="flex h-screen bg-background text-foreground overflow-hidden">
   <aside class="shrink-0 flex flex-col border-r bg-gradient-to-b from-card to-background transition-all duration-200 {collapsed ? 'w-[56px] items-center' : 'w-[220px]'}">
     <div class="h-12 flex items-center gap-2 px-3 border-b shrink-0 w-full {collapsed ? 'justify-center' : ''}">
-      <div class="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-black text-[11px] shrink-0 shadow-lg shadow-primary/25">W3</div>
+      <img src="{assets}/w3mm_logo.svg" alt="W3MM" class="h-7 w-7 shrink-0 rounded-md shadow-lg shadow-primary/25" />
       {#if !collapsed}
         <div class="leading-tight min-w-0">
           <div class="text-sm font-semibold tracking-tight truncate">W3MM</div>
