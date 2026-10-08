@@ -9,8 +9,7 @@
   import FormActions from '$lib/components/form-actions.svelte';
   import LabeledField from '$lib/components/labeled-field.svelte';
   import MergerSection from '$lib/components/merger-section.svelte';
-  import PageHeader from '$lib/components/page-header.svelte';
-  import WarningBanner from '$lib/components/warning-banner.svelte';
+  import HeaderBar from '$lib/components/header-bar.svelte';  import WarningBanner from '$lib/components/warning-banner.svelte';
 
   let config: AppConfig | null = $state(null);
   let warn: string = $state('');
@@ -157,8 +156,13 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col gap-3 px-[22px] pt-[18px] pb-[12px]">
-  <PageHeader title="Settings" description={isWindows ? "Pick your Witcher 3 folder. Settings live in your Documents folder — no prefix needed on Windows." : "Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied."} />
+<div class="flex h-full min-h-0 flex-col">
+  <HeaderBar title="Settings" subtitle="Game folder, prefix, Nexus key, merger paths">
+    {#snippet right()}
+      {#if savedAt}<span class="shrink-0 text-xs text-muted-foreground">Saved {savedAt}</span>{/if}
+    {/snippet}
+  </HeaderBar>
+  <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-[22px] py-[14px]">
 
   {#if config}
     <LabeledField label="Game folder">
@@ -203,11 +207,11 @@
   {/if}
 
   <WarningBanner message={warn} />
-  {#if savedAt}<div class="text-[12px] text-muted-foreground">Saved {savedAt}</div>{/if}
   <div class="flex-1"></div>
   <div class="flex items-center gap-2">
     <Button variant="secondary" size="md" onclick={() => detect()}>Detect Steam install</Button>
     <span class="flex-1"></span>
     <FormActions cancelLabel="Revert" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm" spacer={false} />
+  </div>
   </div>
 </div>

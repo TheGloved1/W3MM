@@ -16,6 +16,7 @@
     dlMain,
   } from '$lib/downloads.svelte';
   import { Check, ChevronDown, ChevronRight, Trash2 } from 'lucide-svelte';
+  import HeaderBar from '$lib/components/header-bar.svelte';
 
   let mods: AppState['mods'] | undefined = $state(undefined);
   let error: string = $state('');
@@ -53,22 +54,25 @@
   });
 </script>
 
-<!-- Same dark panel as the old Mods-page downloads sidebar, now full-page. -->
-<div class="flex h-full min-h-0 flex-col gap-3 overflow-y-auto bg-[#232930] px-4 py-[18px]">
-  <div class="flex items-start gap-1.5">
-    <div class="flex-1 leading-tight">
-      <div class="text-[13pt] font-semibold text-[#d9dee4]">Downloads</div>
-      {#if dlSummary}
-        <div class="mt-0.5 text-[12px] text-[#8c96a1]">{dlSummary}</div>
-      {/if}
-    </div>
-    <button
-      onclick={() => openDownloadsFolder().catch((e) => { error = String(e); })}
-      title="Open the downloads folder"
-      class="rounded px-2 py-1 text-[13px] text-[#8c96a1] hover:bg-[#2b323a] hover:text-[#d9dee4]"
-      >Open folder</button
-    >
-  </div>
+<!-- Same dark panel as the old Mods-page downloads sidebar, now full-page.
+     The h-12 bar aligns with the sidebar brand block in +layout.svelte. -->
+<div class="flex h-full min-h-0 flex-col bg-[#232930]">
+  <HeaderBar
+    tone="dark"
+    padClass="px-4"
+    title="Downloads"
+    subtitle={dlSummary}
+  >
+    {#snippet right()}
+      <button
+        onclick={() => openDownloadsFolder().catch((e) => { error = String(e); })}
+        title="Open the downloads folder"
+        class="shrink-0 rounded px-2 py-1 text-[13px] text-[#8c96a1] hover:bg-[#2b323a] hover:text-[#d9dee4]"
+        >Open folder</button
+      >
+    {/snippet}
+  </HeaderBar>
+  <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-[14px]">
   {#if error}
     <div class="rounded-[8px] border border-[#e3735f]/40 bg-[#e3735f]/10 px-3 py-2 text-[13px] text-[#e3735f]">{error}</div>
   {/if}
@@ -175,4 +179,5 @@
       downloads here, then the Install window opens.
     </p>
   {/if}
+  </div>
 </div>

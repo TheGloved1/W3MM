@@ -10,6 +10,7 @@
     type ClickModifiers,
   } from "$lib/components/data-list.svelte";
   import Button from "$lib/components/button.svelte";
+  import HeaderBar from "$lib/components/header-bar.svelte";
   import SelectionToolbar from "$lib/components/selection-toolbar.svelte";
   import {
     ArrowUp,
@@ -1177,23 +1178,13 @@
   const [enCount, totalCount] = $derived(enabledCounts());
 </script>
 
-<div class="flex h-full min-h-0">
-  <div
-    class="flex min-h-0 min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[18px] pb-[12px]"
-  >
-    <div class="flex items-center gap-[10px]">
-      <div class="min-w-0 flex-1 leading-tight">
-        <div class="text-[19pt] font-semibold tracking-tight">
-          The Witcher 3
-        </div>
-        <div class="truncate text-[13px] text-muted-foreground">
-          {enCount} of {totalCount} mods enabled
-        </div>
-      </div>
+<div class="flex h-full min-h-0 flex-col">
+  <HeaderBar title="The Witcher 3" subtitle={`${enCount} of ${totalCount} mods enabled`}>
+    {#snippet right()}
       <input
         bind:value={filter}
         placeholder="Filter mods"
-        class="w-[230px] rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary"
+        class="w-[180px] shrink-0 rounded-[7px] border border-input bg-card px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary"
       />
       <Button variant="secondary" size="md" onclick={play}>Play</Button>
       <Button variant="primary" size="md" onclick={pickArchives} class="px-[18px]">Install mods</Button>
@@ -1279,8 +1270,11 @@
           </div>
         {/if}
       </div>
-    </div>
-
+    {/snippet}
+  </HeaderBar>
+  <div
+    class="flex min-h-0 min-w-0 flex-1 flex-col gap-[14px] px-[22px] pt-[14px] pb-[12px]"
+  >
     {#if unmanaged.length}
       <div
         class="flex items-center gap-2 rounded-[7px] border border-border bg-card px-[14px] py-2 text-sm"
