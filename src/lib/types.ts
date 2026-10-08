@@ -35,6 +35,7 @@ export interface AppState {
   resolutions: Record<string, number[]>;
   merge_kept: Record<string, string>;
   profiles: Profile[];
+  active_profile: string | null;
 }
 
 export interface Profile {
