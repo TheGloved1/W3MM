@@ -1725,6 +1725,16 @@ fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
     Ok(m.settings_dir().to_string_lossy().to_string())
 }
 
+/// Absolute app-data root (the single store) for the Open menu.
+#[tauri::command]
+fn data_dir_path(shared: State<Shared>) -> Result<String, String> {
+    let g = lock_shared(&shared, "data_dir_path")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let d = m.home.data.clone();
+    let _ = std::fs::create_dir_all(&d);
+    Ok(d.to_string_lossy().to_string())
+}
+
 /// Move a mod under a section separator (or to the unsectioned end).
 #[tauri::command]
 fn move_to_section(shared: State<Shared>, id: String, sep_id: String) -> Result<bool, String> {
@@ -2326,6 +2336,7 @@ pub fn run() {
             downloads_history,
             downloads_dir_path,
             settings_dir_path,
+            data_dir_path,
             storage_report,
             open_tool_window,
             merger_apply,

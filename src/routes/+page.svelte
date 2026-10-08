@@ -785,6 +785,7 @@
     try {
       const target =
         kind === 'game' ? gameDir
+        : kind === 'appdata' ? await invoke<string>('data_dir_path')
         : kind === 'settings' ? await invoke<string>('settings_dir_path')
         : `${await invoke<string>('settings_dir_path')}/${kind}`;
       console.debug(`[yawmm] opening ${kind}: ${target}`);
@@ -1200,6 +1201,9 @@
             <div class="my-1 border-t border-border"></div>
             <button onclick={() => openPath('game')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
               >Open: Game folder</button
+            >
+            <button onclick={() => openPath('appdata')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >Open: App data</button
             >
             <button onclick={() => openPath('settings')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
               >Open: Settings folder</button
