@@ -879,7 +879,7 @@ and re-run: ./scripts/release.ts ${bump}${betaModifier ? ' beta' : ''} ${noPush 
       created: createdFiles,
     });
   }
-  ok(`.release-undo/v${next}.json`);
+  ok(`.release-undo.json`);
 
   step(`Creating tag v${next}`);
   if (!dryRun) {
