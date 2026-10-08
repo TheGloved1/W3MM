@@ -1,4 +1,4 @@
-# W3MM
+# YAWMM — Yet Another Witcher Mod Manager
 
 A mod manager for The Witcher 3: install, update, reorder, and remove mods with an eye on script/XML conflicts before they break your game. Runs on Linux (Steam/Proton) and Windows (native builds are in beta).
 
@@ -17,14 +17,14 @@ A mod manager for The Witcher 3: install, update, reorder, and remove mods with 
 
 App data (staging, backups, mod list, downloads) lives outside the game folder, keyed per install:
 
-- Linux: `~/.local/share/w3mm/<game>/`
-- Windows: `%LOCALAPPDATA%\w3mm\<game>\`
+- Linux: `~/.local/share/yawmm/<game>/`
+- Windows: `%LOCALAPPDATA%\yawmm\<game>\`
 
 Settings (`mods.settings`, keybinds) stay where the game expects them: the Proton prefix's `Documents/The Witcher 3` on Linux, `%USERPROFILE%\Documents\The Witcher 3` on Windows. Keep staging on the same drive as the game — cross-drive installs silently fall back to full copies (slower, twice the disk), and the app will say so. You can point staging anywhere in Settings.
 
 ## Run it
 
-Grab the latest release from the [releases page](https://github.com/TheGloved1/W3MM/releases) (`.deb`, `.AppImage`, `.rpm`, or Windows `.exe`/`.msi` while native support is in beta), install it, and point it at your Witcher 3 folder — it auto-detects Steam installs. Paste a Nexus API key into Settings to enable downloads and update checks.
+Grab the latest release from the [releases page](https://github.com/TheGloved1/YAWMM/releases) (`.deb`, `.AppImage`, `.rpm`, or Windows `.exe`/`.msi` while native support is in beta), install it, and point it at your Witcher 3 folder — it auto-detects Steam installs. Paste a Nexus API key into Settings to enable downloads and update checks.
 
 <details>
 <summary>Running from source</summary>

@@ -34,7 +34,7 @@
   const codeFonts = ['JetBrains Mono', 'Fira Code', 'Hack', 'DejaVu Sans Mono', 'monospace'];
 
   onMount(async () => {
-    console.debug("[w3mm] settings window mounted");
+    console.debug("[yawmm] settings window mounted");
     try {
       isWindows = (await import('@tauri-apps/plugin-os').then((m) => m.platform()).catch(() => '')) === 'windows';
       config = await loadConfigNative();
@@ -44,12 +44,12 @@
         defaultStaging = rep.default_staging ?? '';
       } catch {}
       stagingShown = config.stagingDir || defaultStaging;
-      console.debug("[w3mm] settings config loaded", config);
+      console.debug("[yawmm] settings config loaded", config);
       if (!config.gameDir) detect(true);
       else checkGame();
       checkMerger();
     } catch (e) {
-      console.error("[w3mm] settings init failed", e);
+      console.error("[yawmm] settings init failed", e);
       warn = String(e);
     }
   });

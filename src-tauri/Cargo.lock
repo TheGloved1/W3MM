@@ -5313,41 +5313,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "w3mm"
-version = "26.10.19"
-dependencies = [
- "chrono",
- "crc32fast",
- "encoding_rs",
- "flate2",
- "hex",
- "quick-xml",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sevenz-rust",
- "sha1",
- "sha2 0.11.0",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-os",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "thiserror 2.0.21",
- "trash",
- "unrar",
- "uuid",
- "walkdir",
- "zip",
-]
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6096,6 +6061,41 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix",
+]
+
+[[package]]
+name = "yawmm"
+version = "26.10.19"
+dependencies = [
+ "chrono",
+ "crc32fast",
+ "encoding_rs",
+ "flate2",
+ "hex",
+ "quick-xml",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "sha1",
+ "sha2 0.11.0",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-os",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "thiserror 2.0.21",
+ "trash",
+ "unrar",
+ "uuid",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]

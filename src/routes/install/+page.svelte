@@ -115,20 +115,20 @@
   async function remapFiles(): Promise<string[]> {
     if (!rawFiles.length) return [];
     const choices = roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files }));
-    console.debug(`[w3mm] remap_roots: ${rawFiles.length} rels, rows=${JSON.stringify(choices)}, first=${rawFiles[0]}`);
+    console.debug(`[yawmm] remap_roots: ${rawFiles.length} rels, rows=${JSON.stringify(choices)}, first=${rawFiles[0]}`);
     return invoke<string[]>('remap_roots', {
       rels: rawFiles,
       roots: choices,
       modFolder: name,
     })
       .then((out) => {
-        console.debug(`[w3mm] remap_roots -> ${out.length} rels, first=${out[0] ?? ''}`);
+        console.debug(`[yawmm] remap_roots -> ${out.length} rels, first=${out[0] ?? ''}`);
         return out;
       })
       .catch((e) => {
         // Keep the tree usable, but make the failure visible: a stale backend
         // (missing command) silently looked like "edits do nothing".
-        console.error(`[w3mm] remap_roots failed: ${String(e)}`);
+        console.error(`[yawmm] remap_roots failed: ${String(e)}`);
         warn = `Could not apply archive table: ${String(e)}`;
         return rawFiles;
       });

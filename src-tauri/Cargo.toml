@@ -1,13 +1,13 @@
 [package]
-name = "w3mm"
+name = "yawmm"
 version = "26.10.19"
-description = "Witcher 3 Mod Manager for Linux"
-authors = ["W3MM Contributors"]
+description = "Yet Another Witcher Mod Manager for The Witcher 3"
+authors = ["YAWMM Contributors"]
 license = "MIT"
 edition = "2021"
 
 [lib]
-name = "w3mm_lib"
+name = "yawmm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

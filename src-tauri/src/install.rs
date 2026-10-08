@@ -575,7 +575,7 @@ mod tests {
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("w3mm-test-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("yawmm-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

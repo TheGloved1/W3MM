@@ -415,7 +415,7 @@ mod tests {
     use std::io::Write;
 
     fn setup_tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-{}-{tag}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-deploy-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         let staging = base.join("staging").join("mod1");
@@ -465,7 +465,7 @@ mod tests {
         // Two mods deployed, then the deployed map is wiped (simulating the
         // tracking loss seen in the wild) and one mod disabled: the scan must
         // still find the disabled mod's files via managed-folder ownership.
-        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-reconcile-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-deploy-test-reconcile-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         let backup = base.join("backup");
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn filelists_prune_recorded_and_swept_xmls_but_keep_vanilla() {
-        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-deploy-test-filelist-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         std::fs::create_dir_all(game.join("bin")).unwrap();
@@ -538,7 +538,7 @@ mod tests {
         // Entries added before tracking existed are present but unrecorded;
         // the record must still capture them, or their later removal would
         // leave the lines behind.
-        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-boot-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-deploy-test-filelist-boot-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         std::fs::create_dir_all(game.join("bin")).unwrap();
@@ -558,7 +558,7 @@ mod tests {
         // A wanted xml is kept even if it also appears in the swept set
         // (e.g. reinstalled at the same path it was just swept from), and a
         // tracked entry that is still wanted stays tracked.
-        let base = std::env::temp_dir().join(format!("w3mm-deploy-test-filelist-want-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-deploy-test-filelist-want-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let game = base.join("game");
         std::fs::create_dir_all(game.join("bin")).unwrap();
@@ -580,7 +580,7 @@ mod link_tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("w3mm-link-test-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("yawmm-link-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

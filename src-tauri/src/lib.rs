@@ -1,4 +1,4 @@
-//! W3MM backend: Tauri commands over the ported ModManager core.
+//! YAWMM backend: Tauri commands over the ported ModManager core.
 //!
 //! Mapping to `w3modmanager.py`:
 //! - list/set/priority -> `state.rs` (ModManager rows/priority)
@@ -31,8 +31,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use tauri::State;
 
-/// Platform state dir log file (`~/.local/state/w3mm/w3mm.log` on Linux,
-/// `%LOCALAPPDATA%/w3mm/w3mm.log` on Windows).
+/// Platform state dir log file (`~/.local/state/yawmm/yawmm.log` on Linux,
+/// `%LOCALAPPDATA%/yawmm/yawmm.log` on Windows).
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Writable per-user state base dir, with platform fallbacks so a missing
@@ -70,10 +70,19 @@ fn state_base_dir() -> PathBuf {
 fn log_path() -> &'static PathBuf {
     LOG_PATH.get_or_init(|| {
         let base = state_base_dir();
-        let mut dir = base;
-        dir.push("w3mm");
+        let mut dir = base.clone();
+        dir.push("yawmm");
         let _ = std::fs::create_dir_all(&dir);
-        dir.push("w3mm.log");
+        dir.push("yawmm.log");
+        // One-time brand rename: adopt the old log so history survives.
+        // Runs before the first write (this init), so a rename keeps the
+        // whole file; an already-migrated install skips it.
+        let legacy = base.join("w3mm").join("w3mm.log");
+        if !dir.exists() && legacy.is_file() {
+            if std::fs::rename(&legacy, &dir).is_err() {
+                let _ = std::fs::copy(&legacy, &dir).and_then(|_| std::fs::remove_file(&legacy));
+            }
+        }
         dir
     })
 }
@@ -431,7 +440,7 @@ fn preview_archive(path: String) -> Result<install::InstallPlan, String> {
     use std::path::Path;
     let archive = Path::new(&path);
     // Extract to a temp dir, analyze, return plan (caller confirms before staging).
-    let tmp = std::env::temp_dir().join(format!("w3mm-preview-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("yawmm-preview-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     archive::extract_archive(archive, &tmp).map_err(|e| e.to_string())?;
@@ -509,7 +518,7 @@ fn download_nxm(url: String, api_key: String, dest_dir: String) -> Result<String
 
 #[tauri::command]
 fn install_archive(shared: State<Shared>, path: String, name: String, version: String, nexus_id: String) -> Result<String, String> {
-    let tmp = std::env::temp_dir().join(format!("w3mm-install-{}", uuid::Uuid::new_v4().simple()));
+    let tmp = std::env::temp_dir().join(format!("yawmm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
@@ -791,7 +800,7 @@ fn cached_updates(shared: State<Shared>) -> Result<Vec<UpdateHit>, String> {
 
 /// One-line launch environment report, once per process: AppImage status +
 /// the vars that decide what opened children look like. The log file itself
-/// is append-only (`w3mm.log` is never truncated), so this marks sessions.
+/// is append-only (`yawmm.log` is never truncated), so this marks sessions.
 fn log_launch_env() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
@@ -1953,7 +1962,7 @@ pub struct PlanRoot {
 fn preview_roots(path: String) -> Result<Vec<PlanRoot>, String> {
     use std::path::Path;
     let archive = Path::new(&path);
-    let tmp = std::env::temp_dir().join(format!("w3mm-roots-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("yawmm-roots-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let plan = (|| {
@@ -2000,7 +2009,7 @@ pub struct InstallPreview {
 fn install_preview(path: String) -> Result<InstallPreview, String> {
     use std::path::Path;
     let archive = Path::new(&path);
-    let tmp = std::env::temp_dir().join(format!("w3mm-preview-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("yawmm-preview-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let plan = (|| {
@@ -2051,7 +2060,7 @@ fn install_roots(
     roots: Vec<PlanRoot>,
     replace_ids: Vec<String>,
 ) -> Result<String, String> {
-    let tmp = std::env::temp_dir().join(format!("w3mm-install-{}", uuid::Uuid::new_v4().simple()));
+    let tmp = std::env::temp_dir().join(format!("yawmm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let res: Result<String, String> = (|| {
@@ -2178,7 +2187,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            log_line("rust", &format!("W3MM v{} starting, worker-thread downloads", env!("CARGO_PKG_VERSION")));
+            log_line("rust", &format!("YAWMM v{} starting, worker-thread downloads", env!("CARGO_PKG_VERSION")));
             // Forward OS deep-link opens (nxm://…) to the frontend as events.
             // The .desktop MimeType registration comes from the
             // `security.deepLinkProtocols` entry in tauri.conf.json — no

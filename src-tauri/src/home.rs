@@ -1,15 +1,15 @@
 //! App home layout: game dir + platform data dir.
 //!
-//! The manager used to keep everything in `<game>/_W3MM/`; app data now lives
-//! in the platform data dir (`$XDG_DATA_HOME/w3mm/<slug>/`,
-//! `%LOCALAPPDATA%/w3mm/<slug>/`), keyed per game install so multiple copies
+//! The manager used to keep everything in `<game>/_YAWMM/`; app data now lives
+//! in the platform data dir (`$XDG_DATA_HOME/yawmm/<slug>/`,
+//! `%LOCALAPPDATA%/yawmm/<slug>/`), keyed per game install so multiple copies
 //! of the game stay isolated. A first-run migration moves an existing
-//! `<game>/_W3MM/` over (see `manager.rs`).
+//! `<game>/_YAWMM/` over (see `manager.rs`).
 
 use std::path::{Path, PathBuf};
 
 /// Legacy in-game data dir, kept as the migration source.
-pub const MANAGER_DIRNAME: &str = "_W3MM";
+pub const MANAGER_DIRNAME: &str = "_YAWMM";
 pub const STATE_FILE: &str = "state.json";
 pub const STAGING_DIR: &str = "staging";
 pub const BACKUP_DIR: &str = "backup";
@@ -20,7 +20,7 @@ pub const DOWNLOADS_DIR: &str = "downloads";
 pub struct Home {
     pub game: PathBuf,
     pub prefix: PathBuf,
-    /// Platform data root for this game install (`.../w3mm/<slug>/`).
+    /// Platform data root for this game install (`.../yawmm/<slug>/`).
     pub data: PathBuf,
     pub staging: PathBuf,
     pub backup: PathBuf,
@@ -59,12 +59,13 @@ fn slug_for(canonical: &str, tail: &str) -> String {
     format!("{}-{safe}", &hex[..12])
 }
 
-/// Data root for a game install, creating nothing.
-pub fn data_root_for(game_dir: &str) -> PathBuf {
+/// Canonical path + tail shared by the current and legacy data roots: the
+/// slug itself never contained the brand, so both names hash identically.
+fn slug_parts(game_dir: &str) -> (String, String) {
     let game = PathBuf::from(game_dir);
     // Canonicalize for a stable slug; fall back to the raw path (e.g. the
     // folder was picked but not yet validated to exist).
-    let (canonical, tail) = match game.canonicalize() {
+    match game.canonicalize() {
         Ok(p) => (
             p.to_string_lossy().to_string(),
             p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
@@ -73,7 +74,19 @@ pub fn data_root_for(game_dir: &str) -> PathBuf {
             game.to_string_lossy().to_string(),
             game.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         ),
-    };
+    }
+}
+
+/// Data root for a game install, creating nothing.
+pub fn data_root_for(game_dir: &str) -> PathBuf {
+    let (canonical, tail) = slug_parts(game_dir);
+    data_base_dir().join("yawmm").join(slug_for(&canonical, &tail))
+}
+
+/// Previous brand's data root (`.../w3mm/<slug>/`); moved over on first run
+/// by `manager::migrate_brand_dirs`, never written to afterwards.
+pub fn legacy_data_root_for(game_dir: &str) -> PathBuf {
+    let (canonical, tail) = slug_parts(game_dir);
     data_base_dir().join("w3mm").join(slug_for(&canonical, &tail))
 }
 
@@ -226,8 +239,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slug_stable_and_unique() {
-        let a = slug_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3", "The Witcher 3");
+    fn legacy_root_shares_slug() {
+        // Brand rename: same game maps to sibling roots, slug identical.
+        let game = "/mnt/games/SteamLibrary/steamapps/common/The Witcher 3";
+        let (curr, legacy) = (data_root_for(game), legacy_data_root_for(game));
+        assert_ne!(curr, legacy);
+        assert_eq!(curr.file_name(), legacy.file_name(), "slug must not contain the brand");
+        assert_eq!(legacy.parent().unwrap().file_name().unwrap(), "w3mm");
+        assert_eq!(curr.parent().unwrap().file_name().unwrap(), "yawmm");
+    }
+
+    #[test]
+    fn slug_stable_and_unique() {        let a = slug_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3", "The Witcher 3");
         assert_eq!(a, slug_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3", "The Witcher 3"));
         let b = slug_for("/other/steamapps/common/The Witcher 3", "The Witcher 3");
         assert_ne!(a, b, "distinct installs must not share a data dir");
@@ -237,8 +260,8 @@ mod tests {
     #[test]
     fn same_filesystem_tmp() {
         // Two fresh tmp dirs share a filesystem; a bogus path yields None.
-        let a = std::env::temp_dir().join(format!("w3mm-fs-a-{}", std::process::id()));
-        let b = std::env::temp_dir().join(format!("w3mm-fs-b-{}", std::process::id()));
+        let a = std::env::temp_dir().join(format!("yawmm-fs-a-{}", std::process::id()));
+        let b = std::env::temp_dir().join(format!("yawmm-fs-b-{}", std::process::id()));
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
         assert_eq!(same_filesystem(&a, &b), Some(true));

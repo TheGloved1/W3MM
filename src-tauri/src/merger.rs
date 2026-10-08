@@ -219,7 +219,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     fn proton_drive_c_mapping() {
         // C:\... inside a fake prefix resolves under drive_c.
-        let base = std::env::temp_dir().join(format!("w3mm-merger-test-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("yawmm-merger-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("drive_c/Games")).unwrap();
         let got = from_windows_path(&base.to_string_lossy(), "C:\\Games\\Witcher3").unwrap();

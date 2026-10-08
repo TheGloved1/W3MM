@@ -390,7 +390,7 @@ pub fn pump_file(id: &str, dest: &std::path::Path, api_key: &str, emit: &dyn Fn(
     let part = dest.with_extension("part");
     let mut have = if part.is_file() { std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) } else { 0 };
     let client = reqwest::blocking::Client::builder()
-        .user_agent("W3MM/1.0")
+        .user_agent("YAWMM/1.0")
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
@@ -568,7 +568,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("w3mm-dl-test-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("yawmm-dl-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

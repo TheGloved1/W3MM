@@ -223,7 +223,7 @@
       const { confirm } = await import('@tauri-apps/plugin-dialog');
       go = await confirm(
         'Staging is on a different drive (filesystem) than the game, so installs copy instead of hardlinking — slower, and twice the disk. Move staging next to the game?',
-        { title: 'W3MM', okLabel: 'Choose folder…', cancelLabel: 'Keep current', kind: 'warning' },
+        { title: 'YAWMM', okLabel: 'Choose folder…', cancelLabel: 'Keep current', kind: 'warning' },
       );
     } catch {
       return;
@@ -235,7 +235,7 @@
     let sel: string | string[] | null = null;
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
-      const seed = gameDir.replace(/[/\\]+$/, '').replace(/[/\\][^/\\]+$/, '') + '/W3MM-staging';
+      const seed = gameDir.replace(/[/\\]+$/, '').replace(/[/\\][^/\\]+$/, '') + '/YAWMM-staging';
       sel = await open({ directory: true, multiple: false, defaultPath: seed });
     } catch {
       return;
@@ -259,7 +259,7 @@
   }
 
   async function refresh() {
-    console.debug(`[w3mm] refresh: start`);
+    console.debug(`[yawmm] refresh: start`);
     appState = await invoke<AppState>('list_mods');
     // Drop selections for rows that no longer exist (uninstall / replace).
     if (selectedIds.size && appState) {
@@ -312,7 +312,7 @@
       }
     } catch {}
     pruneHits();
-    console.debug(`[w3mm] refresh: done`);
+    console.debug(`[yawmm] refresh: done`);
   }
 
   /** Drop update hits that no longer apply after install/change/update:
@@ -346,7 +346,7 @@
       busy = 'Deploying…';
       error = '';
     }
-    console.debug(`[w3mm] deploy: invoking`);
+    console.debug(`[yawmm] deploy: invoking`);
     try {
       const running = await invoke<boolean>('game_running');
       if (running) {
@@ -357,7 +357,7 @@
       const res = await invoke<string[] | { deployed: string[]; removed: string[] }>('deploy');
       const files = Array.isArray(res) ? res : res.deployed;
       const removed = Array.isArray(res) ? [] : (res.removed ?? []);
-      console.debug(`[w3mm] deploy: done ${files.length} files, ${removed.length} removed`);
+      console.debug(`[yawmm] deploy: done ${files.length} files, ${removed.length} removed`);
       busy = '';
       flash(
         removed.length ?
@@ -368,7 +368,7 @@
       try {
         const { sendNotification } = await import('@tauri-apps/plugin-notification');
         sendNotification({
-          title: 'W3MM',
+          title: 'YAWMM',
           body:
             removed.length ?
               `Deployed ${files.length} files, removed ${removed.length} orphans`
@@ -507,22 +507,22 @@
 
   function openEdit(id: string) {
     ctx = null;
-    console.debug('[w3mm] open_tool_window edit', id);
+    console.debug('[yawmm] open_tool_window edit', id);
     invoke('open_tool_window', {
       kind: 'edit',
       query: `id=${encodeURIComponent(id)}`,
       path: id,
     }).catch((e) => {
-      console.error('[w3mm] open_tool_window edit failed', e);
+      console.error('[yawmm] open_tool_window edit failed', e);
       error = String(e);
     });
   }
 
   function openResolver() {
     menuOpen = false;
-    console.debug('[w3mm] open_tool_window resolver');
+    console.debug('[yawmm] open_tool_window resolver');
     invoke('open_tool_window', { kind: 'resolver', query: '', path: '' }).catch((e) => {
-      console.error('[w3mm] open_tool_window resolver failed', e);
+      console.error('[yawmm] open_tool_window resolver failed', e);
       error = String(e);
     });
   }
@@ -538,7 +538,7 @@
     try {
       await invoke('open_path', { target: `https://www.nexusmods.com/witcher3/mods/${nid}` });
     } catch (e) {
-      console.error(`[w3mm] open nexus page failed: ${String(e)}`);
+      console.error(`[yawmm] open nexus page failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -549,7 +549,7 @@
       const dir = await invoke<string>('mod_dir', { id });
       await invoke('open_path', { target: dir });
     } catch (e) {
-      console.error(`[w3mm] open mod folder failed: ${String(e)}`);
+      console.error(`[yawmm] open mod folder failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -607,7 +607,7 @@
       flash('No archive recorded — pick the file again.');
       return;
     }
-    console.debug('[w3mm] open_tool_window install (reinstall)', m.archive);
+    console.debug('[yawmm] open_tool_window install (reinstall)', m.archive);
     const qp = new URLSearchParams({
       path: m.archive,
       name: m.name ?? '',
@@ -619,7 +619,7 @@
       query: qp.toString(),
       path: m.archive,
     }).catch((e) => {
-      console.error('[w3mm] open_tool_window install failed', e);
+      console.error('[yawmm] open_tool_window install failed', e);
       error = String(e);
     });
   }
@@ -745,7 +745,7 @@
       const p = await requestUpdate(id, premium ?? premiumCache);
       await finishUpdate(p);
     } catch (e) {
-      console.error(`[w3mm] update failed: ${String(e)}`);
+      console.error(`[yawmm] update failed: ${String(e)}`);
       error = String(e);
     } finally {
       updatingIds = new Set([...updatingIds].filter((x) => x !== id));
@@ -787,10 +787,10 @@
         kind === 'game' ? gameDir
         : kind === 'settings' ? await invoke<string>('settings_dir_path')
         : `${await invoke<string>('settings_dir_path')}/${kind}`;
-      console.debug(`[w3mm] opening ${kind}: ${target}`);
+      console.debug(`[yawmm] opening ${kind}: ${target}`);
       await invoke('open_path', { target });
     } catch (e) {
-      console.error(`[w3mm] open ${kind} failed: ${String(e)}`);
+      console.error(`[yawmm] open ${kind} failed: ${String(e)}`);
       error = String(e);
     }
   }
@@ -918,18 +918,18 @@
         : sel ? [sel as string]
         : [];
       for (const p of paths) {
-        console.debug('[w3mm] open_tool_window install (picked)', p);
+        console.debug('[yawmm] open_tool_window install (picked)', p);
         await invoke('open_tool_window', {
           kind: 'install',
           query: `path=${encodeURIComponent(p)}`,
           path: p,
         }).catch((e) => {
-          console.error('[w3mm] open_tool_window install failed', e);
+          console.error('[yawmm] open_tool_window install failed', e);
           error = String(e);
         });
       }
     } catch (e) {
-      console.error('[w3mm] pickArchives failed', e);
+      console.error('[yawmm] pickArchives failed', e);
     }
   }
 

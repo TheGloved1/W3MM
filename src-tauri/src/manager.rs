@@ -10,17 +10,23 @@ pub struct Manager {
 
 impl Manager {
     pub fn open(game_dir: &str, prefix: &str, staging_override: &str) -> Result<Self, String> {
-        // One-time move from the old data dir name; keeps state/downloads/backups.
+        // One-time brand rename (W3MM -> YAWMM): adopt the old data dirs,
+        // then the older W3LMN name below; keeps state/downloads/backups.
         let game = std::path::PathBuf::from(game_dir);
+        migrate_brand_dirs(
+            &game,
+            &crate::home::legacy_data_root_for(game_dir),
+            &crate::home::data_root_for(game_dir),
+        )?;
         let legacy = game.join("_W3LMN");
         let current = game.join(MANAGER_DIRNAME);
         if !current.exists() && legacy.exists() {
             std::fs::rename(&legacy, &current)
                 .map_err(|e| format!("could not migrate _W3LMN data: {e}"))?;
-            eprintln!("[w3mm] migrated game data _W3LMN -> {}", MANAGER_DIRNAME);
+            eprintln!("[yawmm] migrated game data _W3LMN -> {}", MANAGER_DIRNAME);
         }
         let home = Home::new(game_dir, prefix, staging_override);
-        // Relocate `<game>/_W3MM/` into the platform data dir on first run.
+        // Relocate `<game>/_YAWMM/` into the platform data dir on first run.
         // Merge-missing covers an interrupted previous attempt; once the
         // state file is over, the in-game dir is superseded and removed.
         if current.exists() {
@@ -28,7 +34,7 @@ impl Manager {
             if home.state_file.is_file() {
                 std::fs::remove_dir_all(&current)
                     .map_err(|e| format!("could not remove migrated {}: {e}", MANAGER_DIRNAME))?;
-                crate::log_line("rust", "migrated in-game _W3MM data to platform data dir");
+                crate::log_line("rust", "migrated in-game _YAWMM data to platform data dir");
             }
         }
         home.ensure_dirs().map_err(|e| e.to_string())?;
@@ -67,10 +73,37 @@ impl Manager {
     }
 }
 
+/// One-time brand rename (W3MM -> YAWMM): move the in-game data dir and the
+/// platform data root to their new names, merging without clobbering (same
+/// resume-safe semantics as `migrate_dir_contents`). A half-moved legacy dir
+/// is left in place and retried next launch — never deleted with contents.
+fn migrate_brand_dirs(
+    game: &std::path::Path,
+    legacy_root: &std::path::Path,
+    new_root: &std::path::Path,
+) -> Result<(), String> {
+    let legacy_game = game.join("_W3MM");
+    let current_game = game.join(MANAGER_DIRNAME);
+    if !current_game.exists() && legacy_game.exists() {
+        std::fs::rename(&legacy_game, &current_game)
+            .map_err(|e| format!("could not migrate _W3MM data: {e}"))?;
+        eprintln!("[yawmm] migrated game data _W3MM -> {}", MANAGER_DIRNAME);
+    }
+    if legacy_root != new_root && legacy_root.exists() {
+        migrate_dir_contents(legacy_root, new_root)?;
+        if std::fs::read_dir(legacy_root)
+            .map(|mut r| r.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir_all(legacy_root);
+        }
+    }
+    Ok(())
+}
+
 /// Effective staging dir for an override value: the override itself, or the
 /// default under the data root when empty.
-fn effective_staging(home: &Home, staging_override: &str) -> std::path::PathBuf {
-    if staging_override.trim().is_empty() {
+fn effective_staging(home: &Home, staging_override: &str) -> std::path::PathBuf {    if staging_override.trim().is_empty() {
         home.default_staging()
     } else {
         std::path::PathBuf::from(staging_override.trim())
@@ -161,16 +194,56 @@ mod tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("w3mm-migrate-test-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("yawmm-migrate-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
     }
 
     #[test]
+    fn brand_dirs_migrate_and_drain() {
+        // Old install layout: <game>/_W3MM + platform w3mm/<slug>. Both move
+        // to the YAWMM names; the drained legacy shelf is removed.
+        let base = tmpdir("brand");
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("_W3MM/staging/abc")).unwrap();
+        std::fs::write(game.join("_W3MM/state.json"), b"{}").unwrap();
+        let legacy_root = base.join("w3mm").join("slug");
+        std::fs::create_dir_all(legacy_root.join("downloads")).unwrap();
+        std::fs::write(legacy_root.join("state.json"), b"{}").unwrap();
+        let new_root = base.join("yawmm").join("slug");
+        migrate_brand_dirs(&game, &legacy_root, &new_root).unwrap();
+        assert!(game.join("_YAWMM/state.json").is_file());
+        assert!(!game.join("_W3MM").exists());
+        assert!(new_root.join("state.json").is_file());
+        assert!(!legacy_root.exists(), "drained legacy root must be removed");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn brand_dirs_resume_without_clobbering() {
+        // New root already has state (interrupted run): it wins, the rest
+        // arrives, and nothing is overwritten.
+        let base = tmpdir("brand-resume");
+        let game = base.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        let legacy_root = base.join("w3mm").join("slug");
+        let new_root = base.join("yawmm").join("slug");
+        std::fs::create_dir_all(&new_root).unwrap();
+        std::fs::write(new_root.join("state.json"), b"new").unwrap();
+        std::fs::create_dir_all(&legacy_root).unwrap();
+        std::fs::write(legacy_root.join("state.json"), b"old").unwrap();
+        std::fs::create_dir_all(legacy_root.join("downloads")).unwrap();
+        migrate_brand_dirs(&game, &legacy_root, &new_root).unwrap();
+        assert_eq!(std::fs::read(new_root.join("state.json")).unwrap(), b"new");
+        assert!(new_root.join("downloads").is_dir());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn migrate_moves_contents_over() {
         let base = tmpdir("move");
-        let src = base.join("_W3MM");
+        let src = base.join("_YAWMM");
         let dst = base.join("data").join("slug");
         std::fs::create_dir_all(src.join("staging/abc")).unwrap();
         std::fs::write(src.join("state.json"), b"{}").unwrap();
@@ -188,7 +261,7 @@ mod tests {
         // rest. Missing files arrive, present ones are never overwritten,
         // and stale src entries are dropped.
         let base = tmpdir("resume");
-        let src = base.join("_W3MM");
+        let src = base.join("_YAWMM");
         let dst = base.join("data").join("slug");
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(dst.join("state.json"), b"new").unwrap();

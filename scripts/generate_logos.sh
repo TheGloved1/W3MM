@@ -8,7 +8,7 @@
 # Needs: ImageMagick (`magick` or `convert`) + python3 (icns packing only).
 set -euo pipefail
 
-SVG="${1:-static/w3mm_logo.svg}"
+SVG="${1:-static/yawmm_logo.svg}"
 ICON_DIR="src-tauri/icons"
 STATIC_DIR="static"
 

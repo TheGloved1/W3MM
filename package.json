@@ -1,5 +1,5 @@
 {
-  "name": "w3mm",
+  "name": "yawmm",
   "private": true,
   "version": "26.10.19-beta.1",
   "type": "module",
@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TheGloved1/W3MM.git"
+    "url": "https://github.com/TheGloved1/YAWMM.git"
   },
-  "homepage": "https://github.com/TheGloved1/W3MM",
-  "bugs": "https://github.com/TheGloved1/W3MM/issues",
-  "author": "W3MM Contributors",
+  "homepage": "https://github.com/TheGloved1/YAWMM",
+  "bugs": "https://github.com/TheGloved1/YAWMM/issues",
+  "author": "YAWMM Contributors",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

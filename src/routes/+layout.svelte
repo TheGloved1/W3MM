@@ -117,13 +117,13 @@
         const cur = await getCurrent().catch(() => []);
         if (cur?.length) {
           const { dlNxm } = await import('$lib/downloads.svelte');
-          try { await dlNxm(cur[0]); } catch (e) { console.error("[w3mm] deep-link failed", e); }
+          try { await dlNxm(cur[0]); } catch (e) { console.error("[yawmm] deep-link failed", e); }
           goto('/downloads').catch(() => {});
         }
         unlistenUrl = await onOpenUrl(async (urls) => {
           if (urls?.length) {
             const { dlNxm } = await import('$lib/downloads.svelte');
-            try { await dlNxm(urls[0]); } catch (e) { console.error("[w3mm] deep-link failed", e); }
+            try { await dlNxm(urls[0]); } catch (e) { console.error("[yawmm] deep-link failed", e); }
             goto('/downloads').catch(() => {});
           }
         });
@@ -145,7 +145,7 @@
             await refreshQueue();
             const row = queueState.queue.find((qq) => qq.id === e.payload.id);
             if (e.payload.error) return;
-            await notify("W3MM", e.payload.path.split("/").pop() ?? "download done");
+            await notify("YAWMM", e.payload.path.split("/").pop() ?? "download done");
             if (row && row.status === "done") {
               // Suppress the auto Install window when it's the exact file
               // already installed; check against the live mod list.
@@ -178,16 +178,16 @@
 </script>
 
 <svelte:head>
-  <title>W3MM</title>
+  <title>YAWMM</title>
 </svelte:head>
 
 <div class="flex h-screen bg-background text-foreground overflow-hidden">
   <aside class="shrink-0 flex flex-col border-r bg-gradient-to-b from-card to-background transition-all duration-200 {collapsed ? 'w-[56px] items-center' : 'w-[220px]'}">
     <div class="h-12 flex items-center gap-2 px-3 border-b shrink-0 w-full {collapsed ? 'justify-center' : ''}">
-      <img src="{assets}/w3mm_logo.svg" alt="W3MM" class="h-7 w-7 shrink-0 rounded-md shadow-lg shadow-primary/25" />
+      <img src="{assets}/yawmm_logo.svg" alt="YAWMM" class="h-7 w-7 shrink-0 rounded-md shadow-lg shadow-primary/25" />
       {#if !collapsed}
         <div class="leading-tight min-w-0">
-          <div class="text-sm font-semibold tracking-tight truncate">W3MM</div>
+          <div class="text-sm font-semibold tracking-tight truncate">YAWMM</div>
           <div class="text-[11px] text-muted-foreground">v{appVersion}</div>
         </div>
       {/if}
