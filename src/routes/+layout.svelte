@@ -110,6 +110,7 @@
     let unlistenP: (() => void) | undefined;
     let unlistenD: (() => void) | undefined;
     let unlistenMeta: (() => void) | undefined;
+    let unlistenInstalled: (() => void) | undefined;
     (async () => {
       try {
         await refreshQueue();
@@ -163,6 +164,11 @@
         unlistenMeta = await listen<{ id: string }>("download-meta", async () => {
           await refreshQueue().catch(() => {});
         });
+        // A finished Install window sends the user back to the mod list,
+        // wherever in the app they were.
+        unlistenInstalled = await listen("mod-installed", () => {
+          goto('/').catch(() => {});
+        });
       } catch {}
     })();
 
@@ -173,6 +179,7 @@
       unlistenP?.();
       unlistenD?.();
       unlistenMeta?.();
+      unlistenInstalled?.();
     };
   });
 </script>

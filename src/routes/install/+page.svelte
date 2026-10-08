@@ -176,6 +176,7 @@
       });
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
+      await emit('mod-installed', {});
       await getCurrentWindow().close();
     } catch (e) { warn = String(e); }
     busy = false;
