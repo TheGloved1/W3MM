@@ -17,10 +17,17 @@ export function setQueue(q: QueueItem[]) {
 }
 
 export async function refreshQueue(): Promise<void> {
+  // downloads_history reloads persisted rows from disk (like the old Mods
+  // refresh did); queue_list is memory-only and would show an empty list
+  // after a restart. Falls back when no game is open yet.
   try {
-    queueState.queue = await invoke<QueueItem[]>('queue_list');
+    queueState.queue = await invoke<QueueItem[]>('downloads_history');
   } catch {
-    /* backend not up yet — keep stale list */
+    try {
+      queueState.queue = await invoke<QueueItem[]>('queue_list');
+    } catch {
+      /* backend not up yet — keep stale list */
+    }
   }
 }
 
