@@ -20,13 +20,18 @@ pub const DOWNLOADS_DIR: &str = "downloads";
 pub struct Home {
     pub game: PathBuf,
     pub prefix: PathBuf,
-    /// Platform data root for this game install (`.../yawmm/<slug>/`).
+    /// Platform data root: the single shared store (`.../yawmm/`).
     pub data: PathBuf,
     pub staging: PathBuf,
     pub backup: PathBuf,
     pub tmp: PathBuf,
     pub downloads: PathBuf,
-    pub state_file: PathBuf,
+}
+
+/// Profiles live in their own dir inside the app store:
+/// `<store>/profiles/<profile-id>/state.json`.
+pub fn profiles_dir(data_root: &Path) -> PathBuf {
+    data_root.join(crate::state::PROFILES_DIR)
 }
 
 /// Stable, filesystem-safe identity for one game install: hash + readable
@@ -139,7 +144,6 @@ impl Home {
             backup: root.join(BACKUP_DIR),
             tmp: root.join(TMP_DIR),
             downloads: root.join(DOWNLOADS_DIR),
-            state_file: root.join(STATE_FILE),
             data: root,
             game,
             prefix,

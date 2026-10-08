@@ -1,6 +1,6 @@
 //! Shared Tauri state: game/prefix + loaded `AppState`.
 
-use crate::{home::{Home, MANAGER_DIRNAME}, state::{load_state, save_state, AppState}};
+use crate::{home::{Home, MANAGER_DIRNAME}, state::{load_store, save_store, AppState}};
 use std::sync::Mutex;
 
 pub struct Manager {
@@ -20,21 +20,21 @@ impl Manager {
         let home = Home::new(game_dir, prefix, staging_override);
         // Relocate `<game>/_YAWMM/` into the platform data dir on first run.
         // Merge-missing covers an interrupted previous attempt; once the
-        // state file is over, the in-game dir is superseded and removed.
+        // root state file is over, the in-game dir is superseded and removed.
         if current.exists() {
             migrate_dir_contents(&current, &home.data)?;
-            if home.state_file.is_file() {
+            if home.data.join(crate::home::STATE_FILE).is_file() {
                 std::fs::remove_dir_all(&current)
                     .map_err(|e| format!("could not remove migrated {}: {e}", MANAGER_DIRNAME))?;
                 crate::log_line("rust", "migrated in-game _YAWMM data to platform data dir");
             }
         }
         home.ensure_dirs().map_err(|e| e.to_string())?;
-        let mut state = load_state(&home.state_file)?;
-        // Every install starts with a Default profile (snapshot of the
-        // current selection, possibly empty on a fresh install).
-        if state.ensure_default_profile() {
-            crate::state::save_state(&home.state_file, &state)?;
+        let mut state = load_store(&home.data)?;
+        // Every install starts with a Default profile (adopting the current
+        // working set, possibly empty on a fresh install).
+        if state.ensure_default_profile(&home.data)? {
+            crate::state::save_store(&home.data, &state)?;
         }
         // Staging override changed (set or cleared in Settings): move staged
         // mods between the effective dirs so nothing is orphaned, then
@@ -51,7 +51,7 @@ impl Manager {
                     );
                 }
                 state.staging_override = staging_override.trim().to_string();
-                crate::state::save_state(&home.state_file, &state)?;
+                crate::state::save_store(&home.data, &state)?;
             }
         }
         Ok(Self { home, state: Mutex::new(state) })
@@ -59,7 +59,7 @@ impl Manager {
 
     pub fn save(&self) -> Result<(), String> {
         let s = self.state.lock().map_err(|e| e.to_string())?;
-        save_state(&self.home.state_file, &s)
+        save_store(&self.home.data, &s)
     }
 
     /// Proton `.../pfx/drive_c/users/steamuser/Documents/The Witcher 3/gamesaves/..`

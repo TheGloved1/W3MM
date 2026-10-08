@@ -27,23 +27,42 @@ export interface ModRow {
   main_of: string;
 }
 
-export interface AppState {
+export interface ModsView {
   mods: ModRow[];
   priority: string[];
   deployed: Record<string, string>;
   filelist_added: Record<string, string[]>;
   resolutions: Record<string, number[]>;
   merge_kept: Record<string, string>;
-  profiles: Profile[];
+  profiles: ProfileView[];
   active_profile: string | null;
 }
 
+export interface AppState extends ModsView {}
+
+export interface ModSet {
+  mods: ModRow[];
+  priority: string[];
+  deployed: Record<string, string>;
+  filelist_added: Record<string, string[]>;
+  resolutions: Record<string, number[]>;
+  merge_kept: Record<string, string>;
+}
+
+/** Profile metadata; the full set lives in profiles/<id>/ on the backend. */
 export interface Profile {
   id: string;
   name: string;
-  /** Enabled mod ids snapshot. */
-  enabled: string[];
   updated: number;
+}
+
+/** Profile metadata with live mod counts (list_mods fills them in). */
+export interface ProfileView {
+  id: string;
+  name: string;
+  updated: number;
+  mods: number;
+  enabled: number;
 }
 
 export interface InstallPlan {

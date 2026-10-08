@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import type { AppState, Profile } from '$lib/types';
+  import type { ModsView, Profile, ProfileView } from '$lib/types';
   import Button from '$lib/components/button.svelte';
   import HeaderBar from '$lib/components/header-bar.svelte';
   import Panel from '$lib/components/panel.svelte';
   import Badge from '$lib/components/badge.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
 
-  let profiles: Profile[] = $state([]);
+  let profiles: ProfileView[] = $state([]);
   let active: string = $state('');
   let modsCount: number = $state(0);
   let newName: string = $state('');
@@ -23,7 +23,7 @@
 
   async function refresh() {
     try {
-      const st = await invoke<AppState>('list_mods');
+      const st = await invoke<ModsView>('list_mods');
       profiles = st.profiles ?? [];
       active = st.active_profile ?? '';
       if (active && !profiles.some((p) => p.id === active)) active = '';
@@ -49,7 +49,7 @@
     error = '';
     busy = 'Applying…';
     try {
-      await invoke('apply_profile', { id });
+      await invoke('switch_profile', { id });
       const p = profiles.find((x) => x.id === id);
       await deployApplied(p?.name ?? 'Profile');
       await refresh();
@@ -64,9 +64,9 @@
     if (!n) return;
     error = '';
     try {
-      await invoke('save_profile', { name: n });
+      await invoke('create_profile', { name: n });
       newName = '';
-      status = 'Profile saved from the current selection.';
+      status = 'Profile created from the current selection.';
       await refresh();
     } catch (e) {
       error = String(e);
@@ -120,9 +120,9 @@
     }
   }
 
-  async function openAppData() {
+  async function openProfilesDir() {
     try {
-      const d = await invoke<string>('data_dir_path');
+      const d = await invoke<string>('profiles_dir_path');
       await invoke('open_path', { target: d });
     } catch (e) {
       error = String(e);
@@ -197,7 +197,7 @@
                     <span class="truncate text-sm font-medium">{p.name}</span>
                     {#if p.id === active}<Badge>Active</Badge>{/if}
                   </div>
-                  <div class="text-xs text-muted-foreground">{p.enabled.length} mod{p.enabled.length === 1 ? '' : 's'} enabled{p.id === active ? ' · currently deployed selection' : ''}</div>
+                  <div class="text-xs text-muted-foreground">{p.enabled}/{p.mods} mods enabled{p.id === active ? ' · currently deployed selection' : ''}</div>
                 {/if}
               </div>
               {#if renameTarget !== p.id}
@@ -218,9 +218,9 @@
 
       <Panel bg="card" class="border-dashed">
         <div class="flex items-center justify-between gap-2 p-3">
-          <div class="min-w-0 truncate text-xs text-muted-foreground">Profiles live in the app store (<span class="font-mono">state.json</span>)</div>
+          <div class="min-w-0 truncate text-xs text-muted-foreground">Profiles live in the app store's <span class="font-mono">profiles/</span> dir</div>
           <div class="flex shrink-0 gap-1">
-            <button class={ghost} onclick={openAppData}>Open app data</button>
+            <button class={ghost} onclick={openProfilesDir}>Open profiles dir</button>
             <button class={ghost} onclick={refresh}>Refresh</button>
           </div>
         </div>
