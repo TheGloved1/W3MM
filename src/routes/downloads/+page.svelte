@@ -90,11 +90,7 @@
     {@const settled = rows.some((r) => r.status === 'done' && dlSameFile(mods, r))}
     {@const collapsed =
       dlCollapsed[group.key] ??
-      rows.every(
-        (r) =>
-          (r.status === 'done' && dlSameFile(mods, r)) ||
-          (settled && r.status === 'done'),
-      )}
+      rows.every((r) => r.status === 'done')}
     {@const single = rows.length === 1 ? rows[0] : null}
     {@const running = rows.some(
       (r) =>
