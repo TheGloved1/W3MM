@@ -245,7 +245,8 @@ export async function dlMain(mods: AppState['mods'] | undefined, qq: QueueItem):
     return;
   }
   if (qq.status === 'done') {
-    // Genuinely different file (not the installed copy) → install window.
-    if (!dlSameFile(mods, qq)) await offerInstall(qq);
+    // Reinstall/Upgrade/Downgrade all flow through the Install window; the
+    // dlSameFile gate only belongs in the auto-offer on download-done.
+    await offerInstall(qq);
   }
 }
