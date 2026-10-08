@@ -22,6 +22,9 @@ function getPipedLines(): string[] {
     if (isPipedInput()) {
       const data = readFileSync(0, 'utf-8');
       pipedLines = data.split(/\r?\n/);
+      // A trailing newline terminates the last answer; it is not an answer.
+      // Without this, an exhausted pipe looks like endless blank lines.
+      if (pipedLines.length > 0 && pipedLines[pipedLines.length - 1] === '') pipedLines.pop();
     } else {
       pipedLines = [];
     }
@@ -33,7 +36,14 @@ function getPipedLines(): string[] {
 const ask = async (q: string): Promise<string> => {
   if (isPipedInput()) {
     const lines = getPipedLines();
-    const ans = lines[pipedIdx++] ?? '';
+    const ans = pipedIdx < lines.length ? lines[pipedIdx++] : undefined;
+    if (ans === undefined) {
+      // No more piped answers: ABORT, never assume one. A blank default
+      // here once auto-confirmed every remaining prompt (commit+tag+push).
+      const err = new Error('Piped input exhausted — refusing to assume an answer');
+      err.name = 'AbortError';
+      throw err;
+    }
     output.write(q);
     output.write(ans + '\n');
     return ans;
@@ -56,8 +66,61 @@ function ok(msg: string) {
   console.log(`  ${GREEN}ok${NC} ${msg}`);
 }
 function fail(msg: string): never {
+  // A failure after the version bump must not leave bumped files behind:
+  // best-effort revert the working tree before exiting.
+  revertPendingRelease();
   console.error(`  ${RED}error${NC} ${msg}`);
   process.exit(1);
+}
+
+// Set once the release starts mutating the working tree (version bump
+// onward) and cleared after the release commit lands. Any abort past that
+// point — 'n' answer, Ctrl+C/EOF AbortError, or fail() — must attempt the
+// same working-tree revert instead of leaving junk behind.
+let pendingRevert: { snapshot: Record<string, string | null>; next: string; didAutoStash: boolean } | null = null;
+
+function revertPendingRelease(): void {
+  const pending = pendingRevert;
+  pendingRevert = null;
+  if (pending === null) return;
+  revertWorkingTree(pending.snapshot, pending.next, pending.didAutoStash);
+}
+
+/// Restore snapshotted files and delete the per-version changelog, then
+/// pop any autostash. Deletion is VERIFIED: a silent `rmSync` miss here is
+/// what once left a stray `changelogs/v*.md` behind after a cancel.
+function revertWorkingTree(
+  fileSnapshot: Record<string, string | null>,
+  next: string,
+  didAutoStash: boolean,
+): void {
+  console.log(`\n${YELLOW}Reverting changes...${NC}`);
+  for (const [file, content] of Object.entries(fileSnapshot)) {
+    try {
+      if (content === null) rmSync(file);
+      else writeFileSync(file, content);
+    } catch {
+      console.log(`  ${YELLOW}warning${NC} Could not restore ${file} — check 'git diff'`);
+    }
+  }
+  const changelog = `changelogs/v${next}.md`;
+  if (existsSync(changelog)) {
+    try {
+      rmSync(changelog);
+    } catch {}
+    if (existsSync(changelog)) {
+      console.log(`  ${YELLOW}warning${NC} Could not remove ${changelog} — delete it manually`);
+    }
+  }
+  if (didAutoStash) {
+    try {
+      execSync('git stash pop', { stdio: 'inherit' });
+      console.log(`  ${GREEN}ok${NC} Restored stashed changes`);
+    } catch {
+      console.log(`  ${YELLOW}warning${NC} Could not pop stash — check 'git stash list'`);
+    }
+  }
+  console.log('Reverted to state before release.');
 }
 
 // ---------------------------------------------------------------------------
@@ -728,6 +791,9 @@ async function main() {
       console.log('Aborted.');
       process.exit(0);
     }
+    // Past this point the tree gets mutated: arm the revert first so any
+    // later abort ('n', Ctrl+C, fail()) restores the tree. Cleared on commit.
+    pendingRevert = { snapshot: {}, next, didAutoStash };
   } else {
     console.log(`\n${YELLOW}DRY RUN${NC} — no changes will be made\n`);
   }
@@ -735,7 +801,7 @@ async function main() {
   const isBetaRelease = next.includes('-');
   const isStableFromBeta = parsed.prerelease !== null && !next.includes('-');
 
-  // Snapshot files before any changes (for undo log)
+  // Snapshot files before any changes (for undo log + mid-run reverts)
   const fileSnapshot =
     dryRun ?
       {}
@@ -746,6 +812,7 @@ async function main() {
         'src-tauri/tauri.conf.json',
         ...(skipChangelog || isBetaRelease ? [] : ['CHANGELOG.md']),
       ]);
+  if (pendingRevert !== null) pendingRevert.snapshot = fileSnapshot;
 
   // Bump versions
   step('Updating version numbers');
@@ -819,25 +886,7 @@ async function main() {
     if (!dryRun) {
       const looksGood = await ask('Does the changelog look good? (Y/n) ');
       if (checkYesOrNo(looksGood)) {
-        console.log(`\n${YELLOW}Reverting changes...${NC}`);
-        for (const [file, content] of Object.entries(fileSnapshot)) {
-          try {
-            if (content === null) rmSync(file);
-            else writeFileSync(file, content);
-          } catch {}
-        }
-        try {
-          rmSync(`changelogs/v${next}.md`);
-        } catch {}
-        if (didAutoStash) {
-          try {
-            execSync('git stash pop', { stdio: 'inherit' });
-            console.log(`  ${GREEN}ok${NC} Restored stashed changes`);
-          } catch {
-            console.log(`  ${YELLOW}warning${NC} Could not pop stash — check 'git stash list'`);
-          }
-        }
-        console.log('Reverted to state before release.');
+        revertPendingRelease();
         console.log(`
 If you want to edit manually, run:
   git diff
@@ -862,6 +911,8 @@ and re-run: ./scripts/release.ts ${bump}${betaModifier ? ' beta' : ''} ${noPush 
   if (!dryRun) {
     execSync(`git add ${filesToAdd.join(' ')}`, { encoding: 'utf-8' });
     execSync(`git commit -m "chore: release v${next}"`, { encoding: 'utf-8' });
+    // Committed: the tree is the release now, nothing left to revert.
+    pendingRevert = null;
   }
   ok(`Committed release v${next}`);
 
@@ -952,6 +1003,13 @@ and re-run: ./scripts/release.ts ${bump}${betaModifier ? ' beta' : ''} ${noPush 
 
 main()
   .catch((err) => {
+    // Crash abort (Ctrl+C / EOF AbortError from a prompt, unexpected throw)
+    // after writes began: best-effort restore the tree before exiting.
+    if (pendingRevert !== null) revertPendingRelease();
+    if ((err as { name?: string })?.name === 'AbortError') {
+      console.log('Aborted.');
+      process.exit(130);
+    }
     console.error('Release script failed:', err);
     process.exit(1);
   })
