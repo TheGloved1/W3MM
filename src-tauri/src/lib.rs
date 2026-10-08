@@ -264,6 +264,23 @@ fn rename_profile(shared: State<Shared>, id: String, name: String) -> Result<boo
     Ok(true)
 }
 
+/// Copy a profile's selection to "<name>_copy".
+#[tauri::command]
+fn duplicate_profile(shared: State<Shared>, id: String) -> Result<state::Profile, String> {
+    let g = lock_shared(&shared, "duplicate_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let p = {
+        m.state.lock().map_err(|e| e.to_string())?.duplicate_profile(&id)
+    };
+    match p {
+        Some(p) => {
+            m.save()?;
+            Ok(p)
+        }
+        None => Err("profile not found".into()),
+    }
+}
+
 #[tauri::command]
 fn set_priority(shared: State<Shared>, id: String, number: usize) -> Result<bool, String> {
     let g = lock_shared(&shared, "set_priority")?;
@@ -2286,6 +2303,7 @@ pub fn run() {
             apply_profile,
             delete_profile,
             rename_profile,
+            duplicate_profile,
             set_priority,
             rename_mod,
             remove_mods,

@@ -54,7 +54,11 @@ pub struct AppState {
     pub mods: Vec<ModRow>,
     /// Saved enable-selections.
     #[serde(default)]
-    pub profiles: Vec<Profile>,    /// Top-priority first (python `state["priority"]`).
+    pub profiles: Vec<Profile>,
+    /// Last applied profile (NMM-style active marker). Manual toggles may
+    /// diverge from it; it simply records what was applied last.
+    #[serde(default)]
+    pub active_profile: Option<String>,    /// Top-priority first (python `state["priority"]`).
     #[serde(default)]
     pub priority: Vec<String>,
     /// User staging-dir override (empty = default under the data root).
@@ -231,13 +235,18 @@ impl AppState {
         for m in self.mods.iter_mut().filter(|r| !r.sep) {
             m.enabled = want.contains(m.id.as_str());
         }
+        self.active_profile = Some(id.to_string());
         true
     }
 
     pub fn delete_profile(&mut self, id: &str) -> bool {
         let n = self.profiles.len();
         self.profiles.retain(|p| p.id != id);
-        self.profiles.len() != n
+        let gone = self.profiles.len() != n;
+        if gone && self.active_profile.as_deref() == Some(id) {
+            self.active_profile = None;
+        }
+        gone
     }
 
     /// Returns false for unknown ids and blank names.
@@ -253,6 +262,26 @@ impl AppState {
             }
             None => false,
         }
+    }
+
+    /// Copy a profile's selection under "<name>_copy" (suffixed further
+    /// while taken). Returns None for unknown ids.
+    pub fn duplicate_profile(&mut self, id: &str) -> Option<Profile> {
+        let src = self.profiles.iter().find(|p| p.id == id)?.clone();
+        let mut name = format!("{}_copy", src.name);
+        let mut n = 2;
+        while self.profiles.iter().any(|p| p.name == name) {
+            name = format!("{}_copy{n}", src.name);
+            n += 1;
+        }
+        let p = Profile {
+            id: format!("prof{}", uuid::Uuid::new_v4().simple()),
+            name,
+            enabled: src.enabled,
+            updated: chrono::Local::now().timestamp(),
+        };
+        self.profiles.push(p.clone());
+        Some(p)
     }
 
     /// Guarantee the list starts with a Default profile: seed one snapshotting
@@ -392,6 +421,26 @@ mod tests {
         assert!(s.delete_profile(&p.id));
         assert!(!s.delete_profile(&p.id));
         assert!(s.profiles.is_empty());
+    }
+    #[test]
+    fn profile_active_and_duplicate() {
+        let mut s = AppState::default();
+        s.mods = vec![row("a", "A"), row("b", "B")];
+        let p = s.save_profile("questing");
+        assert_eq!(s.active_profile, None, "saving does not activate");
+        assert!(s.apply_profile(&p.id));
+        assert_eq!(s.active_profile.as_deref(), Some(p.id.as_str()));
+        // Diverge manually, then duplicate the stored selection.
+        s.set_enabled(&["a".to_string()], false);
+        let q = s.duplicate_profile(&p.id).expect("duplicate");
+        assert_eq!(q.name, "questing_copy");
+        assert_eq!(q.enabled, p.enabled);
+        assert!(s.duplicate_profile("nope").is_none());
+        // Deleting the active profile clears the marker; others don't.
+        assert!(s.delete_profile(&q.id));
+        assert_eq!(s.active_profile.as_deref(), Some(p.id.as_str()));
+        assert!(s.delete_profile(&p.id));
+        assert_eq!(s.active_profile, None);
     }
     #[test]
     fn default_profile_seeds_once() {
