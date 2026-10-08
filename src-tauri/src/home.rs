@@ -165,20 +165,47 @@ pub fn normalize_prefix(prefix: &str) -> PathBuf {
 /// them). Read-only metadata comparison — no probe files. `None` when either
 /// side can't be stated or the platform exposes no volume identity.
 pub fn same_filesystem(a: &Path, b: &Path) -> Option<bool> {
-    let (ma, mb) = (std::fs::metadata(a).ok()?, std::fs::metadata(b).ok()?);
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let (ma, mb) = (std::fs::metadata(a).ok()?, std::fs::metadata(b).ok()?);
         Some(ma.dev() == mb.dev())
     }
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::fs::MetadataExt;
-        Some(ma.volume_serial_number() == mb.volume_serial_number())
+        // No stable volume-serial API exists (`volume_serial_number` is
+        // still behind `windows_by_handle`, rust#63010), so compare volume
+        // roots instead: same drive letter (or UNC share) means hardlinks
+        // work. Edge cases err safe — subst drives and volume mount points
+        // may report "split" (an extra dialog) or "same" (silent copy
+        // fallback, the pre-existing behavior either way).
+        use std::path::{Component, Prefix};
+        fn vol_root(p: &Path) -> Option<String> {
+            let mut comps = p.canonicalize().ok()?.components();
+            let root = match comps.next()? {
+                Component::Prefix(pre) => match pre.kind() {
+                    Prefix::Disk(d) | Prefix::VerbatimDisk(d) => {
+                        format!("disk:{}", char::from(d).to_ascii_lowercase())
+                    }
+                    Prefix::UNC(srv, shr) | Prefix::VerbatimUNC(srv, shr) => format!(
+                        "unc:{}\\{}",
+                        srv.to_string_lossy().to_lowercase(),
+                        shr.to_string_lossy().to_lowercase()
+                    ),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            Some(root)
+        }
+        match (vol_root(a), vol_root(b)) {
+            (Some(x), Some(y)) => Some(x == y),
+            _ => None,
+        }
     }
     #[cfg(not(any(unix, target_os = "windows")))]
     {
-        let _ = (ma, mb);
+        let _ = (a, b);
         None
     }
 }
