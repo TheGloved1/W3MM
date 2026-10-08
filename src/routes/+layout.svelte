@@ -238,7 +238,11 @@
         <Download class="size-4 shrink-0" />
         {#if !collapsed}<span class="flex-1">Downloads</span>{/if}
         {#if activeDownloads}
-          <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9a45c] px-1 text-[11px] font-bold text-[#1c2127]">{activeDownloads}</span>
+          {#if collapsed}
+            <span class="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c9a45c] px-0.5 text-[10px] font-bold text-[#1c2127]">{activeDownloads}</span>
+          {:else}
+            <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9a45c] px-1 text-[11px] font-bold text-[#1c2127]">{activeDownloads}</span>
+          {/if}
         {/if}
       </a>
       <a href="/settings" title="Settings" class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/settings') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
