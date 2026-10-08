@@ -1,3 +1,52 @@
+# [26.10.19] - 2026-10-08
+
+## Added
+
+- rename mod manager W3MM to Yet Another Witcher Mod Manager (YAWMM)
+- **downloads**: ```navigate to Downloads page when a download starts```
+
+- ui:
+```
+- add NMM-style sidebar with Mods, Downloads, Settings pages
+- align page header bars with sidebar header
+```
+
+- brand:
+```
+- generate Tauri logos from W3MM SVG and use it in sidebar
+- generate ico, icns, android and ios logos from SVG
+```
+
+## Fixed
+
+- **release**: ```abort on exhausted input and verify cancel revert```
+- **brand**: ```keep icon corners transparent when rasterizing SVG```
+
+- downloads:
+```
+- load persisted history and restore old sidebar panel UI
+- sort groups by most recent first
+```
+
+- ui:
+```
+- keep header-bar dropdowns above the mod list
+- tighten header-bar horizontal padding
+```
+
+## Changed
+
+- **mods**: ```format Mods page per repo prettier config```
+- **scripts**: ```merge release-status into release.ts status subcommand```
+
+## Chores
+
+- **git**: ```ignore local AGENTS.md```
+
+## Other
+
+- **readme**: ```refresh platform, storage, and feature coverage```
+
 # [26.10.18] - 2026-10-08
 
 ## Added
