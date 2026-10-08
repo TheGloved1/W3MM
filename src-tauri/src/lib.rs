@@ -2163,6 +2163,7 @@ fn install_roots(
     let tmp = std::env::temp_dir().join(format!("yawmm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    log_line("rust", &format!("install_roots: enter path={path:?} name={name:?} replace_ids={replace_ids:?}"));
     let res: Result<String, String> = (|| {
         // Manually picked archives live wherever the user left them: move
         // the file into our downloads first so the row's recorded path stays

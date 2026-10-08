@@ -161,14 +161,18 @@
       }
     }
     busy = true; warn = '';
+    console.debug(`[yawmm] install: enter name=${name.trim()} replace=${replace} collisions=${collisions.length} path=${archPath}`);
     try {
       // Replacement installs are atomic in the backend: the replaced rows'
       // list position (load order) is kept for the new row.
       let replaceIds: string[] = [];
       if (replace && collisions.length) {
+        console.debug(`[yawmm] install: replace flow, fetching list_mods for ${collisions.length} collisions`);
         const st = await invoke<{ mods: { id: string }[] }>('list_mods');
         replaceIds = st.mods.filter((m) => collisions.includes(m.id)).map((m) => m.id);
+        console.debug(`[yawmm] install: replaceIds [${replaceIds.join(',')}]`);
       }
+      console.debug(`[yawmm] install: invoking install_roots replaceIds=${replaceIds.length}`);
       await invoke<string>('install_roots', {
         path: archPath, name: name.trim(), version, nexusId: nexus, section,
         roots: roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
@@ -178,7 +182,12 @@
       await emit('mods-changed', {});
       await emit('mod-installed', {});
       await getCurrentWindow().close();
-    } catch (e) { warn = String(e); }
+    } catch (e) {
+      // Was silent before; a rejected install_roots looked like "nothing
+      // happened" — log it so the main process can see the failure.
+      console.error(`[yawmm] install: FAILED: ${String(e)}`);
+      warn = String(e);
+    }
     busy = false;
   }
 
