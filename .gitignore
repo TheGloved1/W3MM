@@ -53,3 +53,6 @@ bun.lockb
 
 # generated updater fragments (only used if you enable the updater later)
 updater-*.json
+
+# Local agent instructions (untracked by design)
+AGENTS.md
