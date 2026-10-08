@@ -181,7 +181,8 @@ pub fn same_filesystem(a: &Path, b: &Path) -> Option<bool> {
         // fallback, the pre-existing behavior either way).
         use std::path::{Component, Prefix};
         fn vol_root(p: &Path) -> Option<String> {
-            let mut comps = p.canonicalize().ok()?.components();
+            let abs = p.canonicalize().ok()?;
+            let mut comps = abs.components();
             let root = match comps.next()? {
                 Component::Prefix(pre) => match pre.kind() {
                     Prefix::Disk(d) | Prefix::VerbatimDisk(d) => {
