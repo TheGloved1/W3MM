@@ -10,7 +10,7 @@
     tone?: 'default' | 'dark';
     padClass?: string;
   }
-  let { title, subtitle, right, tone = 'default', padClass = 'px-[22px]' }: Props = $props();
+  let { title, subtitle, right, tone = 'default', padClass = 'px-3' }: Props = $props();
   // No backdrop-blur: the bar is in-flow (nothing scrolls under it), and
   // backdrop-filter would trap dropdowns' z-50 inside the bar's stacking
   // context so the mod list paints over them. relative z-50 keeps the

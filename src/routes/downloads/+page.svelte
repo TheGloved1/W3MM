@@ -59,7 +59,7 @@
 <div class="flex h-full min-h-0 flex-col bg-[#232930]">
   <HeaderBar
     tone="dark"
-    padClass="px-4"
+    padClass="px-3"
     title="Downloads"
     subtitle={dlSummary}
   >
