@@ -17,17 +17,23 @@ export function setQueue(q: QueueItem[]) {
 }
 
 export async function refreshQueue(): Promise<void> {
-  // downloads_history reloads persisted rows from disk (like the old Mods
-  // refresh did); queue_list is memory-only and would show an empty list
-  // after a restart. Falls back when no game is open yet.
+  // queue_list only: live truth. downloads_history reloads the disk file —
+  // calling it on every refresh makes load_history overwrite in-flight rows
+  // (status forced to "error", meta stripped) behind the worker's back.
+  try {
+    queueState.queue = await invoke<QueueItem[]>('queue_list');
+  } catch {
+    /* backend not up yet — keep stale list */
+  }
+}
+
+/** One-shot history restore after open_manager (boot-time). Afterwards the
+ *  in-memory queue + dl_save writes are the source of truth. */
+export async function loadDownloadHistory(): Promise<void> {
   try {
     queueState.queue = await invoke<QueueItem[]>('downloads_history');
   } catch {
-    try {
-      queueState.queue = await invoke<QueueItem[]>('queue_list');
-    } catch {
-      /* backend not up yet — keep stale list */
-    }
+    /* no game open yet */
   }
 }
 

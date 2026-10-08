@@ -20,6 +20,10 @@
   let { children } = $props();
 
   const appVersion = __APP_VERSION__;
+  // Tool windows (install/edit/merges) share this root layout — they are
+  // separate Tauri windows, and must render their page content bare, with
+  // no sidebar chrome. The main window is the only one with the app shell.
+  const isMain = getCurrentWindow().label === 'main';
 
   const themes = ['default','rose-pine','rose-pine-moon','rose-pine-dawn','catppuccin-mocha','catppuccin-macchiato','catppuccin-frappe','catppuccin-latte'];
   const fonts = ['inter','jetbrains','geist','space','manrope','sora'];
@@ -134,6 +138,10 @@
       unsubscribeQueueListeners();
       const track = (u: () => void): (() => void) => { queueUnsubs.push(u); return u; };
       try {
+        // Persisted history merges into the live queue once at boot;
+        // refreshQueue polls live state from then on.
+        const { loadDownloadHistory } = await import('$lib/downloads.svelte');
+        await loadDownloadHistory();
         await refreshQueue();
         const { getCurrent, onOpenUrl } = await import('@tauri-apps/plugin-deep-link');
         const cur = await getCurrent().catch(() => []);
@@ -205,6 +213,7 @@
   <title>YAWMM</title>
 </svelte:head>
 
+{#if isMain}
 <div class="flex h-screen bg-background text-foreground overflow-hidden">
   <aside class="shrink-0 flex flex-col border-r bg-gradient-to-b from-card to-background transition-all duration-200 {collapsed ? 'w-[56px] items-center' : 'w-[220px]'}">
     <div class="h-12 flex items-center gap-2 px-3 border-b shrink-0 w-full {collapsed ? 'justify-center' : ''}">
@@ -254,3 +263,9 @@
     {@render children()}
   </div>
 </div>
+{:else}
+<!-- Tool windows (install/edit/merges): content only, no app chrome. -->
+<div class="h-screen overflow-auto bg-background text-foreground">
+  {@render children()}
+</div>
+{/if}
