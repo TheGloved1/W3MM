@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative } from '$lib/config';
   import {
     queueState,
@@ -30,6 +31,15 @@
     document.documentElement.setAttribute('data-font', f);
   }
 
+  const queueUnsubs = ((window as any).__yawmmQueueUnsubs ??= []) as Array<() => void>;
+  function unsubscribeQueueListeners() {
+    // Window scope persists across dev HMR reloads, unlike module state —
+    // so the previous layout instance's listeners really do get removed.
+    for (const u of queueUnsubs.splice(0)) {
+      try { u(); } catch {}
+    }
+  }
+  
   function forwardConsole() {
     const origDebug = console.debug;
     console.debug = (...args: any[]) => {
@@ -112,6 +122,17 @@
     let unlistenMeta: (() => void) | undefined;
     let unlistenInstalled: (() => void) | undefined;
     (async () => {
+      // Only the main window owns the download queue: tool windows (install,
+      // edit, settings, merges) each load this layout too, and letting every
+      // one subscribe would multiply dlNxm per nxm:// event and stack
+      // offerInstall calls. Events are window-local JS anyway, so the queue
+      // UI (main window only) is the sole subscriber by design.
+      if (getCurrentWindow().label !== 'main') return;
+      // Dev HMR re-mounts this layout; tear down listeners from the previous
+      // module instance before re-registering, or every hot reload doubles
+      // them (duplicate nxm handling = same download raced in parallel).
+      unsubscribeQueueListeners();
+      const track = (u: () => void): (() => void) => { queueUnsubs.push(u); return u; };
       try {
         await refreshQueue();
         const { getCurrent, onOpenUrl } = await import('@tauri-apps/plugin-deep-link');
@@ -121,14 +142,14 @@
           try { await dlNxm(cur[0]); } catch (e) { console.error("[yawmm] deep-link failed", e); }
           goto('/downloads').catch(() => {});
         }
-        unlistenUrl = await onOpenUrl(async (urls) => {
+        unlistenUrl = track(await onOpenUrl(async (urls) => {
           if (urls?.length) {
             const { dlNxm } = await import('$lib/downloads.svelte');
             try { await dlNxm(urls[0]); } catch (e) { console.error("[yawmm] deep-link failed", e); }
             goto('/downloads').catch(() => {});
           }
-        });
-        unlistenP = await listen<{ id: string; done: number; total: number; speed?: number }>(
+        }));
+        unlistenP = track(await listen<{ id: string; done: number; total: number; speed?: number }>(
           "download-progress",
           (e) => {
             setQueue(
@@ -139,8 +160,8 @@
               ),
             );
           },
-        );
-        unlistenD = await listen<{ id: string; path: string; error?: string }>(
+        ));
+        unlistenD = track(await listen<{ id: string; path: string; error?: string }>(
           "download-done",
           async (e) => {
             await refreshQueue();
@@ -160,26 +181,22 @@
               }
             }
           },
-        );
-        unlistenMeta = await listen<{ id: string }>("download-meta", async () => {
+        ));
+        unlistenMeta = track(await listen<{ id: string }>("download-meta", async () => {
           await refreshQueue().catch(() => {});
-        });
+        }));
         // A finished Install window sends the user back to the mod list,
         // wherever in the app they were.
-        unlistenInstalled = await listen("mod-installed", () => {
+        unlistenInstalled = track(await listen("mod-installed", () => {
           goto('/').catch(() => {});
-        });
+        }));
       } catch {}
     })();
 
     return () => {
       if (id) clearInterval(id);
       mq.removeEventListener("change", applyAutoSidebar);
-      unlistenUrl?.();
-      unlistenP?.();
-      unlistenD?.();
-      unlistenMeta?.();
-      unlistenInstalled?.();
+      unsubscribeQueueListeners();
     };
   });
 </script>

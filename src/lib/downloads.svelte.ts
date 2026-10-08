@@ -190,12 +190,16 @@ export async function openDownloadsFolder(): Promise<void> {
 /** Enqueue an nxm:// URL and start it; returns the queue id. */
 export async function dlNxm(url: string): Promise<string> {
   if (!url) return '';
+  // Entry-point tracing: a duplicate listener (HMR dev reload, or a second
+  // subscribing window) shows up here as identical back-to-back lines.
+  console.debug(`[yawmm] dlNxm enter url=${url.slice(0, 80)} window=${location.pathname}`);
   const cfg = await loadConfigNative();
   if (!cfg.nexusKey) throw new Error('Set Nexus API key in Settings first');
   const id = await invoke<string>('queue_enqueue', { url });
   await refreshQueue();
   const row = queueState.queue.find((qq) => qq.id === id);
   if (row && (row.status === 'active' || row.status === 'starting' || row.status === 'paused')) {
+    console.debug(`[yawmm] dlNxm skip-start: row ${id} already ${row.status}`);
     return id; // already fetching this file
   }
   if (row && row.status === 'done') return id; // caller decides install
