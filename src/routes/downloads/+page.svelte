@@ -22,24 +22,32 @@
   let error: string = $state('');
   let dlCollapsed: Record<string, boolean> = $state({});
 
+  // Groups keyed by mod/file id. NOTE: this must stay an array sorted
+  // here — a keyed object would iterate integer-like Nexus ids in numeric
+  // order and destroy the backend's newest-first ordering.
   const groupedQueue = $derived(
-    queueState.queue.reduce(
-      (acc, qq) => {
-        const key = qq.mod_id || qq.file_id || qq.filename;
-        if (!acc[key]) acc[key] = { key, mod_id: qq.mod_id, mod_name: qq.mod_name || qq.filename, rows: [] };
-        acc[key].rows.push(qq);
-        if (!acc[key].mod_name && qq.mod_name) acc[key].mod_name = qq.mod_name;
-        return acc;
-      },
-      {} as Record<string, { key: string; mod_id: string; mod_name: string; rows: typeof queueState.queue }>,
-    ),
+    Object.values(
+      queueState.queue.reduce(
+        (acc, qq) => {
+          const key = qq.mod_id || qq.file_id || qq.filename;
+          if (!acc[key]) acc[key] = { key, mod_id: qq.mod_id, mod_name: qq.mod_name || qq.filename, rows: [] };
+          acc[key].rows.push(qq);
+          if (!acc[key].mod_name && qq.mod_name) acc[key].mod_name = qq.mod_name;
+          return acc;
+        },
+        {} as Record<string, { key: string; mod_id: string; mod_name: string; rows: typeof queueState.queue }>,
+      ),
+    ).sort((a, b) => {
+      const latest = (g: typeof a) => g.rows.reduce((m, r) => Math.max(m, r.added || 0), 0);
+      return latest(b) - latest(a);
+    }),
   );
 
   const dlSummary = $derived(
     queueState.queue.length
       ? (() => {
           const bytes = queueState.queue.reduce((a, qq) => a + (qq.total || qq.done || 0), 0);
-          const n = Object.keys(groupedQueue).length;
+          const n = groupedQueue.length;
           return `${n} mod${n === 1 ? '' : 's'}  ·  ${humanSize(bytes)}`;
         })()
       : '',
@@ -76,7 +84,7 @@
   {#if error}
     <div class="rounded-[8px] border border-[#e3735f]/40 bg-[#e3735f]/10 px-3 py-2 text-[13px] text-[#e3735f]">{error}</div>
   {/if}
-  {#each Object.values(groupedQueue) as group}
+  {#each groupedQueue as group}
     {@const rows = group.rows}
     {@const nested = rows.length > 1}
     {@const settled = rows.some((r) => r.status === 'done' && dlSameFile(mods, r))}
