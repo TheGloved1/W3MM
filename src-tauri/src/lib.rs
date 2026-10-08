@@ -1717,7 +1717,6 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
     let (title, w, h) = match kind.as_str() {
         "install" => ("Install mod", 820.0, 660.0),
         "edit" => ("Edit mod", 860.0, 520.0),
-        "setup" | "settings" => ("Settings", 700.0, 640.0),
         "resolver" => ("Script decisions", 1150.0, 760.0),
         _ => {
             log_line("rust", &format!("open_tool_window: unknown kind={kind:?}"));
@@ -1725,8 +1724,8 @@ fn open_tool_window(app: tauri::AppHandle, kind: String, query: String, path: St
         }
     };
     // Window labels are stable ids; routes are what SvelteKit builds.
+    // Note: settings lives in the main sidebar now, not a tool window.
     let route = match kind.as_str() {
-        "setup" | "settings" => "settings",
         "resolver" => "merges",
         _ => kind.as_str(),
     };

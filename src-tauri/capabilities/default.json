@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for all app windows",
-  "windows": ["main", "settings", "install", "edit", "merges"],
+  "windows": ["main", "install", "edit", "merges"],
   "permissions": [
     "core:default",
     "store:default",

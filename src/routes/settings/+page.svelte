@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative, saveConfigNative } from '$lib/config';
   import type { AppConfig } from '$lib/types';
   import FormInput from '$lib/components/form-input.svelte';
@@ -28,6 +27,8 @@
    *  default staging dir when no override is set. */
   let stagingShown: string = $state('');
   let defaultStaging: string = $state('');
+
+  let savedAt: string = $state('');
 
   type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
 
@@ -134,20 +135,29 @@
       config.stagingNoticeDismissed = false;
     }
     await saveConfigNative(config);
+    initialStaging = config.stagingDir ?? '';
     try {
       await invoke('open_manager', { gameDir: config.gameDir, prefix: config.prefix, stagingDir: config.stagingDir ?? '' });
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
     } catch {}
-    await getCurrentWindow().close().catch(() => history.back());
+    warn = '';
+    savedAt = new Date().toLocaleTimeString();
   }
 
   async function cancel() {
-    await getCurrentWindow().close().catch(() => history.back());
+    // Sidebar page: revert to the last saved config instead of closing.
+    try {
+      config = await loadConfigNative();
+      initialStaging = config.stagingDir ?? '';
+      stagingShown = config.stagingDir || defaultStaging;
+      warn = '';
+      savedAt = '';
+    } catch {}
   }
 </script>
 
-<div class="mx-auto flex h-full max-w-[680px] flex-col gap-3 overflow-y-auto px-[22px] py-5">
+<div class="flex h-full min-h-0 flex-col gap-3 px-[22px] pt-[18px] pb-[12px]">
   <PageHeader title="Settings" description={isWindows ? "Pick your Witcher 3 folder. Settings live in your Documents folder — no prefix needed on Windows." : "Pick your Witcher 3 folder and its Proton/Wine prefix. The prefix holds mods.settings — without it, load order isn't applied."} />
 
   {#if config}
@@ -193,10 +203,11 @@
   {/if}
 
   <WarningBanner message={warn} />
+  {#if savedAt}<div class="text-[12px] text-muted-foreground">Saved {savedAt}</div>{/if}
   <div class="flex-1"></div>
   <div class="flex items-center gap-2">
     <Button variant="secondary" size="md" onclick={() => detect()}>Detect Steam install</Button>
     <span class="flex-1"></span>
-    <FormActions cancelLabel="Cancel" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm" spacer={false} />
+    <FormActions cancelLabel="Revert" onCancel={cancel} primaryLabel="Save" onPrimary={save} primaryClass="px-[18px] py-2 text-sm" spacer={false} />
   </div>
 </div>

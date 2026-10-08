@@ -1,9 +1,23 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { loadConfigNative } from '$lib/config';
+  import {
+    queueState,
+    setQueue,
+    refreshQueue,
+    dlSameFile,
+    offerInstall,
+  } from '$lib/downloads.svelte';
+  import type { AppState } from '$lib/types';
+  import { Download, Layers, Settings } from 'lucide-svelte';
   let { children } = $props();
+
+  const appVersion = __APP_VERSION__;
 
   const themes = ['default','rose-pine','rose-pine-moon','rose-pine-dawn','catppuccin-mocha','catppuccin-macchiato','catppuccin-frappe','catppuccin-latte'];
   const fonts = ['inter','jetbrains','geist','space','manrope','sora'];
@@ -34,8 +48,50 @@
     });
   }
 
+  async function notify(title: string, body: string) {
+    try {
+      const { sendNotification } = await import('@tauri-apps/plugin-notification');
+      sendNotification({ title, body });
+    } catch {}
+  }
+
+  // Sidebar state: wide screens default expanded, narrow collapsed.
+  // A manual toggle is remembered and wins over the breakpoint.
+  let collapsed = $state(false);
+  const wideQuery = "(min-width: 1024px)";
+  function hasManualChoice() {
+    try {
+      return localStorage.getItem("sidebar-collapsed") !== null;
+    } catch {
+      return true;
+    }
+  }
+  function applyAutoSidebar(e?: { matches: boolean }) {
+    if (hasManualChoice()) return;
+    const wide = e ? e.matches : window.matchMedia(wideQuery).matches;
+    collapsed = !wide;
+  }
+  function toggleCollapsed() {
+    collapsed = !collapsed;
+    try { localStorage.setItem("sidebar-collapsed", String(collapsed)); } catch {}
+  }
+
+  let path = $derived(page.url.pathname);
+  const isActive = (href: string) => href === '/' ? path === '/' : path.startsWith(href);
+  const activeDownloads = $derived(
+    queueState.queue.filter((qq) => qq.status === "active" || qq.status === "starting" || qq.status === "queued").length,
+  );
+
   onMount(() => {
     forwardConsole();
+    try {
+      const saved = localStorage.getItem("sidebar-collapsed");
+      if (saved !== null) collapsed = saved === "true";
+      else applyAutoSidebar();
+    } catch {}
+    const mq = window.matchMedia(wideQuery);
+    mq.addEventListener("change", applyAutoSidebar);
+
     let id: ReturnType<typeof setInterval> | undefined;
     (async () => {
       try {
@@ -46,7 +102,77 @@
         }, 1000);
       } catch {}
     })();
-    return () => { if (id) clearInterval(id); };
+
+    // Shared Nexus queue: deep-link + progress/done/meta live here so the
+    // queue survives route changes between Mods and Downloads.
+    let unlistenUrl: (() => void) | undefined;
+    let unlistenP: (() => void) | undefined;
+    let unlistenD: (() => void) | undefined;
+    let unlistenMeta: (() => void) | undefined;
+    (async () => {
+      try {
+        await refreshQueue();
+        const { getCurrent, onOpenUrl } = await import('@tauri-apps/plugin-deep-link');
+        const cur = await getCurrent().catch(() => []);
+        if (cur?.length) {
+          const { dlNxm } = await import('$lib/downloads.svelte');
+          try { await dlNxm(cur[0]); } catch (e) { console.error("[w3mm] deep-link failed", e); }
+          goto('/downloads').catch(() => {});
+        }
+        unlistenUrl = await onOpenUrl(async (urls) => {
+          if (urls?.length) {
+            const { dlNxm } = await import('$lib/downloads.svelte');
+            try { await dlNxm(urls[0]); } catch (e) { console.error("[w3mm] deep-link failed", e); }
+            goto('/downloads').catch(() => {});
+          }
+        });
+        unlistenP = await listen<{ id: string; done: number; total: number; speed?: number }>(
+          "download-progress",
+          (e) => {
+            setQueue(
+              queueState.queue.map((qq) =>
+                qq.id === e.payload.id
+                  ? { ...qq, done: e.payload.done, total: e.payload.total, speed: e.payload.speed ?? qq.speed, status: "active" }
+                  : qq,
+              ),
+            );
+          },
+        );
+        unlistenD = await listen<{ id: string; path: string; error?: string }>(
+          "download-done",
+          async (e) => {
+            await refreshQueue();
+            const row = queueState.queue.find((qq) => qq.id === e.payload.id);
+            if (e.payload.error) return;
+            await notify("W3MM", e.payload.path.split("/").pop() ?? "download done");
+            if (row && row.status === "done") {
+              // Suppress the auto Install window when it's the exact file
+              // already installed; check against the live mod list.
+              let mods: AppState['mods'] | undefined;
+              try {
+                const st = await invoke<AppState>("list_mods");
+                mods = st.mods;
+              } catch {}
+              if (!dlSameFile(mods, row)) {
+                await offerInstall(row, e.payload.path).catch(() => {});
+              }
+            }
+          },
+        );
+        unlistenMeta = await listen<{ id: string }>("download-meta", async () => {
+          await refreshQueue().catch(() => {});
+        });
+      } catch {}
+    })();
+
+    return () => {
+      if (id) clearInterval(id);
+      mq.removeEventListener("change", applyAutoSidebar);
+      unlistenUrl?.();
+      unlistenP?.();
+      unlistenD?.();
+      unlistenMeta?.();
+    };
   });
 </script>
 
@@ -54,6 +180,48 @@
   <title>W3MM</title>
 </svelte:head>
 
-<div class="h-screen bg-background text-foreground overflow-hidden">
-  {@render children()}
+<div class="flex h-screen bg-background text-foreground overflow-hidden">
+  <aside class="shrink-0 flex flex-col border-r bg-gradient-to-b from-card to-background transition-all duration-200 {collapsed ? 'w-[56px] items-center' : 'w-[220px]'}">
+    <div class="h-12 flex items-center gap-2 px-3 border-b shrink-0 w-full {collapsed ? 'justify-center' : ''}">
+      <div class="h-7 w-7 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-black text-[11px] shrink-0 shadow-lg shadow-primary/25">W3</div>
+      {#if !collapsed}
+        <div class="leading-tight min-w-0">
+          <div class="text-sm font-semibold tracking-tight truncate">W3MM</div>
+          <div class="text-[11px] text-muted-foreground">v{appVersion}</div>
+        </div>
+      {/if}
+    </div>
+    <nav class="flex-1 flex flex-col gap-1 w-full p-1.5 overflow-y-auto">
+      <a href="/" title="Mods" class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
+        <Layers class="size-4 shrink-0" />
+        {#if !collapsed}<span>Mods</span>{/if}
+      </a>
+      <a href="/downloads" title="Downloads" class="relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/downloads') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
+        <Download class="size-4 shrink-0" />
+        {#if !collapsed}<span class="flex-1">Downloads</span>{/if}
+        {#if activeDownloads}
+          <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9a45c] px-1 text-[11px] font-bold text-[#1c2127]">{activeDownloads}</span>
+        {/if}
+      </a>
+      <a href="/settings" title="Settings" class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition {isActive('/settings') ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-muted hover:text-foreground'} {collapsed ? 'justify-center px-1' : ''}">
+        <Settings class="size-4 shrink-0" />
+        {#if !collapsed}<span>Settings</span>{/if}
+      </a>
+    </nav>
+    <div class="p-2 w-full">
+      <button
+        class="h-7 w-full rounded-md border bg-background/60 hover:bg-muted hover:border-muted-foreground/30 flex items-center justify-center text-xs text-muted-foreground hover:text-foreground transition"
+        onclick={toggleCollapsed}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand" : "Collapse"}
+      >
+        <span class="text-xs">{collapsed ? "›" : "‹"}</span>
+        {#if !collapsed}<span class="ml-1.5 text-xs">Collapse</span>{/if}
+      </button>
+    </div>
+  </aside>
+
+  <div class="flex flex-1 flex-col min-w-0 overflow-auto bg-background">
+    {@render children()}
+  </div>
 </div>
