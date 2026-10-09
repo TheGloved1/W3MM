@@ -455,7 +455,18 @@ impl AppState {
         if self.mods.iter().any(|m| !m.sep && m.id == id && !ignore.contains(&m.id)) {
             return true;
         }
+        // The active profile's stored set is skipped on purpose: save_store
+        // only persists the working set into it at save time, so during the
+        // very command that mutates (remove/replace) the on-disk copy is one
+        // mutation behind and still lists the id being deleted. The working
+        // set above is the live truth for the active profile; without this
+        // every removal "keeps" its staged folder forever on single-profile
+        // stores. Inactive profiles' sets are fresh and still protect.
+        let active = self.active_profile.as_deref();
         self.profiles.iter().any(|p| {
+            if active == Some(p.id.as_str()) {
+                return false;
+            }
             read_profile_set(root, &p.id)
                 .map(|set| set.mods.iter().any(|m| !m.sep && m.id == id))
                 .unwrap_or(false)
@@ -716,6 +727,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+    #[test]
+    fn stale_active_set_does_not_pin_staging() {
+        // remove_mods checks references BEFORE saving, so the active
+        // profile's on-disk set still lists the id being deleted. That stale
+        // copy must not pin the staged folder (single-profile stores leaked
+        // every removed mod's folder); the working set is the live truth.
+        let root = test_root("stale-active");
+        let mut s = AppState::default();
+        s.active_profile = Some("default".to_string());
+        s.profiles = vec![Profile { id: "default".to_string(), name: "Default".to_string(), updated: 0 }];
+        write_profile_set(&root, "default", &ModSet { mods: vec![row("a", "A")], ..Default::default() }).unwrap();
+        s.mods = vec![];
+        assert!(!s.is_mod_referenced(&root, "a", &["a".to_string()]));
+        // An inactive profile genuinely holding it still protects.
+        s.profiles.push(Profile { id: "alt".to_string(), name: "Alt".to_string(), updated: 0 });
+        write_profile_set(&root, "alt", &ModSet { mods: vec![row("a", "A")], ..Default::default() }).unwrap();
+        assert!(s.is_mod_referenced(&root, "a", &["a".to_string()]));
+        let _ = std::fs::remove_dir_all(&root);
     }
     #[test]
     fn profile_dirs_round_trip() {
