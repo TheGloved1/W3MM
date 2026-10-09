@@ -77,9 +77,26 @@ export interface ScriptMergeResult {
 }
 
 export interface XmlMergeResult {
+  status: string;
   merged: string;
-  conflicts: { path: string; kind: string; why: string; base_lines: string[]; variants: string[][]; proposed: string[] }[];
+  conflicts: XmlConflict[];
   needs_resolution: boolean;
+  reason: string;
+  auto: number;
+}
+
+export interface XmlConflict {
+  path: string;
+  kind: string;
+  why: string;
+  base_lines: string[];
+  variants: XmlVariant[];
+  proposed: string[];
+}
+
+export interface XmlVariant {
+  mods: string[];
+  lines: string[];
 }
 
 export interface NxmLink {
@@ -101,6 +118,54 @@ export interface MadeFor {
   label: string;
   short: string;
   status: string;
+}
+
+export interface UpdateHit {
+  id: string;
+  name: string;
+  local: string;
+  remote: string;
+}
+
+export interface StorageReport {
+  game: string;
+  staging: string;
+  default_staging: string;
+  same_device: boolean | null;
+  /** Tauri camelCase alias some call sites read. */
+  sameDevice?: boolean | null;
+}
+
+export interface MergeInputs {
+  rel: string;
+  kind: string;
+  base: string;
+  base_encoding: string;
+  versions: { label: string; mod_id: string; text: string }[];
+}
+
+export interface MergerRep {
+  config: string;
+  wrong: [string, string, string][];
+  unfixable: [string, string][];
+}
+
+export interface PlanRoot {
+  prefix: string;
+  kind: string;
+  folder: string;
+  files: number;
+}
+
+export interface InstallPreview {
+  roots: PlanRoot[];
+  moves: [string, string][];
+}
+
+export interface AnalysisEntry {
+  scripts: { file: string; with: string[] }[];
+  xmls: { file: string; with: string[] }[];
+  lost: number;
 }
 
 export interface QueueItem {

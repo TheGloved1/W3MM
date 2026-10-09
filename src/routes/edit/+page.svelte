@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import { invoke } from "@tauri-apps/api/core";
+  import { api } from "$lib/api";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ChevronDown, ChevronRight, X } from "lucide-svelte";
   import FileTree from "$lib/components/file-tree.svelte";
@@ -47,7 +47,7 @@
   });
 
   async function reload() {
-    const st = await invoke<{ mods: Row[] }>("list_mods");
+    const st = await api.list_mods();
     const m = st.mods.find((r) => r.id === id);
     if (!m) {
       warn = "Mod not found.";
@@ -62,7 +62,7 @@
       .filter((r) => r.sep)
       .map((r) => ({ id: r.id, name: r.name }));
     section = sectionOf(st.mods, id);
-    files = await invoke<string[]>("staged_files", { id }).catch(() => []);
+    files = await api.staged_files(id).catch(() => []);
     if (!files.length && m.targets?.length) files = [...m.targets];
   }
 
@@ -90,10 +90,7 @@
   async function newSection() {
     const n = prompt("Section name", "New section");
     if (!n) return;
-    const row = await invoke<{ id: string; name: string }>("add_separator", {
-      index: 9999,
-      name: n,
-    });
+    const row = await api.add_separator(9999, n);
     sections = [...sections, { id: row.id, name: row.name }];
     section = row.id;
   }
@@ -101,7 +98,7 @@
   async function removeSection() {
     if (!section) return;
     if (!confirm("Remove this section? Its mods stay in the list.")) return;
-    await invoke("remove_section_cmd", { sepId: section });
+    await api.remove_section_cmd(section);
     section = "";
     await reload();
   }
@@ -112,17 +109,11 @@
       return;
     }
     try {
-      const st = await invoke<{ mods: Row[] }>("list_mods");
+      const st = await api.list_mods();
       const before = sectionOf(st.mods, id);
-      await invoke("edit_mod", {
-        id,
-        name: name.trim(),
-        version,
-        nexusId: nexus,
-        section: "",
-      });
+      await api.edit_mod(id, name.trim(), version, nexus, "");
       if (section !== before)
-        await invoke("move_to_section", { id, sepId: section });
+        await api.move_to_section(id, section);
       const { emit } = await import("@tauri-apps/api/event");
       await emit("mods-changed", {});
       await getCurrentWindow().close();

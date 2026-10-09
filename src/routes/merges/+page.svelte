@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
+  import type { MergeInputs as Inputs } from '$lib/types';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { loadConfigNative } from '$lib/config';
   import CodeViewer from '$lib/components/code-viewer.svelte';
@@ -9,7 +10,6 @@
   import Badge from '$lib/components/badge.svelte';
 
   type Shared = { file: string; with: string[] };
-  type Inputs = { rel: string; kind: string; base: string; base_encoding: string; versions: { label: string; mod_id: string; text: string }[] };
   type Conflict = { base_lo: number; base_hi: number; variants: string[][] };
 
   let files: { rel: string; kind: string; with: string[] }[] = $state([]);
@@ -47,7 +47,7 @@
 
   async function reloadList() {
     try {
-      const info = await invoke<Record<string, { scripts: Shared[]; xmls: Shared[]; lost: number }>>('analysis_summary');
+      const info = await api.analysis_summary();
       const seen = new Map<string, { rel: string; kind: string; with: string[] }>();
       for (const [, v] of Object.entries(info)) {
         for (const s of v.scripts) if (!seen.has(s.file.toLowerCase())) seen.set(s.file.toLowerCase(), { rel: s.file, kind: 'script', with: s.with });
@@ -65,7 +65,7 @@
     if (!f) return;
     loading = true; status = '';
     try {
-      mi = await invoke<Inputs>('merge_inputs', { rel: f.rel });
+      mi = await api.merge_inputs(f.rel);
       await run(res);
     } catch (e) { status = String(e); }
     loading = false;
@@ -78,18 +78,14 @@
     status = '';
     try {
       if (mi.kind === 'xml') {
-        const r = await invoke<{ merged: string; conflicts: { base_lines: string[]; variants: { lines: string[][] }[] }[]; needs_resolution: boolean }>('merge_xml', {
-          base: mi.base, versions: mi.versions.map((v) => v.text), resolutions: res,
-        });
+        const r = await api.merge_xml(mi.base, mi.versions.map((v) => v.text), res);
         out = r.merged.split('\n');
         conflicts = r.conflicts.map((c) => ({ base_lo: 0, base_hi: 0, variants: c.variants.map((v: any) => (Array.isArray(v) ? v : v.lines ?? []).flat()) }));
         issues = [];
       } else {
-        const r = await invoke<{ merged: string[]; conflicts: Conflict[]; needs_resolution: boolean }>('merge_scripts', {
-          baseB64: lines(mi.base), versionsB64: mi.versions.map((v) => lines(v.text)), resolutions: res,
-        });
+        const r = await api.merge_scripts(lines(mi.base), mi.versions.map((v) => lines(v.text)), res);
         out = r.merged; conflicts = r.conflicts;
-        issues = await invoke<string[]>('merge_check', { lines: out });
+        issues = await api.merge_check(out);
       }
       status = conflicts.length ? `${conflicts.length} decision${conflicts.length === 1 ? '' : 's'} waiting` : 'Merges cleanly — no decisions needed.';
     } catch (e) { status = String(e); }
@@ -98,7 +94,7 @@
   async function save() {
     if (!mi) return;
     try {
-      await invoke('save_merge', { rel: mi.rel, text: out.join('\n'), answers: [] });
+      await api.save_merge(mi.rel, out.join('\n'), []);
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
       status = `Kept merge for ${mi.rel} — deploy applies it.`;

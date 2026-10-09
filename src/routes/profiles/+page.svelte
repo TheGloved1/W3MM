@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
   import type { ModsView, Profile, ProfileView } from '$lib/types';
   import Button from '$lib/components/button.svelte';
   import HeaderBar from '$lib/components/header-bar.svelte';
@@ -23,7 +23,7 @@
 
   async function refresh() {
     try {
-      const st = await invoke<ModsView>('list_mods');
+      const st = await api.list_mods();
       profiles = st.profiles ?? [];
       active = st.active_profile ?? '';
       if (active && !profiles.some((p) => p.id === active)) active = '';
@@ -34,12 +34,12 @@
   }
 
   async function deployApplied(profileName: string) {
-    const running = await invoke<boolean>('game_running');
+    const running = await api.game_running();
     if (running) {
       error = 'Profile applied — close the game before deploying';
       return;
     }
-    const res = await invoke<string[] | { deployed: string[]; removed: string[] }>('deploy');
+    const res = await api.deploy();
     const files = Array.isArray(res) ? res : res.deployed;
     status = `“${profileName}” active — deployed ${files.length} file${files.length === 1 ? '' : 's'}`;
   }
@@ -49,7 +49,7 @@
     error = '';
     busy = 'Applying…';
     try {
-      await invoke('switch_profile', { id });
+      await api.switch_profile(id);
       const p = profiles.find((x) => x.id === id);
       await deployApplied(p?.name ?? 'Profile');
       await refresh();
@@ -64,7 +64,7 @@
     if (!n) return;
     error = '';
     try {
-      await invoke('create_profile', { name: n });
+      await api.create_profile(n);
       newName = '';
       status = 'Profile created from the current selection.';
       await refresh();
@@ -76,7 +76,7 @@
   async function duplicate(id: string) {
     error = '';
     try {
-      await invoke('duplicate_profile', { id });
+      await api.duplicate_profile(id);
       status = 'Profile duplicated.';
       await refresh();
     } catch (e) {
@@ -98,7 +98,7 @@
     if (target && renameValue.trim() !== target.name) {
       error = '';
       try {
-        await invoke('rename_profile', { id: renameTarget, name: renameValue.trim() });
+        await api.rename_profile(renameTarget!, renameValue.trim());
         await refresh();
       } catch (e) {
         error = String(e);
@@ -112,7 +112,7 @@
     if (!confirm(`Delete profile “${p.name}”?`)) return;
     error = '';
     try {
-      await invoke('delete_profile', { id: p.id });
+      await api.delete_profile(p.id);
       status = 'Profile deleted.';
       await refresh();
     } catch (e) {
@@ -122,8 +122,8 @@
 
   async function openProfilesDir() {
     try {
-      const d = await invoke<string>('profiles_dir_path');
-      await invoke('open_path', { target: d });
+      const d = await api.profiles_dir_path();
+      await api.open_path(d);
     } catch (e) {
       error = String(e);
     }

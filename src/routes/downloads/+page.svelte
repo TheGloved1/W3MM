@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
   import type { AppState } from '$lib/types';
   import {
     queueState,
@@ -54,9 +54,11 @@
   );
 
   onMount(async () => {
+    console.debug(`[yawmm] downloads page mount, queue length before refresh: ${queueState.queue.length}`);
     await refreshQueue();
+    console.debug(`[yawmm] downloads page after refreshQueue, queue length: ${queueState.queue.length}`, queueState.queue.map(q => ({id: q.id, status: q.status, filename: q.filename})));
     try {
-      const st = await invoke<AppState>('list_mods');
+      const st = await api.list_mods();
       mods = st.mods;
     } catch {}
   });

@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
 import { goto } from '$app/navigation';
 import { loadConfigNative } from '$lib/config';
+import { api } from '$lib/api';
 import type { AppState, QueueItem } from '$lib/types';
 
 // Shared Nexus download queue. The sidebar layout owns the event
@@ -21,7 +21,8 @@ export async function refreshQueue(): Promise<void> {
   // calling it on every refresh makes load_history overwrite in-flight rows
   // (status forced to "error", meta stripped) behind the worker's back.
   try {
-    queueState.queue = await invoke<QueueItem[]>('queue_list');
+    api.frontend_log("[downloads] Queue list refresh");
+    queueState.queue = await api.queue_list() as QueueItem[];
   } catch {
     /* backend not up yet — keep stale list */
   }
@@ -31,7 +32,8 @@ export async function refreshQueue(): Promise<void> {
  *  in-memory queue + dl_save writes are the source of truth. */
 export async function loadDownloadHistory(): Promise<void> {
   try {
-    queueState.queue = await invoke<QueueItem[]>('downloads_history');
+    api.frontend_log("[downloads] Load history");
+    queueState.queue = await api.downloads_history() as QueueItem[];
   } catch {
     /* no game open yet */
   }
@@ -39,7 +41,7 @@ export async function loadDownloadHistory(): Promise<void> {
 
 export async function downloadsDir(): Promise<string> {
   try {
-    return await invoke<string>('downloads_dir_path');
+    return await api.downloads_dir_path() as string;
   } catch {
     return '/tmp';
   }
@@ -181,16 +183,12 @@ export async function offerInstall(qq: QueueItem, destOverride?: string): Promis
     version: qq.version ?? '',
     nexus: (qq.mod_id ?? '').replace(/\D/g, ''),
   });
-  await invoke('open_tool_window', {
-    kind: 'install',
-    query: qp.toString(),
-    path: dest,
-  });
+  await api.open_tool_window('install', qp.toString(), dest);
 }
 
 export async function openDownloadsFolder(): Promise<void> {
   const d = await downloadsDir();
-  await invoke('open_path', { target: d });
+  await api.open_path(d);
 }
 
 /** Enqueue an nxm:// URL and start it; returns the queue id. */
@@ -201,7 +199,7 @@ export async function dlNxm(url: string): Promise<string> {
   console.debug(`[yawmm] dlNxm enter url=${url.slice(0, 80)} window=${location.pathname}`);
   const cfg = await loadConfigNative();
   if (!cfg.nexusKey) throw new Error('Set Nexus API key in Settings first');
-  const id = await invoke<string>('queue_enqueue', { url });
+  const id = await api.queue_enqueue(url) as string;
   await refreshQueue();
   const row = queueState.queue.find((qq) => qq.id === id);
   if (row && (row.status === 'active' || row.status === 'starting' || row.status === 'paused')) {
@@ -209,7 +207,7 @@ export async function dlNxm(url: string): Promise<string> {
     return id; // already fetching this file
   }
   if (row && row.status === 'done') return id; // caller decides install
-  await invoke('queue_start', { id, destDir: await downloadsDir(), apiKey: cfg.nexusKey });
+  await api.queue_start(id, await downloadsDir(), cfg.nexusKey);
   await refreshQueue();
   // A download just started — take the user to the Downloads page.
   goto('/downloads').catch(() => {});
@@ -217,28 +215,24 @@ export async function dlNxm(url: string): Promise<string> {
 }
 
 export async function dlRemove(qq: QueueItem): Promise<void> {
-  await invoke('queue_remove', { id: qq.id });
+  await api.queue_remove(qq.id);
   await refreshQueue();
 }
 
 export async function dlTrash(qq: QueueItem): Promise<void> {
-  await invoke('queue_trash', { id: qq.id, destDir: await downloadsDir() });
+  await api.queue_trash(qq.id, await downloadsDir());
   await refreshQueue();
 }
 
 export async function dlMain(mods: AppState['mods'] | undefined, qq: QueueItem): Promise<void> {
   const running = qq.status === 'active' || qq.status === 'starting' || qq.status === 'queued';
   if (running) {
-    await invoke('queue_cancel', { id: qq.id });
+    await api.queue_cancel(qq.id);
     await refreshQueue();
     return;
   }
   if (qq.status === 'error' || qq.status === 'failed' || qq.status === 'paused' || qq.status === 'cancelled') {
-    await invoke('queue_start', {
-      id: qq.id,
-      destDir: await downloadsDir(),
-      apiKey: (await loadConfigNative()).nexusKey,
-    });
+    await api.queue_start(qq.id, await downloadsDir(), (await loadConfigNative()).nexusKey);
     await refreshQueue();
     // Retry started a download — take the user to the Downloads page.
     goto('/downloads').catch(() => {});

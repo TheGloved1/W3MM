@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Check, ChevronDown, ChevronRight, X } from 'lucide-svelte';
   import FileTree from '$lib/components/file-tree.svelte';
@@ -53,21 +53,21 @@
     warn = '';
     missing = '';
     try {
-      const [n, v, nx] = await invoke<[string, string, string]>('parse_archive_name', { filename: stem });
+      const [n, v, nx] = await api.parse_archive_name(stem);
       // Defaults from the download that fetched this file win over filename
       // parsing (original install_archives defaults: page name, meta version,
       // numeric mod id). Manual installs fall back to parsing.
       name = page.url.searchParams.get('name') || n;
       version = page.url.searchParams.get('version') || v;
       nexus = page.url.searchParams.get('nexus') || nx;
-      const prev = await invoke<{ roots: Root[]; moves: [string, string][] }>('install_preview', { path: archPath });
+      const prev = await api.install_preview(archPath);
       roots = prev.roots;
       if (!roots.length) roots = [{ prefix: '', kind: 'Mod', folder: '', files: 0 }];
       rawFiles = prev.moves.map(([, d]) => d);
       addedFiles = await remapFiles();
-      const [managed] = await invoke<[string[], string[]]>('find_collisions', { targets: addedFiles });
+      const [managed] = await api.find_collisions(addedFiles);
       collisions = managed;
-      const st = await invoke<{ mods: { sep: boolean; id: string; name: string }[] }>('list_mods');
+      const st = await api.list_mods();
       sections = st.mods.filter((m) => m.sep).map((m) => ({ id: m.id, name: m.name }));
     } catch (e) {
       const msg = String(e);
@@ -116,11 +116,7 @@
     if (!rawFiles.length) return [];
     const choices = roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files }));
     console.debug(`[yawmm] remap_roots: ${rawFiles.length} rels, rows=${JSON.stringify(choices)}, first=${rawFiles[0]}`);
-    return invoke<string[]>('remap_roots', {
-      rels: rawFiles,
-      roots: choices,
-      modFolder: name,
-    })
+    return api.remap_roots(rawFiles, choices, name)
       .then((out) => {
         console.debug(`[yawmm] remap_roots -> ${out.length} rels, first=${out[0] ?? ''}`);
         return out;
@@ -168,16 +164,16 @@
       let replaceIds: string[] = [];
       if (replace && collisions.length) {
         console.debug(`[yawmm] install: replace flow, fetching list_mods for ${collisions.length} collisions`);
-        const st = await invoke<{ mods: { id: string }[] }>('list_mods');
+        const st = await api.list_mods();
         replaceIds = st.mods.filter((m) => collisions.includes(m.id)).map((m) => m.id);
         console.debug(`[yawmm] install: replaceIds [${replaceIds.join(',')}]`);
       }
       console.debug(`[yawmm] install: invoking install_roots replaceIds=${replaceIds.length}`);
-      await invoke<string>('install_roots', {
-        path: archPath, name: name.trim(), version, nexusId: nexus, section,
-        roots: roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
+      await api.install_roots(
+        archPath, name.trim(), version, nexus, section,
+        roots.map((r) => ({ prefix: r.prefix, kind: r.kind, folder: r.folder.trim(), files: r.files })),
         replaceIds,
-      });
+      );
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
       await emit('mod-installed', {});
