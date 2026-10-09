@@ -1459,6 +1459,17 @@ fn dl_paths(shared: &State<Shared>) -> Option<(std::path::PathBuf, std::path::Pa
     Some((dir, hist))
 }
 
+/// Static (manager-independent) downloads paths. The store is a single
+/// shared dir, so these are knowable before any game folder is opened —
+/// history must load at boot, ahead of `open_manager`.
+fn dl_paths_static() -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = crate::home::data_root_for("");
+    (
+        root.join(crate::home::DOWNLOADS_DIR),
+        root.join("downloads.json"),
+    )
+}
+
 fn dl_save(shared: &State<Shared>) {
     if let Some((_, hist)) = dl_paths(shared) {
         downloads::save_history(&hist);
@@ -1508,9 +1519,10 @@ fn queue_pause(shared: State<Shared>, id: String, paused: bool) {
 /// Load download history from last time (call after open_manager).
 #[tauri::command]
 fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
-    if let Some((dir, hist)) = dl_paths(&shared) {
-        downloads::load_history(&hist, &dir);
-    }
+    // Static fallback: boot calls this before any manager is opened, and
+    // the single store makes the paths knowable without one.
+    let (dir, hist) = dl_paths(&shared).unwrap_or_else(dl_paths_static);
+    downloads::load_history(&hist, &dir);
     downloads::items()
 }
 
@@ -1732,9 +1744,12 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
 /// Absolute downloads-dir path (platform data dir).
 #[tauri::command]
 fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
-    let g = lock_shared(&shared, "downloads_dir_path")?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
-    let d = m.home.downloads.clone();
+    // Static fallback: the dir doesn't depend on an open manager, and
+    // callers (queue_start, offerInstall) need it before one exists.
+    let d = match dl_paths(&shared) {
+        Some((dir, _)) => dir,
+        None => dl_paths_static().0,
+    };
     let _ = std::fs::create_dir_all(&d);
     Ok(d.to_string_lossy().to_string())
 }
