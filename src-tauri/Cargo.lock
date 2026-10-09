@@ -6065,7 +6065,7 @@ dependencies = [
 
 [[package]]
 name = "yawmm"
-version = "26.10.19"
+version = "26.10.20"
 dependencies = [
  "chrono",
  "crc32fast",

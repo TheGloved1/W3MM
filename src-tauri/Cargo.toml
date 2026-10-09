@@ -1,6 +1,6 @@
 [package]
 name = "yawmm"
-version = "26.10.19"
+version = "26.10.20"
 description = "Yet Another Witcher Mod Manager for The Witcher 3"
 authors = ["YAWMM Contributors"]
 license = "MIT"
