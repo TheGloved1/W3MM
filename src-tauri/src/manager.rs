@@ -1,6 +1,6 @@
 //! Shared Tauri state: game/prefix + loaded `AppState`.
 
-use crate::{home::{Home, MANAGER_DIRNAME}, state::{load_state, save_state, AppState}};
+use crate::{home::{Home, MANAGER_DIRNAME}, state::{load_store, save_store, AppState}};
 use std::sync::Mutex;
 
 pub struct Manager {
@@ -10,35 +10,32 @@ pub struct Manager {
 
 impl Manager {
     pub fn open(game_dir: &str, prefix: &str, staging_override: &str) -> Result<Self, String> {
-        // One-time brand rename (W3MM -> YAWMM): adopt the old data dirs,
-        // then the older W3LMN name below; keeps state/downloads/backups.
         let game = std::path::PathBuf::from(game_dir);
-        migrate_brand_dirs(
-            &game,
-            &crate::home::legacy_data_root_for(game_dir),
-            &crate::home::data_root_for(game_dir),
-        )?;
-        let legacy = game.join("_W3LMN");
+        // One-time brand rename (W3MM -> YAWMM) for the in-game dir, then
+        // adopt the old per-install roots into the single store. Both keep
+        // state/downloads/backups; nothing is overwritten.
+        migrate_game_dir_brand(&game)?;
+        migrate_slug_roots(game_dir)?;
         let current = game.join(MANAGER_DIRNAME);
-        if !current.exists() && legacy.exists() {
-            std::fs::rename(&legacy, &current)
-                .map_err(|e| format!("could not migrate _W3LMN data: {e}"))?;
-            eprintln!("[yawmm] migrated game data _W3LMN -> {}", MANAGER_DIRNAME);
-        }
         let home = Home::new(game_dir, prefix, staging_override);
         // Relocate `<game>/_YAWMM/` into the platform data dir on first run.
         // Merge-missing covers an interrupted previous attempt; once the
-        // state file is over, the in-game dir is superseded and removed.
+        // root state file is over, the in-game dir is superseded and removed.
         if current.exists() {
             migrate_dir_contents(&current, &home.data)?;
-            if home.state_file.is_file() {
+            if home.data.join(crate::home::STATE_FILE).is_file() {
                 std::fs::remove_dir_all(&current)
                     .map_err(|e| format!("could not remove migrated {}: {e}", MANAGER_DIRNAME))?;
                 crate::log_line("rust", "migrated in-game _YAWMM data to platform data dir");
             }
         }
         home.ensure_dirs().map_err(|e| e.to_string())?;
-        let mut state = load_state(&home.state_file)?;
+        let mut state = load_store(&home.data)?;
+        // Every install starts with a Default profile (adopting the current
+        // working set, possibly empty on a fresh install).
+        if state.ensure_default_profile(&home.data)? {
+            crate::state::save_store(&home.data, &state)?;
+        }
         // Staging override changed (set or cleared in Settings): move staged
         // mods between the effective dirs so nothing is orphaned, then
         // persist the new override with the state it belongs to.
@@ -54,7 +51,7 @@ impl Manager {
                     );
                 }
                 state.staging_override = staging_override.trim().to_string();
-                crate::state::save_state(&home.state_file, &state)?;
+                crate::state::save_store(&home.data, &state)?;
             }
         }
         Ok(Self { home, state: Mutex::new(state) })
@@ -62,7 +59,7 @@ impl Manager {
 
     pub fn save(&self) -> Result<(), String> {
         let s = self.state.lock().map_err(|e| e.to_string())?;
-        save_state(&self.home.state_file, &s)
+        save_store(&self.home.data, &s)
     }
 
     /// Proton `.../pfx/drive_c/users/steamuser/Documents/The Witcher 3/gamesaves/..`
@@ -73,29 +70,63 @@ impl Manager {
     }
 }
 
-/// One-time brand rename (W3MM -> YAWMM): move the in-game data dir and the
-/// platform data root to their new names, merging without clobbering (same
-/// resume-safe semantics as `migrate_dir_contents`). A half-moved legacy dir
-/// is left in place and retried next launch — never deleted with contents.
-fn migrate_brand_dirs(
-    game: &std::path::Path,
-    legacy_root: &std::path::Path,
-    new_root: &std::path::Path,
-) -> Result<(), String> {
-    let legacy_game = game.join("_W3MM");
-    let current_game = game.join(MANAGER_DIRNAME);
-    if !current_game.exists() && legacy_game.exists() {
-        std::fs::rename(&legacy_game, &current_game)
-            .map_err(|e| format!("could not migrate _W3MM data: {e}"))?;
-        eprintln!("[yawmm] migrated game data _W3MM -> {}", MANAGER_DIRNAME);
+/// One-time brand rename (W3LMN/W3MM -> YAWMM) for the in-game data dir.
+fn migrate_game_dir_brand(game: &std::path::Path) -> Result<(), String> {
+    let current = game.join(MANAGER_DIRNAME);
+    for legacy in [game.join("_W3LMN"), game.join("_W3MM")] {
+        if !current.exists() && legacy.exists() {
+            std::fs::rename(&legacy, &current)
+                .map_err(|e| format!("could not migrate {} data: {e}", legacy.display()))?;
+            eprintln!("[yawmm] migrated game data {} -> {}", legacy.display(), MANAGER_DIRNAME);
+        }
     }
-    if legacy_root != new_root && legacy_root.exists() {
-        migrate_dir_contents(legacy_root, new_root)?;
-        if std::fs::read_dir(legacy_root)
-            .map(|mut r| r.next().is_none())
-            .unwrap_or(false)
-        {
-            let _ = std::fs::remove_dir_all(legacy_root);
+    Ok(())
+}
+
+/// Dir name looks like a per-install slug (`<12 hex>-<tail>`); used to spot
+/// orphaned roots left behind by the single-store migration.
+fn looks_like_slug(name: &std::ffi::OsStr) -> bool {
+    let s = name.to_string_lossy();
+    let mut parts = s.splitn(2, '-');
+    matches!(parts.next(), Some(hex) if hex.len() == 12 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        && parts.next().is_some_and(|t| !t.is_empty())
+}
+
+/// First-run adoption into the single store: move the current game's old
+/// per-install roots (`yawmm/<slug>/`, then legacy `w3mm/<slug>/`) up into
+/// the base dir — earlier arrivals never clobber, so yawmm content wins
+/// ties. A half-moved source is left in place and retried next launch. Other slug-like siblings belong to other installs: left alone,
+/// logged as orphaned (migrate-current-only).
+fn migrate_slug_roots(game_dir: &str) -> Result<(), String> {
+    let base = crate::home::data_root_for(game_dir);
+    let slug = crate::home::legacy_data_root_for(game_dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if slug.is_empty() {
+        return Ok(());
+    }
+    let w3mm_base = crate::home::data_base_dir().join("w3mm");
+    for cand in [base.join(&slug), w3mm_base.join(&slug)] {
+        if !cand.exists() {
+            continue;
+        }
+        // Never merge the store into itself (paranoia: slug is never empty,
+        // but a self-move would drain the live store).
+        if cand == base {
+            continue;
+        }
+        migrate_dir_contents(&cand, &base)?;
+        if std::fs::read_dir(&cand).map(|mut r| r.next().is_none()).unwrap_or(false) {
+            let _ = std::fs::remove_dir_all(&cand);
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() && p.file_name().map(looks_like_slug).unwrap_or(false) {
+                crate::log_line("rust", &format!("orphaned per-install data left in place: {}", p.display()));
+            }
         }
     }
     Ok(())
@@ -103,7 +134,8 @@ fn migrate_brand_dirs(
 
 /// Effective staging dir for an override value: the override itself, or the
 /// default under the data root when empty.
-fn effective_staging(home: &Home, staging_override: &str) -> std::path::PathBuf {    if staging_override.trim().is_empty() {
+fn effective_staging(home: &Home, staging_override: &str) -> std::path::PathBuf {
+    if staging_override.trim().is_empty() {
         home.default_staging()
     } else {
         std::path::PathBuf::from(staging_override.trim())
@@ -201,43 +233,54 @@ mod tests {
     }
 
     #[test]
-    fn brand_dirs_migrate_and_drain() {
-        // Old install layout: <game>/_W3MM + platform w3mm/<slug>. Both move
-        // to the YAWMM names; the drained legacy shelf is removed.
-        let base = tmpdir("brand");
+    fn game_dir_brand_renames() {
+        // <game>/_W3MM (and the older _W3LMN) become _YAWMM; an existing
+        // _YAWMM is never clobbered.
+        let base = tmpdir("brand-game");
         let game = base.join("game");
-        std::fs::create_dir_all(game.join("_W3MM/staging/abc")).unwrap();
+        std::fs::create_dir_all(game.join("_W3MM/staging")).unwrap();
         std::fs::write(game.join("_W3MM/state.json"), b"{}").unwrap();
-        let legacy_root = base.join("w3mm").join("slug");
-        std::fs::create_dir_all(legacy_root.join("downloads")).unwrap();
-        std::fs::write(legacy_root.join("state.json"), b"{}").unwrap();
-        let new_root = base.join("yawmm").join("slug");
-        migrate_brand_dirs(&game, &legacy_root, &new_root).unwrap();
+        migrate_game_dir_brand(&game).unwrap();
         assert!(game.join("_YAWMM/state.json").is_file());
         assert!(!game.join("_W3MM").exists());
-        assert!(new_root.join("state.json").is_file());
-        assert!(!legacy_root.exists(), "drained legacy root must be removed");
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn brand_dirs_resume_without_clobbering() {
-        // New root already has state (interrupted run): it wins, the rest
-        // arrives, and nothing is overwritten.
-        let base = tmpdir("brand-resume");
-        let game = base.join("game");
-        std::fs::create_dir_all(&game).unwrap();
-        let legacy_root = base.join("w3mm").join("slug");
-        let new_root = base.join("yawmm").join("slug");
-        std::fs::create_dir_all(&new_root).unwrap();
-        std::fs::write(new_root.join("state.json"), b"new").unwrap();
-        std::fs::create_dir_all(&legacy_root).unwrap();
-        std::fs::write(legacy_root.join("state.json"), b"old").unwrap();
-        std::fs::create_dir_all(legacy_root.join("downloads")).unwrap();
-        migrate_brand_dirs(&game, &legacy_root, &new_root).unwrap();
-        assert_eq!(std::fs::read(new_root.join("state.json")).unwrap(), b"new");
-        assert!(new_root.join("downloads").is_dir());
+    fn slug_roots_merge_into_base_yawmm_wins() {
+        // migrate_slug_roots reads XDG_DATA_HOME, which is process-global:
+        // keep every env-touching scenario in this one test so parallel
+        // test threads can't interleave different values.
+        let xdg = tmpdir("xdg");
+        let game = tmpdir("game-dir");
+        std::env::set_var("XDG_DATA_HOME", &xdg);
+        let slug = crate::home::legacy_data_root_for(game.to_str().unwrap())
+            .file_name().unwrap().to_string_lossy().to_string();
+        // Both legacy roots exist: content merges up, yawmm wins ties
+        // (moves never clobber), drained shelves are dropped.
+        let w3 = xdg.join("w3mm").join(&slug);
+        let yw = xdg.join("yawmm").join(&slug);
+        std::fs::create_dir_all(w3.join("downloads")).unwrap();
+        std::fs::write(w3.join("state.json"), b"old").unwrap();
+        std::fs::create_dir_all(&yw).unwrap();
+        std::fs::write(yw.join("state.json"), b"new").unwrap();
+        std::fs::write(yw.join("extra.txt"), b"y").unwrap();
+        migrate_slug_roots(game.to_str().unwrap()).unwrap();
+        let base = xdg.join("yawmm");
+        assert_eq!(std::fs::read(base.join("state.json")).unwrap(), b"new");
+        assert!(base.join("downloads").is_dir());
+        assert!(base.join("extra.txt").is_file());
+        assert!(!w3.exists() && !yw.exists(), "drained shelves must be removed");
+        // A slug that is NOT the current game's is logged, never touched.
+        let other = base.join("deadbeef1234-OtherGame");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("state.json"), b"{}").unwrap();
+        migrate_slug_roots(game.to_str().unwrap()).unwrap();
+        assert!(other.join("state.json").is_file(), "orphan must survive");
+        assert!(base.join("state.json").is_file(), "store must survive re-run");
+        std::env::remove_var("XDG_DATA_HOME");
         let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&game);
     }
 
     #[test]

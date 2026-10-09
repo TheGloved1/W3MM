@@ -20,13 +20,18 @@ pub const DOWNLOADS_DIR: &str = "downloads";
 pub struct Home {
     pub game: PathBuf,
     pub prefix: PathBuf,
-    /// Platform data root for this game install (`.../yawmm/<slug>/`).
+    /// Platform data root: the single shared store (`.../yawmm/`).
     pub data: PathBuf,
     pub staging: PathBuf,
     pub backup: PathBuf,
     pub tmp: PathBuf,
     pub downloads: PathBuf,
-    pub state_file: PathBuf,
+}
+
+/// Profiles live in their own dir inside the app store:
+/// `<store>/profiles/<profile-id>/state.json`.
+pub fn profiles_dir(data_root: &Path) -> PathBuf {
+    data_root.join(crate::state::PROFILES_DIR)
 }
 
 /// Stable, filesystem-safe identity for one game install: hash + readable
@@ -77,10 +82,14 @@ fn slug_parts(game_dir: &str) -> (String, String) {
     }
 }
 
-/// Data root for a game install, creating nothing.
-pub fn data_root_for(game_dir: &str) -> PathBuf {
-    let (canonical, tail) = slug_parts(game_dir);
-    data_base_dir().join("yawmm").join(slug_for(&canonical, &tail))
+/// Data root: one shared store per brand (`.../yawmm/`), NOT per game
+/// install. Separate libraries are usually just moves of the same game, so a
+/// path-derived slug would orphan the user's setup on every move; profiles
+/// (saved enable-selections) cover genuinely different loadouts instead.
+/// `game_dir` is kept as a parameter so migration can still locate the old
+/// per-install slug dirs — it no longer affects the returned path.
+pub fn data_root_for(_game_dir: &str) -> PathBuf {
+    data_base_dir().join("yawmm")
 }
 
 /// Previous brand's data root (`.../w3mm/<slug>/`); moved over on first run
@@ -92,7 +101,7 @@ pub fn legacy_data_root_for(game_dir: &str) -> PathBuf {
 
 /// Platform data base dir (`$XDG_DATA_HOME` → `~/.local/share`,
 /// `%LOCALAPPDATA%` → `%USERPROFILE%\AppData\Local`).
-fn data_base_dir() -> PathBuf {
+pub(crate) fn data_base_dir() -> PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg);
@@ -135,7 +144,6 @@ impl Home {
             backup: root.join(BACKUP_DIR),
             tmp: root.join(TMP_DIR),
             downloads: root.join(DOWNLOADS_DIR),
-            state_file: root.join(STATE_FILE),
             data: root,
             game,
             prefix,
@@ -239,14 +247,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_root_shares_slug() {
-        // Brand rename: same game maps to sibling roots, slug identical.
+    fn data_root_is_single_store() {
+        // No per-install slug: every game dir maps to the same root.
+        let a = data_root_for("/mnt/games/SteamLibrary/steamapps/common/The Witcher 3");
+        let b = data_root_for("/other/steamapps/common/The Witcher 3");
+        assert_eq!(a, b);
+        assert_eq!(a.file_name().unwrap(), "yawmm");
+    }
+
+    #[test]
+    fn legacy_root_keeps_slug() {
+        // Brand rename: the legacy per-install dir is findable by slug so
+        // migration can adopt it into the single store.
         let game = "/mnt/games/SteamLibrary/steamapps/common/The Witcher 3";
-        let (curr, legacy) = (data_root_for(game), legacy_data_root_for(game));
-        assert_ne!(curr, legacy);
-        assert_eq!(curr.file_name(), legacy.file_name(), "slug must not contain the brand");
+        let legacy = legacy_data_root_for(game);
         assert_eq!(legacy.parent().unwrap().file_name().unwrap(), "w3mm");
-        assert_eq!(curr.parent().unwrap().file_name().unwrap(), "yawmm");
+        let slug = legacy.file_name().unwrap().to_string_lossy().to_string();
+        assert!(slug.len() > 13 && slug.contains('-') && !slug.contains('/'));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
   import { listen } from '@tauri-apps/api/event';
   import { goto } from '$app/navigation';
   import type { AppState, MadeFor, ModRow } from '$lib/types';
@@ -175,12 +175,10 @@
       stagingDir = cfg.stagingDir;
       stagingDismissed = cfg.stagingNoticeDismissed;
       if (!gameDir) {
-        const found = await invoke<string | null>('detect_game').catch(() => null);
+        const found = await api.detect_game().catch(() => null);
         if (found) {
           gameDir = found;
-          const pfx = await invoke<string | null>('default_prefix', {
-            gameDir,
-          }).catch(() => null);
+          const pfx = await api.default_prefix(gameDir).catch(() => null);
           if (pfx) prefix = pfx;
         }
       }
@@ -194,7 +192,7 @@
   async function open() {
     error = '';
     try {
-      await invoke('open_manager', { gameDir, prefix, stagingDir });
+      await api.open_manager(gameDir, prefix, stagingDir);
       await refresh();
     } catch (e) {
       error = String(e);
@@ -260,7 +258,7 @@
 
   async function refresh() {
     console.debug(`[yawmm] refresh: start`);
-    appState = await invoke<AppState>('list_mods');
+    appState = await api.list_mods();
     // Drop selections for rows that no longer exist (uninstall / replace).
     if (selectedIds.size && appState) {
       const live = new Set(appState.mods.map((m) => m.id));
@@ -271,12 +269,12 @@
       }
     }
     await refreshQueue().catch(() => {});
-    clashMap = await invoke<Record<string, string[]>>('clashes').catch(() => ({}));
-    annotMap = await invoke<Record<string, string[]>>('annotation_clashes').catch(() => ({}));
-    infoMap = await invoke<typeof infoMap>('analysis_summary').catch(() => ({}));
-    unmanaged = await invoke<string[]>('unmanaged_mods').catch(() => []);
+    clashMap = await api.clashes().catch(() => ({}));
+    annotMap = await api.annotation_clashes().catch(() => ({}));
+    infoMap = await api.analysis_summary().catch(() => ({}));
+    unmanaged = await api.unmanaged_mods().catch(() => []);
     try {
-      const rep = await invoke<{ sameDevice: boolean | null }>('storage_report');
+      const rep = await api.storage_report();
       storageSplit = rep.sameDevice === false;
     } catch {
       storageSplit = false;
@@ -292,19 +290,19 @@
     madeMap = {};
     if (appState) {
       for (const m of appState.mods.filter((x) => !x.sep)) {
-        invoke<MadeFor>('made_for', { id: m.id })
+        api.made_for(m.id)
           .then((r) => {
             madeMap[m.id] = r;
           })
           .catch(() => {});
       }
     }
-    const [qt] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+    const [qt] = await api.quota().catch(() => ['', '', 0] as [string, string, number]);
     quotaText = qt;
     // Regrow hits from the persisted version cache (no network): downgrades
     // and restarts instantly show their known updates again.
     try {
-      const cached = await invoke<typeof hits>('cached_updates');
+      const cached = await api.cached_updates();
       if (cached.length) {
         const seen = new Set(hits.map((h) => h.id));
         const fresh = cached.filter((h) => !seen.has(h.id));
@@ -326,7 +324,7 @@
       return verVerdict(h.remote, m.version) === 'newer';
     });
     if (hits.length !== before) {
-      flash(hits.length ? `${hits.length} update${hits.length === 1 ? '' : 's'} available` : 'All tracked mods are current');
+      flash(hits.length ? `${hits.length} update${hits.length === 1 ? '' : 's'} available` : 'All mods are updated');
     }
   }
 
@@ -336,7 +334,7 @@
 
   async function toggle(id: string, on: boolean) {
     error = '';
-    await invoke('set_enabled', { ids: [id], on: !on });
+    await api.set_enabled([id], !on);
     await refresh();
     await deploy(true);
   }
@@ -348,13 +346,13 @@
     }
     console.debug(`[yawmm] deploy: invoking`);
     try {
-      const running = await invoke<boolean>('game_running');
+      const running = await api.game_running();
       if (running) {
         error = 'Close the game before deploying';
         busy = '';
         return;
       }
-      const res = await invoke<string[] | { deployed: string[]; removed: string[] }>('deploy');
+      const res = await api.deploy();
       const files = Array.isArray(res) ? res : res.deployed;
       const removed = Array.isArray(res) ? [] : (res.removed ?? []);
       console.debug(`[yawmm] deploy: done ${files.length} files, ${removed.length} removed`);
@@ -384,7 +382,7 @@
   async function setPrio(id: string, ev: Event) {
     const n = Number((ev.target as HTMLInputElement).value);
     if (!n) return;
-    await invoke('set_priority', { id, number: n });
+    await api.set_priority(id, n);
     await refresh();
     await deploy(true);
   }
@@ -392,7 +390,7 @@
   async function removeMod(id: string) {
     const m = modById(id);
     if (!m || !confirm(`Uninstall “${m.name}” and its staged files?`)) return;
-    await invoke('remove_mods', { ids: [id] });
+    await api.remove_mods([id]);
     const n = new Set(selectedIds);
     n.delete(id);
     selectedIds = n;
@@ -447,7 +445,7 @@
   async function enableSelected() {
     if (!selectedIds.size) return;
     error = '';
-    await invoke('set_enabled', { ids: [...selectedIds], on: true });
+    await api.set_enabled([...selectedIds], true);
     await refresh();
     await deploy(true);
   }
@@ -455,7 +453,7 @@
   async function disableSelected() {
     if (!selectedIds.size) return;
     error = '';
-    await invoke('set_enabled', { ids: [...selectedIds], on: false });
+    await api.set_enabled([...selectedIds], false);
     await refresh();
     await deploy(true);
   }
@@ -466,7 +464,7 @@
     const preview = names.slice(0, 5).join(', ') + (names.length > 5 ? ` (+${names.length - 5} more)` : '');
     if (!confirm(`Uninstall ${names.length} mod${names.length === 1 ? '' : 's'} (${preview}) and their staged files?`))
       return;
-    await invoke('remove_mods', { ids: [...selectedIds] });
+    await api.remove_mods([...selectedIds]);
     clearSelection();
     await refresh();
     await deploy(true);
@@ -476,7 +474,7 @@
     menuOpen = false;
     const name = prompt('Section name', 'New section');
     if (!name || !appState) return;
-    await invoke('add_separator', { index: appState.mods.length, name });
+    await api.add_separator(appState.mods.length, name);
     await refresh();
   }
 
@@ -486,7 +484,7 @@
     const name = prompt('Section name', 'New section');
     if (!name) return;
     const idx = appState.mods.findIndex((m) => m.id === sepId);
-    await invoke('add_separator', { index: idx === -1 ? 0 : idx, name });
+    await api.add_separator(idx === -1 ? 0 : idx, name);
     await refresh();
   }
 
@@ -494,7 +492,7 @@
     sepCtx = null;
     const m = appState?.mods.find((r) => r.id === sepId);
     if (!m || !confirm(`Remove section “${m.name}”? Its mods stay in the list.`)) return;
-    await invoke('remove_section_cmd', { sepId });
+    await api.remove_section_cmd(sepId);
     await refresh();
   }
 
@@ -508,11 +506,7 @@
   function openEdit(id: string) {
     ctx = null;
     console.debug('[yawmm] open_tool_window edit', id);
-    invoke('open_tool_window', {
-      kind: 'edit',
-      query: `id=${encodeURIComponent(id)}`,
-      path: id,
-    }).catch((e) => {
+    api.open_tool_window('edit', `id=${encodeURIComponent(id)}`, id).catch((e) => {
       console.error('[yawmm] open_tool_window edit failed', e);
       error = String(e);
     });
@@ -521,7 +515,7 @@
   function openResolver() {
     menuOpen = false;
     console.debug('[yawmm] open_tool_window resolver');
-    invoke('open_tool_window', { kind: 'resolver', query: '', path: '' }).catch((e) => {
+    api.open_tool_window('resolver', '', '').catch((e) => {
       console.error('[yawmm] open_tool_window resolver failed', e);
       error = String(e);
     });
@@ -536,7 +530,7 @@
       return;
     }
     try {
-      await invoke('open_path', { target: `https://www.nexusmods.com/witcher3/mods/${nid}` });
+      await api.open_path(`https://www.nexusmods.com/witcher3/mods/${nid}`);
     } catch (e) {
       console.error(`[yawmm] open nexus page failed: ${String(e)}`);
       error = String(e);
@@ -546,8 +540,8 @@
   async function openModFolder(id: string) {
     ctx = null;
     try {
-      const dir = await invoke<string>('mod_dir', { id });
-      await invoke('open_path', { target: dir });
+      const dir = await api.mod_dir(id);
+      await api.open_path(dir);
     } catch (e) {
       console.error(`[yawmm] open mod folder failed: ${String(e)}`);
       error = String(e);
@@ -571,7 +565,7 @@
     }
     try {
       const cfg = await loadConfigNative();
-      await invoke('check_updates', { apiKey: cfg.nexusKey, ...(ids === null ? {} : { ids }) });
+      await api.check_updates(cfg.nexusKey, ids === null ? undefined : ids);
     } catch (e) {
       if (ids === null) busy = '';
       else checkingIds = new Set([...checkingIds].filter((x) => !ids.includes(x)));
@@ -614,11 +608,7 @@
       version: m.version ?? '',
       nexus: (m.nexus ?? '').replace(/\D/g, ''),
     });
-    await invoke('open_tool_window', {
-      kind: 'install',
-      query: qp.toString(),
-      path: m.archive,
-    }).catch((e) => {
+    await api.open_tool_window('install', qp.toString(), m.archive).catch((e) => {
       console.error('[yawmm] open_tool_window install failed', e);
       error = String(e);
     });
@@ -628,7 +618,7 @@
     if (!unmanaged.length) return;
     busy = 'Importing…';
     try {
-      await invoke('import_unmanaged', { rels: unmanaged });
+      await api.import_unmanaged(unmanaged);
       await refresh();
       await deploy(true);
       flash('Imported unmanaged mods.');
@@ -658,7 +648,7 @@
       const arr = pendingUpdates.get(id) ?? [];
       arr.push(resolve);
       pendingUpdates.set(id, arr);
-      invoke('update_mod', { id, apiKey: cfg.nexusKey, premium }).catch((e) => {
+      api.update_mod(id, cfg.nexusKey, premium).catch((e) => {
         // Synchronous validation failure (unknown mod / no Nexus ID):
         // drop our waiter so a later retry isn't double-settled.
         const cur = (pendingUpdates.get(id) ?? []).filter((w) => w !== resolve);
@@ -687,11 +677,7 @@
         nexus: (m?.nexus ?? '').replace(/\D/g, ''),
       });
       flash(`Update file already downloaded — installing ${m?.name ?? 'mod'} from local copy…`);
-      await invoke('open_tool_window', {
-        kind: 'install',
-        query: qp.toString(),
-        path: p.local_path,
-      }).catch((e) => {
+      await api.open_tool_window('install', qp.toString(), p.local_path).catch((e) => {
         error = String(e);
       });
       return;
@@ -707,9 +693,7 @@
         error = 'No Nexus ID on this mod — set one in Edit…';
         return;
       }
-      await invoke('open_path', {
-        target: `https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${p.file_id}&nmm=1`,
-      });
+      await api.open_path(`https://www.nexusmods.com/witcher3/mods/${nid}?tab=files&file_id=${p.file_id}&nmm=1`);
       flash('Pick Slow Download on the Nexus page, then Install mods → select the file.');
       return;
     }
@@ -721,11 +705,7 @@
     hits = hits.filter((h) => h.id !== p.id);
     try {
       await refreshQueue();
-      await invoke('queue_start', {
-        id: p.row_id,
-        destDir: await downloadsDir(),
-        apiKey: (await loadConfigNative()).nexusKey,
-      });
+      await api.queue_start(p.row_id, await downloadsDir(), (await loadConfigNative()).nexusKey);
       await refreshQueue();
       goto('/downloads').catch(() => {});
     } catch (e) {
@@ -771,7 +751,7 @@
   async function play() {
     if (gameDir.toLowerCase().includes('steamapps')) {
       try {
-        await invoke('open_path', { target: 'steam://rungameid/292030' });
+        await api.open_path('steam://rungameid/292030');
       } catch (e) {
         error = String(e);
       }
@@ -785,10 +765,11 @@
     try {
       const target =
         kind === 'game' ? gameDir
-        : kind === 'settings' ? await invoke<string>('settings_dir_path')
-        : `${await invoke<string>('settings_dir_path')}/${kind}`;
+        : kind === 'appdata' ? await api.data_dir_path()
+        : kind === 'settings' ? await api.settings_dir_path()
+        : `${await api.settings_dir_path()}/${kind}`;
       console.debug(`[yawmm] opening ${kind}: ${target}`);
-      await invoke('open_path', { target });
+      await api.open_path(target);
     } catch (e) {
       console.error(`[yawmm] open ${kind} failed: ${String(e)}`);
       error = String(e);
@@ -812,7 +793,7 @@
     if (targetIdx > withoutFrom.length) targetIdx = withoutFrom.length;
     const beforeId = withoutFrom[targetIdx]?.id ?? '';
     try {
-      await invoke('move_mod', { id: fromId, before: beforeId });
+      await api.move_mod(fromId, beforeId);
       await refresh();
       await deploy(true);
     } catch (e) {
@@ -857,7 +838,7 @@
     dragId = null;
     dropBefore = null;
     try {
-      await invoke('move_mod', { id: moving, before: id });
+      await api.move_mod(moving, id);
       await refresh();
       await deploy(true);
     } catch (e) {
@@ -873,7 +854,7 @@
     dragId = null;
     dropBefore = null;
     try {
-      await invoke('move_to_section', { id: moving, sepId });
+      await api.move_to_section(moving, sepId);
       await refresh();
       await deploy(true);
     } catch (e) {
@@ -888,7 +869,7 @@
     dragId = null;
     dropBefore = null;
     try {
-      await invoke('move_mod', { id: moving, before: '' });
+      await api.move_mod(moving, '');
       await refresh();
       await deploy(true);
     } catch (e) {
@@ -919,11 +900,7 @@
         : [];
       for (const p of paths) {
         console.debug('[yawmm] open_tool_window install (picked)', p);
-        await invoke('open_tool_window', {
-          kind: 'install',
-          query: `path=${encodeURIComponent(p)}`,
-          path: p,
-        }).catch((e) => {
+        await api.open_tool_window('install', `path=${encodeURIComponent(p)}`, p).catch((e) => {
           console.error('[yawmm] open_tool_window install failed', e);
           error = String(e);
         });
@@ -1094,10 +1071,10 @@
             flash(
               hits.length ?
                 `${hits.length} update${hits.length === 1 ? '' : 's'} available`
-              : 'All tracked mods are current',
+              : 'All mods are updated',
             );
           }
-          const [qt] = await invoke<[string, string, number]>('quota').catch(() => ['', '', 0] as [string, string, number]);
+          const [qt] = await api.quota().catch(() => ['', '', 0] as [string, string, number]);
           quotaText = qt;
         });
         unlistenUR = await listen<UpdateResolution>('update-resolved', async (e) => {
@@ -1200,6 +1177,9 @@
             <div class="my-1 border-t border-border"></div>
             <button onclick={() => openPath('game')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
               >Open: Game folder</button
+            >
+            <button onclick={() => openPath('appdata')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >Open: App data</button
             >
             <button onclick={() => openPath('settings')} class="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
               >Open: Settings folder</button

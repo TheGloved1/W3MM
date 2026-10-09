@@ -27,13 +27,42 @@ export interface ModRow {
   main_of: string;
 }
 
-export interface AppState {
+export interface ModsView {
   mods: ModRow[];
   priority: string[];
   deployed: Record<string, string>;
   filelist_added: Record<string, string[]>;
   resolutions: Record<string, number[]>;
   merge_kept: Record<string, string>;
+  profiles: ProfileView[];
+  active_profile: string | null;
+}
+
+export interface AppState extends ModsView {}
+
+export interface ModSet {
+  mods: ModRow[];
+  priority: string[];
+  deployed: Record<string, string>;
+  filelist_added: Record<string, string[]>;
+  resolutions: Record<string, number[]>;
+  merge_kept: Record<string, string>;
+}
+
+/** Profile metadata; the full set lives in profiles/<id>/ on the backend. */
+export interface Profile {
+  id: string;
+  name: string;
+  updated: number;
+}
+
+/** Profile metadata with live mod counts (list_mods fills them in). */
+export interface ProfileView {
+  id: string;
+  name: string;
+  updated: number;
+  mods: number;
+  enabled: number;
 }
 
 export interface InstallPlan {
@@ -48,9 +77,26 @@ export interface ScriptMergeResult {
 }
 
 export interface XmlMergeResult {
+  status: string;
   merged: string;
-  conflicts: { path: string; kind: string; why: string; base_lines: string[]; variants: string[][]; proposed: string[] }[];
+  conflicts: XmlConflict[];
   needs_resolution: boolean;
+  reason: string;
+  auto: number;
+}
+
+export interface XmlConflict {
+  path: string;
+  kind: string;
+  why: string;
+  base_lines: string[];
+  variants: XmlVariant[];
+  proposed: string[];
+}
+
+export interface XmlVariant {
+  mods: string[];
+  lines: string[];
 }
 
 export interface NxmLink {
@@ -72,6 +118,54 @@ export interface MadeFor {
   label: string;
   short: string;
   status: string;
+}
+
+export interface UpdateHit {
+  id: string;
+  name: string;
+  local: string;
+  remote: string;
+}
+
+export interface StorageReport {
+  game: string;
+  staging: string;
+  default_staging: string;
+  same_device: boolean | null;
+  /** Tauri camelCase alias some call sites read. */
+  sameDevice?: boolean | null;
+}
+
+export interface MergeInputs {
+  rel: string;
+  kind: string;
+  base: string;
+  base_encoding: string;
+  versions: { label: string; mod_id: string; text: string }[];
+}
+
+export interface MergerRep {
+  config: string;
+  wrong: [string, string, string][];
+  unfixable: [string, string][];
+}
+
+export interface PlanRoot {
+  prefix: string;
+  kind: string;
+  folder: string;
+  files: number;
+}
+
+export interface InstallPreview {
+  roots: PlanRoot[];
+  moves: [string, string][];
+}
+
+export interface AnalysisEntry {
+  scripts: { file: string; with: string[] }[];
+  xmls: { file: string; with: string[] }[];
+  lost: number;
 }
 
 export interface QueueItem {

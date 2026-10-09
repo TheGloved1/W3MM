@@ -1,7 +1,7 @@
 {
   "name": "yawmm",
   "private": true,
-  "version": "26.10.19",
+  "version": "26.10.20",
   "type": "module",
   "packageManager": "bun@1.4.2",
   "license": "MIT",
@@ -22,7 +22,6 @@
     "tauri": "tauri",
     "sync-version": "bun scripts/sync-version.js",
     "release": "bun scripts/release.ts",
-    "release-status": "bun scripts/release.ts status",
     "push-tags": "git push origin main --tags",
     "release:no-changelog": "bun scripts/release.ts --no-changelog"
   },

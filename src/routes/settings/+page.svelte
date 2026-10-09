@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { api } from '$lib/api';
   import { loadConfigNative, saveConfigNative } from '$lib/config';
-  import type { AppConfig } from '$lib/types';
+  import type { AppConfig, MergerRep } from '$lib/types';
   import FormInput from '$lib/components/form-input.svelte';
   import FormSelect from '$lib/components/form-select.svelte';
   import Button from '$lib/components/button.svelte';
@@ -29,8 +29,6 @@
 
   let savedAt: string = $state('');
 
-  type MergerRep = { config: string; wrong: [string, string, string][]; unfixable: [string, string][] };
-
   const codeFonts = ['JetBrains Mono', 'Fira Code', 'Hack', 'DejaVu Sans Mono', 'monospace'];
 
   onMount(async () => {
@@ -40,7 +38,7 @@
       config = await loadConfigNative();
       initialStaging = config.stagingDir ?? '';
       try {
-        const rep = await invoke<{ default_staging: string }>('storage_report');
+        const rep = await api.storage_report();
         defaultStaging = rep.default_staging ?? '';
       } catch {}
       stagingShown = config.stagingDir || defaultStaging;
@@ -78,10 +76,10 @@
 
   async function detect(quiet = false) {
     if (!config) return;
-    const found = await invoke<string | null>('detect_game').catch(() => null);
+    const found = await api.detect_game().catch(() => null);
     if (found) {
       config.gameDir = found;
-      const pfx = await invoke<string | null>('default_prefix', { gameDir: found }).catch(() => null);
+      const pfx = await api.default_prefix(found).catch(() => null);
       if (pfx) config.prefix = pfx;
       checkGame();
       checkMerger();
@@ -92,7 +90,7 @@
 
   async function checkGame() {
     if (!config?.gameDir) { gameOk = ''; return; }
-    const ok = await invoke<boolean>('is_game_dir', { path: config.gameDir });
+    const ok = await api.is_game_dir(config.gameDir);
     gameOk = ok ? '' : 'not a game folder (need content/ + bin/)';
     if (!ok) warn = 'That game folder doesn’t look right (need content/ + bin/).';
     else if (warn.startsWith('That game folder')) warn = '';
@@ -102,7 +100,7 @@
     mergerRep = null;
     if (!config?.mergerPath) { mergerState = ''; return; }
     try {
-      const rep = await invoke<MergerRep>('merger_check', { exePath: config.mergerPath });
+      const rep = await api.merger_check(config.mergerPath);
       mergerRep = rep;
       const n = rep.wrong.length + rep.unfixable.length;
       mergerState = n ? `${n} path${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} attention` : 'paths look right';
@@ -114,20 +112,20 @@
     try {
       const fixes: Record<string, string> = {};
       for (const [k, , want] of mergerRep.wrong) fixes[k] = want;
-      await invoke('merger_apply', { configPath: mergerRep.config, fixes });
+      await api.merger_apply(mergerRep.config, fixes);
       await checkMerger();
     } catch (e) { warn = String(e); }
   }
 
   async function getKey() {
     try {
-      await invoke('open_path', { target: 'https://www.nexusmods.com/users/myaccount?tab=api' });
+      await api.open_path('https://www.nexusmods.com/users/myaccount?tab=api');
     } catch {}
   }
 
   async function save() {
     if (!config) return;
-    const ok = await invoke<boolean>('is_game_dir', { path: config.gameDir }).catch(() => false);
+    const ok = await api.is_game_dir(config.gameDir).catch(() => false);
     if (!ok) { warn = 'Pick the Witcher 3 folder first (it holds content/ and bin/).'; return; }
     if ((config.stagingDir ?? '') !== initialStaging) {
       // New staging home: re-show the split-drive notice until dismissed.
@@ -136,7 +134,7 @@
     await saveConfigNative(config);
     initialStaging = config.stagingDir ?? '';
     try {
-      await invoke('open_manager', { gameDir: config.gameDir, prefix: config.prefix, stagingDir: config.stagingDir ?? '' });
+      await api.open_manager(config.gameDir, config.prefix, config.stagingDir ?? '');
       const { emit } = await import('@tauri-apps/api/event');
       await emit('mods-changed', {});
     } catch {}

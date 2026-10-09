@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const appVersion = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8")).version;
+const appVersion = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8")).version as string;
 
 const host = process.env.TAURI_DEV_HOST;
 

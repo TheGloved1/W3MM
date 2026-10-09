@@ -282,7 +282,9 @@ pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
         if r.status == "done" {
             let p = if r.filename.is_empty() { None } else { Some(dest_dir.join(&r.filename)) };
             if p.as_ref().map(|p| p.is_file()).unwrap_or(false) {
-                q.insert(r.id.clone(), r);
+                // Memory wins over the file: an in-flight row beats its
+                // stale persisted copy, or refresh re-reads clobber meta.
+                q.entry(r.id.clone()).or_insert(r);
             }
             // else: file deleted outside the app — leave it out
         } else {
@@ -291,7 +293,7 @@ pub fn load_history(path: &std::path::Path, dest_dir: &std::path::Path) {
                 r.error = "Stopped. Retry continues where it left off.".into();
             }
             r.speed = 0;
-            q.insert(r.id.clone(), r);
+            q.entry(r.id.clone()).or_insert(r);
         }
     }
 }

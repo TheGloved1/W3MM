@@ -183,18 +183,17 @@ fn is_game_dir(path: String) -> bool {
 }
 
 #[tauri::command]
-fn list_mods(shared: State<Shared>) -> Result<state::AppState, String> {
-    let cloned = {
+fn list_mods(shared: State<Shared>) -> Result<state::ModsView, String> {
+    let view = {
         let g = lock_shared(&shared, "list_mods")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
-        let s = m.state.lock().map_err(|e| e.to_string())?;
-        let mut st = s.clone();
+        let root = m.home.data.clone();
+        let mut s = m.state.lock().map_err(|e| e.to_string())?;
         // Normalize the copy so the UI never shows a stale priority order
         // even before the next mutating command persists the heal.
-        st.priority_ids();
-        st
+        s.mods_view(&root)
     };
-    Ok(cloned)
+    Ok(view)
 }
 
 #[tauri::command]
@@ -204,6 +203,72 @@ fn set_enabled(shared: State<Shared>, ids: Vec<String>, on: bool) -> Result<bool
     m.state.lock().map_err(|e| e.to_string())?.set_enabled(&ids, on);
     m.save()?;
     Ok(true)
+}
+
+/// Clone the active profile's full set into a new profile (NMM: new
+/// profiles copy the active one). Does not switch.
+#[tauri::command]
+fn create_profile(shared: State<Shared>, name: String) -> Result<state::Profile, String> {
+    let g = lock_shared(&shared, "create_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let root = m.home.data.clone();
+    let p = {
+        m.state.lock().map_err(|e| e.to_string())?.create_profile(&root, &name)
+    }?;
+    m.save()?;
+    Ok(p)
+}
+
+/// Switch the working set to another profile (frontend redeploys after).
+#[tauri::command]
+fn switch_profile(shared: State<Shared>, id: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "switch_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let root = m.home.data.clone();
+    {
+        m.state.lock().map_err(|e| e.to_string())?.switch_profile(&root, &id)
+    }?;
+    m.save()?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn delete_profile(shared: State<Shared>, id: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "delete_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let root = m.home.data.clone();
+    {
+        m.state.lock().map_err(|e| e.to_string())?.delete_profile(&root, &id)
+    }?;
+    m.save()?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn rename_profile(shared: State<Shared>, id: String, name: String) -> Result<bool, String> {
+    let g = lock_shared(&shared, "rename_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let ok = {
+        m.state.lock().map_err(|e| e.to_string())?.rename_profile(&id, &name)
+    };
+    if !ok {
+        return Err("profile not found (or blank name)".into());
+    }
+    m.save()?;
+    Ok(true)
+}
+
+/// Copy any profile's full set to "<name>_copy".
+#[tauri::command]
+fn duplicate_profile(shared: State<Shared>, id: String) -> Result<state::Profile, String> {
+    let g = lock_shared(&shared, "duplicate_profile")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let root = m.home.data.clone();
+    let p = {
+        m.state.lock().map_err(|e| e.to_string())?.duplicate_profile(&root, &id)
+    }?;
+    m.save()?;
+    Ok(p)
 }
 
 #[tauri::command]
@@ -231,12 +296,25 @@ fn rename_mod(shared: State<Shared>, id: String, name: String) -> Result<bool, S
 #[tauri::command]
 fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> {
     // Drop staged folders first (slow) without the lock so disk matches state.
-    let staging: std::path::PathBuf = {
+    // Staging is shared across profiles: only delete a mod's folder when no
+    // set — working or stored — still references it.
+    let (staging, deletable): (std::path::PathBuf, Vec<String>) = {
         let g = lock_shared(&shared, "remove_mods")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
-        m.home.staging.clone()
+        let s = m.state.lock().map_err(|e| e.to_string())?;
+        let root = m.home.data.clone();
+        let keep = ids
+            .iter()
+            .filter(|id| s.is_mod_referenced(&root, id, &ids))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !keep.is_empty() {
+            crate::log_line("rust", &format!("remove_mods: keeping staged folders still used by other profiles: {}", keep.join(", ")));
+        }
+        let del = ids.iter().filter(|id| !keep.contains(id)).cloned().collect::<Vec<_>>();
+        (m.home.staging.clone(), del)
     };
-    for id in &ids {
+    for id in &deletable {
         let dir = staging.join(id);
         if dir.is_dir() {
             let _ = std::fs::remove_dir_all(&dir);
@@ -244,6 +322,8 @@ fn remove_mods(shared: State<Shared>, ids: Vec<String>) -> Result<bool, String> 
     }
     let g = lock_shared(&shared, "remove_mods")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
+    // Rows always leave the working set; only the staged folders are gated
+    // on cross-profile references above.
     m.state.lock().map_err(|e| e.to_string())?.remove_rows(&ids);
     m.save()?;
     Ok(true)
@@ -429,7 +509,7 @@ fn deploy(shared: State<Shared>) -> Result<DeployReport, String> {
         s.filelist_added = filelist_added;
         s.state_deployed(&written_by);
         let snapshot = s.clone();
-        crate::state::save_state(&m.home.state_file, &snapshot)?;
+        crate::state::save_store(&m.home.data, &snapshot)?;
     }
     log_line("rust", &format!("deploy: done, {} files in {:.1}s", all_written.len(), t0.elapsed().as_secs_f32()));
     Ok(DeployReport { deployed: all_written, removed: reconciled })
@@ -1277,23 +1357,28 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     {
         let g = lock_shared(&shared, "import_unmanaged")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
-        let mut s = m.state.lock().map_err(|e| e.to_string())?;
-        for (id, folder, enabled) in &staged {
-            let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
-                folder[3..].to_string()
-            } else {
-                folder.clone()
-            };
-            s.mods.push(state::ModRow {
-                id: id.clone(), sep: false, name: stripped, enabled: *enabled,
-                version: String::new(), nexus: String::new(), archive: String::new(),
-                section: String::new(), updated: chrono::Utc::now().timestamp(),
-                collapsed: false, targets: vec![format!("mods/{folder}")],
-                nexus_cat: String::new(), main_of: String::new(),
-            });
-            ids.push(id.clone());
+        // NOTE: the state guard must drop before save(): save() locks the
+        // same non-reentrant mutex and would deadlock this thread forever
+        // (the frontend hangs on a busy spinner with no log to show for it).
+        {
+            let mut s = m.state.lock().map_err(|e| e.to_string())?;
+            for (id, folder, enabled) in &staged {
+                let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
+                    folder[3..].to_string()
+                } else {
+                    folder.clone()
+                };
+                s.mods.push(state::ModRow {
+                    id: id.clone(), sep: false, name: stripped, enabled: *enabled,
+                    version: String::new(), nexus: String::new(), archive: String::new(),
+                    section: String::new(), updated: chrono::Utc::now().timestamp(),
+                    collapsed: false, targets: vec![format!("mods/{folder}")],
+                    nexus_cat: String::new(), main_of: String::new(),
+                });
+                ids.push(id.clone());
+            }
+            s.priority_ids();
         }
-        s.priority_ids();
         m.save()?;
     }
     Ok(ids)
@@ -1379,6 +1464,17 @@ fn dl_paths(shared: &State<Shared>) -> Option<(std::path::PathBuf, std::path::Pa
     Some((dir, hist))
 }
 
+/// Static (manager-independent) downloads paths. The store is a single
+/// shared dir, so these are knowable before any game folder is opened —
+/// history must load at boot, ahead of `open_manager`.
+fn dl_paths_static() -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = crate::home::data_root_for("");
+    (
+        root.join(crate::home::DOWNLOADS_DIR),
+        root.join("downloads.json"),
+    )
+}
+
 fn dl_save(shared: &State<Shared>) {
     if let Some((_, hist)) = dl_paths(shared) {
         downloads::save_history(&hist);
@@ -1428,9 +1524,10 @@ fn queue_pause(shared: State<Shared>, id: String, paused: bool) {
 /// Load download history from last time (call after open_manager).
 #[tauri::command]
 fn downloads_history(shared: State<Shared>) -> Vec<downloads::QueueItem> {
-    if let Some((dir, hist)) = dl_paths(&shared) {
-        downloads::load_history(&hist, &dir);
-    }
+    // Static fallback: boot calls this before any manager is opened, and
+    // the single store makes the paths knowable without one.
+    let (dir, hist) = dl_paths(&shared).unwrap_or_else(dl_paths_static);
+    downloads::load_history(&hist, &dir);
     downloads::items()
 }
 
@@ -1652,9 +1749,12 @@ fn queue_start(app: tauri::AppHandle, shared: State<Shared>, id: String, dest_di
 /// Absolute downloads-dir path (platform data dir).
 #[tauri::command]
 fn downloads_dir_path(shared: State<Shared>) -> Result<String, String> {
-    let g = lock_shared(&shared, "downloads_dir_path")?;
-    let m = g.as_ref().ok_or("open a game folder first")?;
-    let d = m.home.downloads.clone();
+    // Static fallback: the dir doesn't depend on an open manager, and
+    // callers (queue_start, offerInstall) need it before one exists.
+    let d = match dl_paths(&shared) {
+        Some((dir, _)) => dir,
+        None => dl_paths_static().0,
+    };
     let _ = std::fs::create_dir_all(&d);
     Ok(d.to_string_lossy().to_string())
 }
@@ -1665,6 +1765,26 @@ fn settings_dir_path(shared: State<Shared>) -> Result<String, String> {
     let g = lock_shared(&shared, "settings_dir_path")?;
     let m = g.as_ref().ok_or("open a game folder first")?;
     Ok(m.settings_dir().to_string_lossy().to_string())
+}
+
+/// Absolute app-data root (the single store) for the Open menu.
+#[tauri::command]
+fn data_dir_path(shared: State<Shared>) -> Result<String, String> {
+    let g = lock_shared(&shared, "data_dir_path")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let d = m.home.data.clone();
+    let _ = std::fs::create_dir_all(&d);
+    Ok(d.to_string_lossy().to_string())
+}
+
+/// Absolute profiles dir (`<store>/profiles/`) for the Profiles page footer.
+#[tauri::command]
+fn profiles_dir_path(shared: State<Shared>) -> Result<String, String> {
+    let g = lock_shared(&shared, "profiles_dir_path")?;
+    let m = g.as_ref().ok_or("open a game folder first")?;
+    let d = crate::home::profiles_dir(&m.home.data);
+    let _ = std::fs::create_dir_all(&d);
+    Ok(d.to_string_lossy().to_string())
 }
 
 /// Move a mod under a section separator (or to the unsectioned end).
@@ -2063,6 +2183,7 @@ fn install_roots(
     let tmp = std::env::temp_dir().join(format!("yawmm-install-{}", uuid::Uuid::new_v4().simple()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    log_line("rust", &format!("install_roots: enter path={path:?} name={name:?} replace_ids={replace_ids:?}"));
     let res: Result<String, String> = (|| {
         // Manually picked archives live wherever the user left them: move
         // the file into our downloads first so the row's recorded path stays
@@ -2117,7 +2238,15 @@ fn install_roots(
         let (targets, _docs) = install::build_staging(&sub, &stage, &folder)?;
         // Replacement installs clean the old staged folders lock-free first
         // (same pattern as remove_mods), then swap rows atomically below.
-        for rid in &replace_ids {
+        // Staging is shared across profiles: keep folders other sets use.
+        let deletable: Vec<String> = {
+            let g = lock_shared(&shared, "install_roots")?;
+            let m = g.as_ref().ok_or("open a game folder first")?;
+            let s = m.state.lock().map_err(|e| e.to_string())?;
+            let root = m.home.data.clone();
+            replace_ids.iter().filter(|rid| !s.is_mod_referenced(&root, rid, &replace_ids)).cloned().collect()
+        };
+        for rid in &deletable {
             let dir = staging.join(rid);
             if dir.is_dir() {
                 let _ = std::fs::remove_dir_all(&dir);
@@ -2214,6 +2343,11 @@ pub fn run() {
             is_game_dir,
             list_mods,
             set_enabled,
+            create_profile,
+            switch_profile,
+            delete_profile,
+            rename_profile,
+            duplicate_profile,
             set_priority,
             rename_mod,
             remove_mods,
@@ -2264,6 +2398,8 @@ pub fn run() {
             downloads_history,
             downloads_dir_path,
             settings_dir_path,
+            data_dir_path,
+            profiles_dir_path,
             storage_report,
             open_tool_window,
             merger_apply,
