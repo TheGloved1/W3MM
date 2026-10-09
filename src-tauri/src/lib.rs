@@ -1357,23 +1357,28 @@ fn import_unmanaged(shared: State<Shared>, rels: Vec<String>) -> Result<Vec<Stri
     {
         let g = lock_shared(&shared, "import_unmanaged")?;
         let m = g.as_ref().ok_or("open a game folder first")?;
-        let mut s = m.state.lock().map_err(|e| e.to_string())?;
-        for (id, folder, enabled) in &staged {
-            let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
-                folder[3..].to_string()
-            } else {
-                folder.clone()
-            };
-            s.mods.push(state::ModRow {
-                id: id.clone(), sep: false, name: stripped, enabled: *enabled,
-                version: String::new(), nexus: String::new(), archive: String::new(),
-                section: String::new(), updated: chrono::Utc::now().timestamp(),
-                collapsed: false, targets: vec![format!("mods/{folder}")],
-                nexus_cat: String::new(), main_of: String::new(),
-            });
-            ids.push(id.clone());
+        // NOTE: the state guard must drop before save(): save() locks the
+        // same non-reentrant mutex and would deadlock this thread forever
+        // (the frontend hangs on a busy spinner with no log to show for it).
+        {
+            let mut s = m.state.lock().map_err(|e| e.to_string())?;
+            for (id, folder, enabled) in &staged {
+                let stripped = if folder.len() > 3 && folder.to_lowercase().starts_with("mod") {
+                    folder[3..].to_string()
+                } else {
+                    folder.clone()
+                };
+                s.mods.push(state::ModRow {
+                    id: id.clone(), sep: false, name: stripped, enabled: *enabled,
+                    version: String::new(), nexus: String::new(), archive: String::new(),
+                    section: String::new(), updated: chrono::Utc::now().timestamp(),
+                    collapsed: false, targets: vec![format!("mods/{folder}")],
+                    nexus_cat: String::new(), main_of: String::new(),
+                });
+                ids.push(id.clone());
+            }
+            s.priority_ids();
         }
-        s.priority_ids();
         m.save()?;
     }
     Ok(ids)
